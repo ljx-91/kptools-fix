@@ -42,19 +42,9 @@ jobs:
           $filename = "arm-gnu-toolchain-$version-mingw-w64-i686-aarch64-none-elf.zip"
 
           $url = "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/$version/binrel/$filename"
-
           $archive = "$env:RUNNER_TEMP\arm-toolchain.zip"
 
-          Write-Host "Downloading: $filename"
-
-          curl.exe `
-            --fail `
-            --location `
-            --retry 3 `
-            --connect-timeout 30 `
-            --max-time 300 `
-            "$url" `
-            --output "$archive"
+          curl.exe --fail --location --retry 3 --connect-timeout 30 --max-time 300 "$url" --output "$archive"
 
           if ($LASTEXITCODE -ne 0) {
             throw "Toolchain download failed"
@@ -64,12 +54,6 @@ jobs:
             throw "Toolchain ZIP not found"
           }
 
-          if ((Get-Item $archive).Length -lt 1000000) {
-            throw "Toolchain ZIP is unexpectedly small"
-          }
-
-          Write-Host "Download complete"
-
       - name: Extract and configure Arm toolchain
         shell: pwsh
         run: |
@@ -78,19 +62,9 @@ jobs:
           $archive = "$env:RUNNER_TEMP\arm-toolchain.zip"
           $destination = "$env:RUNNER_TEMP\arm-toolchain"
 
-          New-Item `
-            -ItemType Directory `
-            -Path $destination `
-            -Force | Out-Null
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
 
-          Write-Host "Extracting ZIP..."
-
-          Expand-Archive `
-            -Path $archive `
-            -DestinationPath $destination `
-            -Force
-
-          Write-Host "Locating aarch64-none-elf-gcc.exe..."
+          Expand-Archive -Path $archive -DestinationPath $destination -Force
 
           $gcc = Get-ChildItem `
             -Path $destination `
@@ -105,9 +79,10 @@ jobs:
 
           $gccBin = $gcc.Directory.FullName
 
-          Write-Host "GCC: $($gcc.FullName)"
+          Write-Host "GCC found at: $($gcc.FullName)"
 
           Add-Content $env:GITHUB_PATH $gccBin
+          Add-Content $env:GITHUB_ENV "ARM_GCC_BIN=$gccBin"
 
           & $gcc.FullName --version
 
@@ -120,6 +95,8 @@ jobs:
         run: |
           set -eux
 
+          export PATH="$(cygpath -u "$ARM_GCC_BIN"):$PATH"
+
           gcc --version
           make --version
           aarch64-none-elf-gcc --version
@@ -129,6 +106,7 @@ jobs:
         run: |
           set -eux
 
+          export PATH="$(cygpath -u "$ARM_GCC_BIN"):$PATH"
           export TARGET_COMPILE=aarch64-none-elf-
           export ANDROID=1
 
@@ -138,13 +116,12 @@ jobs:
 
           test -s kpimg
 
-          echo "kpimg build completed"
-
       - name: Generate kptools headers
         shell: msys2 {0}
         run: |
           set -eux
 
+          export PATH="$(cygpath -u "$ARM_GCC_BIN"):$PATH"
           export TARGET_COMPILE=aarch64-none-elf-
           export ANDROID=1
 
@@ -157,16 +134,14 @@ jobs:
         run: |
           set -eux
 
+          export PATH="$(cygpath -u "$ARM_GCC_BIN"):$PATH"
           export ANDROID=1
 
           cd tools
 
-          # Avoid make clean on a fresh build runner
           make -j"$(nproc)"
 
           test -s kptools
-
-          file kptools
 
       - name: Collect artifacts
         shell: msys2 {0}
