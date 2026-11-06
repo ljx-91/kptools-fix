@@ -1,18 +1,18 @@
 
 name: Build KernelPatch Y73S
 
-on:
+'on':
   workflow_dispatch:
   push:
     branches:
       - main
-    - master
+      - master
     paths:
-      - "**.c"
-      - "**.h"
-      - "Makefile"
-      - "CMakeLists.txt"
-      - ".github/workflows/build.yml"
+      - '**.c'
+      - '**.h'
+      - Makefile
+      - CMakeLists.txt
+      - .github/workflows/build.yml
 
 permissions:
   contents: read
@@ -30,34 +30,13 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
-            build-essential \
-            clang \
-            llvm \
-            lld \
-            cmake \
-            ninja-build \
-            gcc-aarch64-linux-gnu \
-            binutils-aarch64-linux-gnu \
-            zlib1g-dev \
-            git \
-            python3
+          sudo apt-get install -y build-essential clang llvm lld cmake ninja-build zlib1g-dev git python3
 
-      - name: Show environment
+      - name: Build
         run: |
-          uname -a
-          gcc --version
-          clang --version
-          cmake --version
-
-      - name: Build KernelPatch
-        shell: bash
-        run: |
-          set -euxo pipefail
-
-          chmod +x build.sh 2>/dev/null || true
-
+          set -eux
           if [ -f build.sh ]; then
+            chmod +x build.sh
             ./build.sh
           elif [ -f Makefile ]; then
             make -j"$(nproc)"
@@ -65,29 +44,15 @@ jobs:
             cmake -S . -B build -G Ninja
             cmake --build build --parallel
           else
-            echo "No recognized build entry point found."
+            echo "Build entry not found"
             exit 1
           fi
 
-      - name: Collect build artifacts
+      - name: Collect artifacts
         if: always()
-        shell: bash
         run: |
           mkdir -p artifacts
-
-          find . -type f \
-            \( -name "kptools" \
-            -o -name "kptools.exe" \
-            -o -name "kpimg-android" \
-            -o -name "kpimg" \
-            -o -name "*.elf" \
-            -o -name "*.bin" \) \
-            -not -path "./.git/*" \
-            -not -path "./artifacts/*" \
-            -exec cp --parents {} artifacts/ \;
-
-          echo "Collected files:"
-          find artifacts -type f
+          find . -type f \( -name "kptools" -o -name "kpimg-android" -o -name "kpimg" \) -not -path "./.git/*" -not -path "./artifacts/*" -exec cp --parents {} artifacts/ \;
 
       - name: Upload artifacts
         if: always()
@@ -97,14 +62,3 @@ jobs:
           path: artifacts/
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Upload build logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: KernelPatch-build-logs
-          path: |
-            build/
-            CMakeFiles/
-          if-no-files-found: ignore
-          retention-days: 7
