@@ -12,10 +12,67 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-kpimg:
+    name: Build Android kpimg on Ubuntu
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-aarch64-none-elf \
+            binutils-aarch64-none-elf \
+            make \
+            zlib1g-dev
+
+      - name: Verify toolchain
+        run: |
+          set -eux
+          aarch64-none-elf-gcc --version
+          make --version
+
+      - name: Build kpimg and generate headers
+        shell: bash
+        run: |
+          set -eux
+
+          export TARGET_COMPILE=aarch64-none-elf-
+          export ANDROID=1
+
+          cd kernel
+
+          make -j"$(nproc)"
+
+          test -s kpimg
+
+          make hdr
+
+          test -s ../tools/preset.h
+
+      - name: Upload kpimg and generated headers
+        uses: actions/upload-artifact@v4
+        with:
+          name: kpimg-and-headers
+          path: |
+            kernel/kpimg
+            user/**
+            tools/preset.h
+          if-no-files-found: error
+          retention-days: 1
+
+  build-windows:
     name: Build Windows kptools.exe
     runs-on: windows-latest
-    timeout-minutes: 45
+    needs: build-kpimg
+    timeout-minutes: 30
 
     steps:
       - name: Checkout source
@@ -33,108 +90,29 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-zlib
 
-      - name: Download Arm toolchain ZIP
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
+      - name: Download kpimg and generated headers
+        uses: actions/download-artifact@v4
+        with:
+          name: kpimg-and-headers
+          path: .
 
-          $version = "14.2.rel1"
-          $filename = "arm-gnu-toolchain-$version-mingw-w64-i686-aarch64-none-elf.zip"
-
-          $url = "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/$version/binrel/$filename"
-          $archive = "$env:RUNNER_TEMP\arm-toolchain.zip"
-
-          curl.exe --fail --location --retry 3 --connect-timeout 30 --max-time 300 "$url" --output "$archive"
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Toolchain download failed"
-          }
-
-          if (!(Test-Path $archive)) {
-            throw "Toolchain ZIP not found"
-          }
-
-      - name: Extract and configure Arm toolchain
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $archive = "$env:RUNNER_TEMP\arm-toolchain.zip"
-          $destination = "$env:RUNNER_TEMP\arm-toolchain"
-
-          New-Item -ItemType Directory -Path $destination -Force | Out-Null
-
-          Expand-Archive -Path $archive -DestinationPath $destination -Force
-
-          $gcc = Get-ChildItem `
-            -Path $destination `
-            -Filter "aarch64-none-elf-gcc.exe" `
-            -Recurse `
-            -File |
-            Select-Object -First 1
-
-          if ($null -eq $gcc) {
-            throw "aarch64-none-elf-gcc.exe not found"
-          }
-
-          $gccBin = $gcc.Directory.FullName
-
-          Write-Host "GCC found at: $($gcc.FullName)"
-
-          Add-Content $env:GITHUB_PATH $gccBin
-          Add-Content $env:GITHUB_ENV "ARM_GCC_BIN=$gccBin"
-
-          & $gcc.FullName --version
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "GCC verification failed"
-          }
-
-      - name: Verify build environment
+      - name: Verify downloaded files
         shell: msys2 {0}
         run: |
           set -eux
 
-          export PATH="$(cygpath -u "$ARM_GCC_BIN"):$PATH"
+          test -s kernel/kpimg
+          test -s tools/preset.h
+          test -d user/uapi
 
-          gcc --version
-          make --version
-          aarch64-none-elf-gcc --version
-
-      - name: Build kpimg
-        shell: msys2 {0}
-        run: |
-          set -eux
-
-          export PATH="$(cygpath -u "$ARM_GCC_BIN"):$PATH"
-          export TARGET_COMPILE=aarch64-none-elf-
-          export ANDROID=1
-
-          cd kernel
-
-          make -j"$(nproc)"
-
-          test -s kpimg
-
-      - name: Generate kptools headers
-        shell: msys2 {0}
-        run: |
-          set -eux
-
-          export PATH="$(cygpath -u "$ARM_GCC_BIN"):$PATH"
-          export TARGET_COMPILE=aarch64-none-elf-
-          export ANDROID=1
-
-          cd kernel
-
-          make hdr
+          ls -lh kernel/kpimg
+          ls -lh tools/preset.h
 
       - name: Build Windows kptools
         shell: msys2 {0}
         run: |
           set -eux
 
-          export PATH="$(cygpath -u "$ARM_GCC_BIN"):$PATH"
           export ANDROID=1
 
           cd tools
@@ -143,15 +121,12 @@ jobs:
 
           test -s kptools
 
-      - name: Collect artifacts
+      - name: Collect Windows artifacts
         shell: msys2 {0}
         run: |
           set -eux
 
           mkdir -p artifacts
-
-          test -s kernel/kpimg
-          test -s tools/kptools
 
           cp kernel/kpimg artifacts/kpimg-android
           cp tools/kptools artifacts/kptools.exe
@@ -160,7 +135,7 @@ jobs:
 
           ls -lh artifacts
 
-      - name: Upload Windows artifacts
+      - name: Upload Windows build
         uses: actions/upload-artifact@v4
         with:
           name: KernelPatch-Windows-Y73S
