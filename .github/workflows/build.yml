@@ -7,6 +7,12 @@ name: KernelPatch Y73S Build
     branches:
       - main
       - master
+    paths:
+      - 'kernel/**'
+      - 'tools/**'
+      - 'patch/**'
+      - 'version'
+      - '.github/workflows/build.yml'
 
 permissions:
   contents: read
@@ -22,9 +28,13 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install build dependencies
+      - name: Install dependencies
+        shell: bash
         run: |
+          set -eux
+
           sudo apt-get update
+
           sudo apt-get install -y \
             build-essential \
             cmake \
@@ -48,6 +58,7 @@ jobs:
             -O toolchain.tar.xz
 
           sudo mkdir -p /opt/arm-toolchain
+
           sudo tar -xf toolchain.tar.xz \
             -C /opt/arm-toolchain
 
@@ -67,11 +78,12 @@ jobs:
 
           cd kernel
 
-          make clean
           make -j"$(nproc)"
 
-          test -f kpimg
-          test -f kpimg.elf
+          test -s kpimg
+          test -s kpimg.elf
+
+          echo "kpimg build successful"
 
       - name: Generate kptools headers
         shell: bash
@@ -94,17 +106,25 @@ jobs:
 
           cd tools
 
-          make clean
+          # Do not run make clean:
+          # clean may fail when object files do not exist.
+
           make -j"$(nproc)"
 
-          test -f kptools
+          test -s kptools
 
-      - name: Collect artifacts
+          echo "kptools build successful"
+
+      - name: Collect build artifacts
         shell: bash
         run: |
           set -eux
 
           mkdir -p artifacts
+
+          test -s kernel/kpimg
+          test -s kernel/kpimg.elf
+          test -s tools/kptools
 
           cp kernel/kpimg artifacts/kpimg-android
           cp kernel/kpimg.elf artifacts/kpimg-android.elf
@@ -112,6 +132,7 @@ jobs:
 
           sha256sum artifacts/* > artifacts/SHA256SUMS
 
+          echo "Collected artifacts:"
           ls -lh artifacts
 
       - name: Upload build artifacts
