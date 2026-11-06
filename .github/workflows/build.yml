@@ -7,12 +7,6 @@ name: KernelPatch Windows Build
     branches:
       - main
       - master
-    paths:
-      - 'kernel/**'
-      - 'tools/**'
-      - 'patch/**'
-      - 'version'
-      - '.github/workflows/build.yml'
 
 permissions:
   contents: read
@@ -21,10 +15,6 @@ jobs:
   build:
     name: Build Windows kptools.exe
     runs-on: windows-latest
-
-    defaults:
-      run:
-        shell: msys2 {0}
 
     steps:
       - name: Checkout source
@@ -42,36 +32,79 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-zlib
 
-      - name: Install AArch64 bare-metal toolchain
+      - name: Install Arm AArch64 bare-metal toolchain
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           $version = "14.2.rel1"
-          $name = "arm-gnu-toolchain-$version-mingw-w64-i686-aarch64-none-elf"
+          $filename = "arm-gnu-toolchain-$version-mingw-w64-i686-aarch64-none-elf.exe"
 
-          $url = "https://developer.arm.com/-/media/Files/downloads/gnu/$version/binrel/$name.zip"
+          $url = "https://developer.arm.com/-/media/Files/downloads/gnu/$version/binrel/$filename"
+          $installer = "$env:RUNNER_TEMP\$filename"
 
-          Invoke-WebRequest -Uri $url -OutFile toolchain.zip
+          Write-Host "Downloading Arm toolchain..."
+          Invoke-WebRequest -Uri $url -OutFile $installer
 
-          Expand-Archive -Path toolchain.zip -DestinationPath "$env:RUNNER_TEMP\arm-toolchain" -Force
+          Write-Host "Installing Arm toolchain silently..."
+          $process = Start-Process `
+            -FilePath $installer `
+            -ArgumentList "/S", "/P", "/R" `
+            -Wait `
+            -PassThru
 
-          $bin = "$env:RUNNER_TEMP\arm-toolchain\$name\bin"
-
-          if (!(Test-Path "$bin\aarch64-none-elf-gcc.exe")) {
-            throw "AArch64 GCC not found"
+          if ($process.ExitCode -ne 0) {
+            throw "Arm toolchain installer failed: $($process.ExitCode)"
           }
 
-          Add-Content $env:GITHUB_PATH $bin
+          Write-Host "Searching for GCC installation..."
 
-      - name: Verify toolchain
+          $searchPaths = @(
+            "C:\Program Files",
+            "C:\Program Files (x86)"
+          )
+
+          $gcc = $null
+
+          foreach ($root in $searchPaths) {
+            if (Test-Path $root) {
+              $gcc = Get-ChildItem `
+                -Path $root `
+                -Filter "aarch64-none-elf-gcc.exe" `
+                -Recurse `
+                -File `
+                -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+
+              if ($gcc) {
+                break
+              }
+            }
+          }
+
+          if ($null -eq $gcc) {
+            throw "aarch64-none-elf-gcc.exe not found after installation"
+          }
+
+          $gccBin = $gcc.Directory.FullName
+
+          Write-Host "GCC found: $($gcc.FullName)"
+
+          Add-Content $env:GITHUB_PATH $gccBin
+
+          & $gcc.FullName --version
+
+      - name: Verify toolchains
+        shell: msys2 {0}
         run: |
           set -eux
-          aarch64-none-elf-gcc --version
+
           gcc --version
           make --version
+          aarch64-none-elf-gcc --version
 
       - name: Build kpimg
+        shell: msys2 {0}
         run: |
           set -eux
 
@@ -85,6 +118,7 @@ jobs:
           test -s kpimg
 
       - name: Generate kptools headers
+        shell: msys2 {0}
         run: |
           set -eux
 
@@ -96,6 +130,7 @@ jobs:
           make hdr
 
       - name: Build Windows kptools
+        shell: msys2 {0}
         run: |
           set -eux
 
@@ -103,11 +138,13 @@ jobs:
 
           cd tools
 
+          # Do not call make clean in a fresh runner
           make -j"$(nproc)"
 
           test -s kptools
 
       - name: Collect artifacts
+        shell: msys2 {0}
         run: |
           set -eux
 
