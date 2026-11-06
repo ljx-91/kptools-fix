@@ -15,7 +15,7 @@ jobs:
   build-kpimg:
     name: Build Android kpimg on Ubuntu
     runs-on: ubuntu-22.04
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout source
@@ -24,22 +24,67 @@ jobs:
           submodules: recursive
 
       - name: Install dependencies
+        shell: bash
         run: |
+          set -eux
+
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            gcc-aarch64-none-elf \
-            binutils-aarch64-none-elf \
             make \
+            curl \
+            xz-utils \
             zlib1g-dev
 
-      - name: Verify toolchain
+      - name: Download Arm AArch64 toolchain
+        shell: bash
         run: |
           set -eux
+
+          VERSION="14.2.rel1"
+          FILE="arm-gnu-toolchain-${VERSION}-x86_64-aarch64-none-elf.tar.xz"
+
+          URL="https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/${VERSION}/binrel/${FILE}"
+
+          mkdir -p "$HOME/arm-toolchain"
+
+          curl --fail --location --retry 3 \
+            --connect-timeout 30 \
+            --max-time 600 \
+            "$URL" \
+            -o "$HOME/arm-toolchain.tar.xz"
+
+          test -s "$HOME/arm-toolchain.tar.xz"
+
+          tar -xJf "$HOME/arm-toolchain.tar.xz" \
+            -C "$HOME/arm-toolchain"
+
+          GCC="$(find "$HOME/arm-toolchain" \
+            -type f \
+            -name aarch64-none-elf-gcc \
+            -print -quit)"
+
+          if [ -z "$GCC" ]; then
+            echo "ERROR: aarch64-none-elf-gcc not found"
+            exit 1
+          fi
+
+          GCC_BIN="$(dirname "$GCC")"
+
+          echo "$GCC_BIN" >> "$GITHUB_PATH"
+
+          "$GCC" --version
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          set -eux
+
           aarch64-none-elf-gcc --version
+          aarch64-none-elf-ld --version
           make --version
 
-      - name: Build kpimg and generate headers
+      - name: Build Android kpimg
         shell: bash
         run: |
           set -eux
@@ -49,22 +94,51 @@ jobs:
 
           cd kernel
 
-          make -j"$(nproc)"
+          # Build only the ARM64 kpimg target.
+          # Do not build the default all target.
+          make -j"$(nproc)" kpimg
 
           test -s kpimg
+
+          echo "kpimg build successful"
+
+      - name: Generate kptools headers
+        shell: bash
+        run: |
+          set -eux
+
+          export TARGET_COMPILE=aarch64-none-elf-
+          export ANDROID=1
+
+          cd kernel
 
           make hdr
 
           test -s ../tools/preset.h
+          test -d ../user/uapi
+          test -s ../user/version
 
-      - name: Upload kpimg and generated headers
+      - name: Package kpimg and headers
+        shell: bash
+        run: |
+          set -eux
+
+          mkdir -p artifact/kernel
+          mkdir -p artifact/user/uapi
+          mkdir -p artifact/tools
+
+          cp kernel/kpimg artifact/kernel/kpimg
+          cp -R user/uapi/. artifact/user/uapi/
+          cp user/version artifact/user/version
+          cp tools/preset.h artifact/tools/preset.h
+
+          find artifact -type f -print
+
+      - name: Upload kpimg and headers
         uses: actions/upload-artifact@v4
         with:
           name: kpimg-and-headers
-          path: |
-            kernel/kpimg
-            user/**
-            tools/preset.h
+          path: artifact/
           if-no-files-found: error
           retention-days: 1
 
@@ -90,7 +164,7 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-zlib
 
-      - name: Download kpimg and generated headers
+      - name: Download kpimg and headers
         uses: actions/download-artifact@v4
         with:
           name: kpimg-and-headers
@@ -103,6 +177,7 @@ jobs:
 
           test -s kernel/kpimg
           test -s tools/preset.h
+          test -s user/version
           test -d user/uapi
 
           ls -lh kernel/kpimg
@@ -119,9 +194,11 @@ jobs:
 
           make -j"$(nproc)"
 
-          test -s kptools
+          test -s kptools.exe
 
-      - name: Collect Windows artifacts
+          echo "Windows kptools build successful"
+
+      - name: Collect artifacts
         shell: msys2 {0}
         run: |
           set -eux
@@ -129,13 +206,13 @@ jobs:
           mkdir -p artifacts
 
           cp kernel/kpimg artifacts/kpimg-android
-          cp tools/kptools artifacts/kptools.exe
+          cp tools/kptools.exe artifacts/kptools.exe
 
           sha256sum artifacts/* > artifacts/SHA256SUMS
 
           ls -lh artifacts
 
-      - name: Upload Windows build
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: KernelPatch-Windows-Y73S
