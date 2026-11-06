@@ -1,5 +1,5 @@
 
-name: KernelPatch Y73S Build
+name: KernelPatch Windows Build
 
 'on':
   workflow_dispatch:
@@ -19,8 +19,12 @@ permissions:
 
 jobs:
   build:
-    name: Build kpimg and kptools
-    runs-on: ubuntu-22.04
+    name: Build Windows kptools.exe
+    runs-on: windows-latest
+
+    defaults:
+      run:
+        shell: msys2 {0}
 
     steps:
       - name: Checkout source
@@ -28,48 +32,46 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -eux
-
-          sudo apt-get update
-
-          sudo apt-get install -y \
-            build-essential \
-            cmake \
-            make \
-            zlib1g-dev \
-            wget \
-            tar \
-            xz-utils \
-            zip
+      - name: Setup MSYS2 UCRT64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            base-devel
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-zlib
 
       - name: Install AArch64 bare-metal toolchain
-        shell: bash
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $version = "14.2.rel1"
+          $name = "arm-gnu-toolchain-$version-mingw-w64-i686-aarch64-none-elf"
+
+          $url = "https://developer.arm.com/-/media/Files/downloads/gnu/$version/binrel/$name.zip"
+
+          Invoke-WebRequest -Uri $url -OutFile toolchain.zip
+
+          Expand-Archive -Path toolchain.zip -DestinationPath "$env:RUNNER_TEMP\arm-toolchain" -Force
+
+          $bin = "$env:RUNNER_TEMP\arm-toolchain\$name\bin"
+
+          if (!(Test-Path "$bin\aarch64-none-elf-gcc.exe")) {
+            throw "AArch64 GCC not found"
+          }
+
+          Add-Content $env:GITHUB_PATH $bin
+
+      - name: Verify toolchain
         run: |
           set -eux
-
-          TOOLCHAIN_VERSION=14.2.rel1
-          TOOLCHAIN_NAME=arm-gnu-toolchain-${TOOLCHAIN_VERSION}-x86_64-aarch64-none-elf
-
-          wget -q \
-            "https://developer.arm.com/-/media/Files/downloads/gnu/${TOOLCHAIN_VERSION}/binrel/${TOOLCHAIN_NAME}.tar.xz" \
-            -O toolchain.tar.xz
-
-          sudo mkdir -p /opt/arm-toolchain
-
-          sudo tar -xf toolchain.tar.xz \
-            -C /opt/arm-toolchain
-
-          TOOLCHAIN_BIN="/opt/arm-toolchain/${TOOLCHAIN_NAME}/bin"
-
-          echo "${TOOLCHAIN_BIN}" >> "$GITHUB_PATH"
-
-          "${TOOLCHAIN_BIN}/aarch64-none-elf-gcc" --version
+          aarch64-none-elf-gcc --version
+          gcc --version
+          make --version
 
       - name: Build kpimg
-        shell: bash
         run: |
           set -eux
 
@@ -81,12 +83,8 @@ jobs:
           make -j"$(nproc)"
 
           test -s kpimg
-          test -s kpimg.elf
-
-          echo "kpimg build successful"
 
       - name: Generate kptools headers
-        shell: bash
         run: |
           set -eux
 
@@ -97,8 +95,7 @@ jobs:
 
           make hdr
 
-      - name: Build kptools
-        shell: bash
+      - name: Build Windows kptools
         run: |
           set -eux
 
@@ -106,39 +103,27 @@ jobs:
 
           cd tools
 
-          # Do not run make clean:
-          # clean may fail when object files do not exist.
-
           make -j"$(nproc)"
 
           test -s kptools
 
-          echo "kptools build successful"
-
-      - name: Collect build artifacts
-        shell: bash
+      - name: Collect artifacts
         run: |
           set -eux
 
           mkdir -p artifacts
 
-          test -s kernel/kpimg
-          test -s kernel/kpimg.elf
-          test -s tools/kptools
-
           cp kernel/kpimg artifacts/kpimg-android
-          cp kernel/kpimg.elf artifacts/kpimg-android.elf
-          cp tools/kptools artifacts/kptools-linux
+          cp tools/kptools artifacts/kptools.exe
 
           sha256sum artifacts/* > artifacts/SHA256SUMS
 
-          echo "Collected artifacts:"
           ls -lh artifacts
 
-      - name: Upload build artifacts
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: KernelPatch-Y73S-build
+          name: KernelPatch-Windows-Y73S
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
