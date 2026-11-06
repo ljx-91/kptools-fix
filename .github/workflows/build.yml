@@ -15,6 +15,7 @@ jobs:
   build:
     name: Build Windows kptools.exe
     runs-on: windows-latest
+    timeout-minutes: 45
 
     steps:
       - name: Checkout source
@@ -32,69 +33,89 @@ jobs:
             mingw-w64-ucrt-x86_64-gcc
             mingw-w64-ucrt-x86_64-zlib
 
-      - name: Install Arm AArch64 bare-metal toolchain
+      - name: Download Arm toolchain ZIP
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           $version = "14.2.rel1"
-          $filename = "arm-gnu-toolchain-$version-mingw-w64-i686-aarch64-none-elf.exe"
+          $filename = "arm-gnu-toolchain-$version-mingw-w64-i686-aarch64-none-elf.zip"
 
-          $url = "https://developer.arm.com/-/media/Files/downloads/gnu/$version/binrel/$filename"
-          $installer = "$env:RUNNER_TEMP\$filename"
+          $url = "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/$version/binrel/$filename"
 
-          Write-Host "Downloading Arm toolchain..."
-          Invoke-WebRequest -Uri $url -OutFile $installer
+          $archive = "$env:RUNNER_TEMP\arm-toolchain.zip"
 
-          Write-Host "Installing Arm toolchain silently..."
-          $process = Start-Process `
-            -FilePath $installer `
-            -ArgumentList "/S", "/P", "/R" `
-            -Wait `
-            -PassThru
+          Write-Host "Downloading: $filename"
 
-          if ($process.ExitCode -ne 0) {
-            throw "Arm toolchain installer failed: $($process.ExitCode)"
+          curl.exe `
+            --fail `
+            --location `
+            --retry 3 `
+            --connect-timeout 30 `
+            --max-time 300 `
+            "$url" `
+            --output "$archive"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Toolchain download failed"
           }
 
-          Write-Host "Searching for GCC installation..."
-
-          $searchPaths = @(
-            "C:\Program Files",
-            "C:\Program Files (x86)"
-          )
-
-          $gcc = $null
-
-          foreach ($root in $searchPaths) {
-            if (Test-Path $root) {
-              $gcc = Get-ChildItem `
-                -Path $root `
-                -Filter "aarch64-none-elf-gcc.exe" `
-                -Recurse `
-                -File `
-                -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-
-              if ($gcc) {
-                break
-              }
-            }
+          if (!(Test-Path $archive)) {
+            throw "Toolchain ZIP not found"
           }
+
+          if ((Get-Item $archive).Length -lt 1000000) {
+            throw "Toolchain ZIP is unexpectedly small"
+          }
+
+          Write-Host "Download complete"
+
+      - name: Extract and configure Arm toolchain
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $archive = "$env:RUNNER_TEMP\arm-toolchain.zip"
+          $destination = "$env:RUNNER_TEMP\arm-toolchain"
+
+          New-Item `
+            -ItemType Directory `
+            -Path $destination `
+            -Force | Out-Null
+
+          Write-Host "Extracting ZIP..."
+
+          Expand-Archive `
+            -Path $archive `
+            -DestinationPath $destination `
+            -Force
+
+          Write-Host "Locating aarch64-none-elf-gcc.exe..."
+
+          $gcc = Get-ChildItem `
+            -Path $destination `
+            -Filter "aarch64-none-elf-gcc.exe" `
+            -Recurse `
+            -File |
+            Select-Object -First 1
 
           if ($null -eq $gcc) {
-            throw "aarch64-none-elf-gcc.exe not found after installation"
+            throw "aarch64-none-elf-gcc.exe not found"
           }
 
           $gccBin = $gcc.Directory.FullName
 
-          Write-Host "GCC found: $($gcc.FullName)"
+          Write-Host "GCC: $($gcc.FullName)"
 
           Add-Content $env:GITHUB_PATH $gccBin
 
           & $gcc.FullName --version
 
-      - name: Verify toolchains
+          if ($LASTEXITCODE -ne 0) {
+            throw "GCC verification failed"
+          }
+
+      - name: Verify build environment
         shell: msys2 {0}
         run: |
           set -eux
@@ -117,6 +138,8 @@ jobs:
 
           test -s kpimg
 
+          echo "kpimg build completed"
+
       - name: Generate kptools headers
         shell: msys2 {0}
         run: |
@@ -138,10 +161,12 @@ jobs:
 
           cd tools
 
-          # Do not call make clean in a fresh runner
+          # Avoid make clean on a fresh build runner
           make -j"$(nproc)"
 
           test -s kptools
+
+          file kptools
 
       - name: Collect artifacts
         shell: msys2 {0}
@@ -149,6 +174,9 @@ jobs:
           set -eux
 
           mkdir -p artifacts
+
+          test -s kernel/kpimg
+          test -s tools/kptools
 
           cp kernel/kpimg artifacts/kpimg-android
           cp tools/kptools artifacts/kptools.exe
