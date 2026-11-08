@@ -54,3 +54,29 @@ For the reported Y73S Linux 4.14.141 kernel, `new_era = kmajor > 5` is false, so
 - Device boot: not verified.
 
 A passing build or byte-pattern check is not proof that the Y73S device will boot.
+
+
+## Follow-up on hardening branch (2026-11-08)
+
+The isolated branch `y73s-runtime-contract-hardening-20261108` adds source regression gates and updates the current status. The following previously recorded source gaps are guarded in the current branch source:
+
+- `_paging_init()` rejects a zero, unaligned, or overflowing main destination PA before `memblock_mark_nomap()`.
+- `get_or_create_pte()` traps when an intermediate page-table allocation returns zero before writing a table descriptor.
+- The Y73S linear-map probe is checked to run only after the original `paging_init()` returns, and checks the exact-page probe and release result.
+- The known-bad `memblock_alloc_try_nid` virtual-return fallback is rejected by the resolver and by the new source regression verifier.
+
+The new CI verifier is `scripts/verify_y73s_runtime_contract.py`. It is a source-level regression check, not a replacement for disassembling the target kernel and validating the ABI independently.
+
+### Verified CI result
+
+- Workflow run: https://github.com/ljx-91/kptools-fix/actions/runs/42474139101
+- Commit: `01b8b028d3eb258bfc340a75868945220a01e1ed`
+- Arm GNU Toolchain 14.2.rel1 build: passed
+- ELF stack-frame verifier: passed
+- Existing memblock source contract verifier: passed
+- New runtime contract verifier: passed
+- KPIMG map-relocation verifier: passed
+- Artifact: `y73s-kpimg-arm-gnu-gcc14-audit`
+- Artifact SHA-256: `8a9a18167fce3b7bb40d76eeaeb11dacbf86e71a2dd4bd626c6ceb0732ad8742`
+
+This validates the CI build and the listed static checks only. It does not establish device boot, APatch initialization, AVB validity, or root availability. No device-side test or partition write was performed.
