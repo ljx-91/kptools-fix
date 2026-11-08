@@ -103,8 +103,10 @@ jobs:
           make -j"$(nproc)" kpimg
 
           test -s kpimg
+          test -s kpimg.elf
+          python3 ../scripts/verify_kpimg_elf_stack_frame.py kpimg.elf
 
-          echo "kpimg build successful"
+          echo "Y73S KPIMG build and ELF stack verification successful"
 
       - name: Generate kptools headers
         shell: bash
