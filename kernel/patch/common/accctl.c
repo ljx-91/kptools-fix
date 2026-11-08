@@ -316,7 +316,7 @@ static int slow_avc_audit_replace(struct selinux_state *_state, void *_ssid, voi
     }
 
     struct task_ext *ext = get_current_task_ext();
-    if (unlikely(task_ext_valid(ext) && (ext->sel_allow || ext->priv_sel_allow))) {
+    if (unlikely(task_ext_valid(ext) && (READ_ONCE(ext->sel_allow) || READ_ONCE(ext->priv_sel_allow)))) {
         return 0;
     }
 
