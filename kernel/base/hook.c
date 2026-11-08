@@ -90,6 +90,21 @@ static int is_in_tramp(hook_t *hook, uint64_t addr)
     return 0;
 }
 
+/*
+ * ADRP always forms a 4-KiB-aligned page address, independent of the
+ * kernel's configured translation granule. Reject the whole page if it
+ * overlaps bytes that hook_install will overwrite: a following ADD may
+ * otherwise turn an apparently safe page base into a pointer into the
+ * replaced prologue.
+ */
+static int is_page_in_tramp(hook_t *hook, uint64_t page_addr)
+{
+    uint64_t tramp_start = hook->origin_addr;
+    uint64_t tramp_end = tramp_start + hook->tramp_insts_num * 4;
+    if (tramp_end < tramp_start || page_addr > UINT64_MAX - 0xfffULL) return 1;
+    return page_addr < tramp_end && page_addr + 0x1000ULL > tramp_start;
+}
+
 static uint64_t relo_in_tramp(hook_t *hook, uint64_t addr)
 {
     uint64_t tramp_start = hook->origin_addr;
@@ -197,7 +212,7 @@ static __noinline hook_err_t relo_adr(hook_t *hook, uint64_t inst_addr, uint32_t
         if (is_in_tramp(hook, addr)) return -HOOK_BAD_RELO;
     } else {
         addr = (inst_addr + sign64_extend((immhi << 14u) | (immlo << 12u), 33u)) & 0xFFFFFFFFFFFFF000;
-        if (is_in_tramp(hook, addr)) return -HOOK_BAD_RELO;
+        if (is_page_in_tramp(hook, addr)) return -HOOK_BAD_RELO;
     }
     buf[0] = 0x58000040u | xd; // LDR Xd, #8
     buf[1] = 0x14000003; // B #12
