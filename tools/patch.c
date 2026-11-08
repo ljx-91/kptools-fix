@@ -397,15 +397,21 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
     char linux_banner_prefix[] = "Linux version ";
     size_t prefix_len = strlen(linux_banner_prefix);
     const char *imgend = pimg->kimg + pimg->kimg_len;
-    const char *banner = (char *)pimg->kimg;
-    while ((banner = (char *)memmem(banner + 1, imgend - banner, linux_banner_prefix, prefix_len)) != NULL) {
+    const char *banner = memmem(pimg->kimg, (size_t)pimg->kimg_len,
+                                linux_banner_prefix, prefix_len);
+    while (banner) {
         size_t banner_remaining = (size_t)(imgend - banner);
-        if (banner_remaining > prefix_len + 1 &&
-            isdigit((unsigned char)banner[prefix_len]) && banner[prefix_len + 1] == '.' &&
-            memchr(banner, '\0', banner_remaining)) {
+        const char *banner_end = memchr(banner, '\0', banner_remaining);
+        if (banner_end && (size_t)(banner_end - banner) > prefix_len + 1 &&
+            isdigit((unsigned char)banner[prefix_len]) && banner[prefix_len + 1] == '.') {
             pimg->banner = banner;
             break;
         }
+        const char *next = banner + 1;
+        size_t next_remaining = (size_t)(imgend - next);
+        banner = next_remaining >= prefix_len
+                     ? memmem(next, next_remaining, linux_banner_prefix, prefix_len)
+                     : NULL;
     }
     if (!pimg->banner) tools_loge_exit("can't find linux banner\n");
 
