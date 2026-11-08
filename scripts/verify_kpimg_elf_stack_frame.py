@@ -5,10 +5,11 @@ import hashlib
 import struct
 import sys
 
-PROLOGUE = [
-    0xA9017BFD, 0x910043FD, 0xA90253F3, 0x52800034, 0xA9035BF5,
-    0xD2800015, 0xA90463F7, 0xA9056BF9, 0xA90673FB,
-]
+# GCC 14.2 Y73S build: stp x29, x30, [sp, #-frame]!, then mov x29, sp.
+# The immediate is the signed 7-bit STP pair offset, scaled by 8.
+STP_FP_LR_PREINDEX_MASK = 0xFFC07FFF
+STP_FP_LR_PREINDEX = 0xA9807BFD
+MOV_FP_SP = 0x910003FD
 RESTORE = [
     0xF94003AA, 0xA9415153, 0xA9425955, 0xA9436157,
     0xA9446959, 0xA945715B, 0xF940015D, 0xF940055E,
@@ -102,22 +103,18 @@ def main(path):
     pw = words_for(blob, paging)
     sw = words_for(blob, start)
 
-    frame_candidates = []
-    for i in range(2, len(pw) - len(PROLOGUE) + 1):
-        if pw[i:i + len(PROLOGUE)] != PROLOGUE:
-            continue
-        sub, add = pw[i - 2], pw[i - 1]
-        if (sub & 0xFFC003FF) != 0xD10003FF:
-            continue
-        if (add & 0xFFC003FF) != 0x910003E0:
-            continue
-        frame_shift = 12 if ((sub >> 22) & 1) else 0
-        frame_size = ((sub >> 10) & 0xFFF) << frame_shift
-        fp_offset = (PROLOGUE[1] >> 10) & 0xFFF
-        frame_candidates.append((frame_size, fp_offset))
-    if len(frame_candidates) != 1:
-        raise ValueError(f"_paging_init frame pattern missing/ambiguous: {frame_candidates}")
-    frame_size, fp_offset = frame_candidates[0]
+    if len(pw) < 2 or (pw[0] & STP_FP_LR_PREINDEX_MASK) != STP_FP_LR_PREINDEX:
+        raise ValueError("_paging_init does not begin with the expected FP/LR pre-index save")
+    if pw[1] != MOV_FP_SP:
+        raise ValueError("_paging_init does not establish x29 = SP immediately after its frame save")
+
+    imm7 = (pw[0] >> 15) & 0x7F
+    if imm7 & 0x40:
+        imm7 -= 0x80
+    frame_size = -imm7 * 8
+    fp_offset = 0
+    if frame_size < 96 or frame_size % 16:
+        raise ValueError(f"implausible _paging_init frame size: 0x{frame_size:x}")
     expected_sp = frame_size - fp_offset
 
     # Confirm start saves a frame record and establishes x29 before its tail return.
@@ -143,7 +140,7 @@ def main(path):
     print(f"SHA256: {hashlib.sha256(blob).hexdigest()}")
     print(f"_paging_init: 0x{paging['value']:x} size=0x{paging['size']:x} section={paging['section']}")
     print(f"start:         0x{start['value']:x} size=0x{start['size']:x} section={start['section']}")
-    print(f"frame=0x{frame_size:x}; FP offset=0x{fp_offset:x}; expected SP restore=0x{expected_sp:x}; actual=0x{actual_sp:x}")
+    print(f"GCC frame=0x{frame_size:x}; FP offset=0x{fp_offset:x}; expected SP restore=0x{expected_sp:x}; actual=0x{actual_sp:x}")
     if actual_sp != expected_sp:
         raise ValueError("SP restore mismatch; refusing KPIMG artifact")
     print("[PASS] ELF-symbol-scoped Y73S stack handoff verifier")
