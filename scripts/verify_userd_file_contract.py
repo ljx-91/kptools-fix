@@ -57,7 +57,7 @@ def main():
 
     print("[PASS] userd file reads enforce size and exact-read bounds")
     print("[PASS] package lookup validates pointers and frees buffers")
-    apk = body(src, "static bool apk_has_v1_signature(")
+    apk = body(src, "static int apk_has_v1_signature(")
     need(r"cd_end\s*-\s*entry_start\s*<\s*46", apk,
          "APK central-directory entry header must be bounded")
     need(r"name_len\s*>\s*cd_end\s*-\s*entry_data_start", apk,
