@@ -166,47 +166,48 @@ KP_EXPORT_SYMBOL(su_allow_uid_nums);
 
 static int allow_uids_cb(struct kstorage *kstorage, void *udata)
 {
-    struct
-    {
-        int is_user;
+    struct {
         uid_t *out_uids;
         int idx;
         int out_num;
     } *up = (typeof(up))udata;
 
-    if (up->idx >= up->out_num) {
-        return -ENOBUFS;
-    }
-
+    if (up->idx >= up->out_num) return -ENOBUFS;
     struct su_profile *profile = (struct su_profile *)kstorage->data;
-
-    if (up->is_user) {
-        int cprc = compat_copy_to_user(up->out_uids + up->idx, &profile->uid, sizeof(uid_t));
-        if (cprc <= 0) {
-            logkfd("compat_copy_to_user error: %d", cprc);
-            return cprc;
-        }
-    } else {
-        up->out_uids[up->idx] = profile->uid;
-    }
-
-    up->idx++;
-
+    up->out_uids[up->idx++] = profile->uid;
     return 0;
 }
 
 int su_allow_uids(int is_user, uid_t *out_uids, int out_num)
 {
-    struct
-    {
-        int iu;
-        uid_t *up;
+    if (!out_uids || out_num < 0) return -EINVAL;
+    if (!out_num) return 0;
+    if ((unsigned long)out_num > (~0UL / sizeof(uid_t))) return -EOVERFLOW;
+
+    /* on_each_kstorage_elem invokes callbacks under RCU; never fault user pages there. */
+    uid_t *snapshot = vmalloc((unsigned long)out_num * sizeof(uid_t));
+    if (!snapshot) return -ENOMEM;
+
+    struct {
+        uid_t *out_uids;
         int idx;
         int out_num;
-    } udata = { is_user, out_uids, 0, out_num };
+    } udata = { snapshot, 0, out_num };
 
     on_each_kstorage_elem(su_kstorage_gid, allow_uids_cb, &udata);
 
+    if (is_user && udata.idx) {
+        int bytes = udata.idx * sizeof(uid_t);
+        int copied = compat_copy_to_user(out_uids, snapshot, bytes);
+        if (copied != bytes) {
+            kvfree(snapshot);
+            return -EFAULT;
+        }
+    } else if (udata.idx) {
+        memcpy(out_uids, snapshot, udata.idx * sizeof(uid_t));
+    }
+
+    kvfree(snapshot);
     return udata.idx;
 }
 KP_EXPORT_SYMBOL(su_allow_uids);
