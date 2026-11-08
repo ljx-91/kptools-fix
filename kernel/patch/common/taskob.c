@@ -252,10 +252,12 @@ int task_observer()
     /* reclaim task_ext slot when a task exits, so the table doesn't fill up */
     unsigned long do_exit_addr = kallsyms_lookup_name("do_exit");
     if (do_exit_addr) {
-        rc |= hook_wrap1((void *)do_exit_addr, before_do_exit, 0, 0);
-        log_boot("hook do_exit: %llx, rc: %d\n", do_exit_addr, rc);
+        int exit_rc = hook_wrap1((void *)do_exit_addr, before_do_exit, 0, 0);
+        rc |= exit_rc;
+        log_boot("hook do_exit: %llx, rc: %d\\n", do_exit_addr, exit_rc);
     } else {
-        log_boot("hook do_exit: addr=0 NOT FOUND\n");
+        log_boot("hook do_exit: addr=0 NOT FOUND\\n");
+        if (!rc) rc = HOOK_BAD_ADDRESS;
     }
 
     return rc;
