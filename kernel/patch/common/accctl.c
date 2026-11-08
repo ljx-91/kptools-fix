@@ -198,13 +198,12 @@ int commit_common_su(uid_t to_uid, const char *sctx)
         goto out;
     }
 
-    struct group_info *group_info = groups_alloc(0);
-    if (!group_info) {
-        abort_creds(new);
-        rc = -ENOMEM;
-        goto out;
-    }
-    set_groups(new, group_info);
+    /*
+     * Keep the prepared credential's existing group_info. set_groups() takes
+     * an additional group_info reference; this KP shim does not expose the
+     * randomized group_info->usage offset needed for put_group_info(), so
+     * allocating a replacement here would leak one reference per transition.
+     */
 
     if (sctx && sctx[0]) {
         sel_allow_after_commit = !!set_security_override_from_ctx(new, sctx);
