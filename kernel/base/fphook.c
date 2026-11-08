@@ -321,7 +321,7 @@ void fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after)
               fp_addr, rc);
         return;
     }
-    hook_mem_free(chain);
+    hook_mem_retire(chain);
     logkv("Unwrap func pointer: %llx, %llx, %llx\n", fp_addr, before, after);
 }
 KP_EXPORT_SYMBOL(fp_hook_unwrap);
