@@ -142,7 +142,8 @@ static int reloc_insn_imm(enum kp_aarch64_reloc_op op, void *place, u64 val, int
 int kp_apply_relocate(Elf64_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 		      unsigned int relsec, struct kp_module *me)
 {
-	return 0;
+	/* AArch64 KPMs are expected to use RELA. Never report unapplied REL as success. */
+	return -EOPNOTSUPP;
 }
 
 static unsigned int kp_reloc_write_width(unsigned int type)
