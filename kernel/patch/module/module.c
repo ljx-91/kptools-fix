@@ -146,7 +146,7 @@ static unsigned long get_sh_size(struct load_info *info, const char *secname)
     int idx = find_sec(info, secname);
     if (!idx) return 0;
     Elf_Shdr *infosec = &info->sechdrs[idx];
-    return infosec->sh_entsize;
+    return infosec->sh_size;
 }
 
 static void layout_sections(struct module *mod, struct load_info *info)
@@ -242,20 +242,28 @@ static int simplify_symbols(struct module *mod, struct load_info *info)
 
 static int apply_relocations(struct module *mod, const struct load_info *info)
 {
-    int rc = 0;
     unsigned int i;
+
     for (i = 1; i < info->hdr->e_shnum; i++) {
-        unsigned int infosec = info->sechdrs[i].sh_info;
-        if (infosec >= info->hdr->e_shnum) continue;
-        if (!(info->sechdrs[infosec].sh_flags & SHF_ALLOC)) continue;
-        if (info->sechdrs[i].sh_type == SHT_REL) {
-            rc = apply_relocate(info->sechdrs, info->strtab, info->index.sym, i, mod);
-        } else if (info->sechdrs[i].sh_type == SHT_RELA) {
-            rc = apply_relocate_add(info->sechdrs, info->strtab, info->index.sym, i, mod);
-        }
-        if (rc < 0) break;
+        Elf_Shdr *relsec = &info->sechdrs[i];
+        unsigned int target = relsec->sh_info;
+
+        if (relsec->sh_type != SHT_REL && relsec->sh_type != SHT_RELA) continue;
+        if (target == 0 || target >= info->hdr->e_shnum) return -ENOEXEC;
+        if (relsec->sh_link != info->index.sym) return -ENOEXEC;
+
+        /* Non-allocatable debug sections are not part of the loaded image. */
+        if (!(info->sechdrs[target].sh_flags & SHF_ALLOC)) continue;
+
+        /* AArch64 REL entries are not implemented: never report a no-op as success. */
+        if (relsec->sh_type == SHT_REL) return -ENOEXEC;
+        if (relsec->sh_entsize != sizeof(Elf64_Rela) ||
+            relsec->sh_size % sizeof(Elf64_Rela)) return -ENOEXEC;
+
+        int rc = apply_relocate_add(info->sechdrs, info->strtab, info->index.sym, i, mod);
+        if (rc < 0) return rc;
     }
-    return rc;
+    return 0;
 }
 
 // todo: free .strtab and .symtab after relocation
