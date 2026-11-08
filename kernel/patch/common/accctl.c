@@ -25,6 +25,7 @@
 #include <security/selinux/include/security.h>
 #include <predata.h>
 #include <linux/slab.h>
+#include <linux/compiler.h>
 
 extern void kp_debug_write(const char *fmt, ...);
 
@@ -221,7 +222,7 @@ int commit_common_su(uid_t to_uid, const char *sctx)
         goto out;
     }
 
-    ext->sel_allow = sel_allow_after_commit;
+    WRITE_ONCE(ext->sel_allow, sel_allow_after_commit);
     /*
      * Do not clear _TIF_SECCOMP or overwrite seccomp->mode directly.
      * The seccomp filter pointer and its reference-counted lifetime must stay
@@ -232,7 +233,7 @@ int commit_common_su(uid_t to_uid, const char *sctx)
 
 out:
     logkfi("pid: %d, tgid: %d, to_uid: %d, sctx: %s, via_hook: %d\n", ext ? ext->pid : -1, ext ? ext->tgid : -1,
-           to_uid, sctx, ext ? ext->sel_allow : 0);
+           to_uid, sctx, ext ? READ_ONCE(ext->sel_allow) : 0);
     return rc;
 }
 
@@ -278,7 +279,7 @@ static int avc_denied_replace(struct selinux_state *_state, void *_ssid, void *_
     }
 
     struct task_ext *ext = get_current_task_ext();
-    if (unlikely(task_ext_valid(ext) && (ext->sel_allow || ext->priv_sel_allow))) {
+    if (unlikely(task_ext_valid(ext) && (READ_ONCE(ext->sel_allow) || READ_ONCE(ext->priv_sel_allow)))) {
         goto allow;
     }
 
