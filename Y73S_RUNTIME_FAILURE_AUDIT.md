@@ -203,3 +203,6 @@ The downloaded ELF disassembly of `branch_func_addr` shows the eight-entry stack
 ### CFI scope clarification
 
 The built KPIMG ELF contains symbols named `bypass_kcfi`, `replace_report_cfi_failure`, and `replace__cfi_slowpath`, but the current repository source tree does not expose their matching implementation as a CFI source file. Their ELF disassembly shows address-range filtering and tail-branching to saved original callbacks for addresses outside KP-owned ranges. The exact callback prototypes, vendor CFI implementation, and call-site ABI cannot be proven from these KP symbols alone. Treat CFI bypass as **unverified**, not as a completed compatibility result. The original Y73S vendor kernel image and its matching symbol/prototype context are required for a sound ABI audit.
+
+
+**Checksum label correction:** the workflow's `SHA256:` line is the ELF hash, not the raw KPIMG hash. For artifact `13615726175`, the raw `kpimg-android` SHA-256 is `28ed397a9e9bdb4489bbfbdd50333097baf68f6a2ce4517608c80a4f288d2863`; the ELF SHA-256 is `b7ceed6f78ff6f44a7326618cdf87affabce6dc5c1b5a561cce4d330b36d7252`. Both match the artifact's `SHA256SUMS.txt` entries when compared by filename.
