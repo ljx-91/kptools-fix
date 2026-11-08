@@ -29,7 +29,7 @@ EXPECTED_SAVES = {
 
 
 def cstr(blob, offset):
-    end = blob.find(b"\\0", offset)
+    end = blob.find(b"\0", offset)
     if end < 0:
         raise ValueError("unterminated ELF string")
     return blob[offset:end].decode("utf-8", "replace")
@@ -37,7 +37,7 @@ def cstr(blob, offset):
 
 def load_elf(path):
     blob = Path(path).read_bytes()
-    if len(blob) < 64 or blob[:4] != b"\\x7fELF":
+    if len(blob) < 64 or blob[:4] != b"\x7fELF":
         raise ValueError("input is not an ELF file")
     if blob[4] != 2 or blob[5] != 1:
         raise ValueError("expected ELF64 little-endian")
