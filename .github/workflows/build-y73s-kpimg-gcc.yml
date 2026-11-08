@@ -1,51 +1,74 @@
-name: Build Y73S Android KPIMG (Arm GNU GCC)
-on:
+name: Build Y73S Android KPIMG (Arm GNU GCC 14.2)
+
+'on':
   workflow_dispatch:
   push:
+    branches:
+      - y73s-gcc-audit-20261108
     paths:
       - 'kernel/**'
       - 'scripts/**'
       - '.github/workflows/build-y73s-kpimg-gcc.yml'
+
 permissions:
   contents: read
+
 concurrency:
-  group: y73s-kpimg-gcc-${{ github.ref }}
+  group: y73s-gcc14-audit-${{ github.ref }}
   cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
       - name: Install host tools
         run: sudo apt-get update && sudo apt-get install -y make python3 binutils xz-utils
-      - name: Install Arm GNU Toolchain 12.2.rel1
+
+      - name: Install Arm GNU Toolchain 14.2.rel1
         run: |
           set -euxo pipefail
-          archive=arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz
-          curl --fail --location --retry 3 -o "$archive" "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/$archive"
+          version=14.2.rel1
+          archive="arm-gnu-toolchain-${version}-x86_64-aarch64-none-elf.tar.xz"
+          url="https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/${version}/binrel/${archive}"
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 600 -o "$archive" "$url"
           tar -xJf "$archive"
-          test -x arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-gcc
-      - name: Build and audit
+          gcc_path="$(find "arm-gnu-toolchain-${version}-x86_64-aarch64-none-elf" -type f -name aarch64-none-elf-gcc -print -quit)"
+          test -n "$gcc_path"
+          echo "$(dirname "$gcc_path")" >> "$GITHUB_PATH"
+          "$gcc_path" --version
+
+      - name: Build and audit Y73S KPIMG
         run: |
           set -euxo pipefail
-          export TARGET_COMPILE="$GITHUB_WORKSPACE/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-"
-          test "$("${TARGET_COMPILE}gcc" -dumpmachine)" = aarch64-none-elf
-          "${TARGET_COMPILE}gcc" --version | head -n 1 | grep -Eiq 'GNU|GCC'
+          export TARGET_COMPILE=aarch64-none-elf-
+          export ANDROID=1
+          export Y73S_TARGET=1
           cd kernel
           make clean
-          ANDROID=1 make hdr kpimg
+          make -j"$(nproc)" hdr kpimg
+          test -s kpimg
+          test -s kpimg.elf
+          aarch64-none-elf-readelf -h kpimg.elf
+          aarch64-none-elf-objdump -d --disassemble=_paging_init kpimg.elf
+          aarch64-none-elf-objdump -d --disassemble=start kpimg.elf
+          python3 ../scripts/verify_kpimg_elf_stack_frame.py kpimg.elf
+          python3 ../scripts/verify_kpimg_map_relocation.py kpimg.elf
+          mkdir -p ../dist-y73s
+          cp kpimg ../dist-y73s/kpimg-android
+          cp kpimg.elf ../dist-y73s/kpimg-android.elf
+          cp ../tools/preset.h ../dist-y73s/preset.h
+          cp ../user/version ../dist-y73s/version
           cd ..
-          mkdir -p dist-y73s
-          cp kernel/kpimg dist-y73s/kpimg-android
-          cp kernel/kpimg.elf dist-y73s/kpimg-android.elf
-          python3 scripts/verify_kpimg_stack_frame.py dist-y73s/kpimg-android | tee dist-y73s/verification.txt
-          "${TARGET_COMPILE}readelf" -h dist-y73s/kpimg-android.elf > dist-y73s/elf-header.txt
-          grep -Eq 'Class:[[:space:]]+ELF64' dist-y73s/elf-header.txt
-          grep -Eq 'Machine:[[:space:]]+AArch64' dist-y73s/elf-header.txt
           sha256sum dist-y73s/* > dist-y73s/SHA256SUMS.txt
+
       - uses: actions/upload-artifact@v4
         with:
-          name: y73s-kpimg-arm-gnu-gcc-audit
+          name: y73s-kpimg-arm-gnu-gcc14-audit
           path: dist-y73s/
           if-no-files-found: error
           retention-days: 14
