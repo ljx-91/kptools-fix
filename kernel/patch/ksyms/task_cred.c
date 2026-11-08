@@ -192,7 +192,10 @@ int resolve_cred_offset()
     if (!init_task || !init_cred || task_struct_offset.cred_offset < 0 ||
         task_struct_offset.real_cred_offset < 0 ||
         task_struct_offset.cred_offset > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *) ||
-        task_struct_offset.real_cred_offset > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *)) {
+        task_struct_offset.real_cred_offset > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *) ||
+        task_struct_offset.cred_offset == task_struct_offset.real_cred_offset ||
+        ((unsigned int)task_struct_offset.cred_offset % sizeof(void *)) ||
+        ((unsigned int)task_struct_offset.real_cred_offset % sizeof(void *))) {
         return -EINVAL;
     }
     if (reinit_bllist(128)) return -ENOMEM;
@@ -471,7 +474,10 @@ int resolve_task_offset()
 
     if (cred_offset_idx != 2 || cred_offset[0] < 0 || cred_offset[1] < 0 ||
         cred_offset[0] > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *) ||
-        cred_offset[1] > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *)) {
+        cred_offset[1] > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *) ||
+        cred_offset[0] == cred_offset[1] ||
+        ((unsigned int)cred_offset[0] % sizeof(void *)) ||
+        ((unsigned int)cred_offset[1] % sizeof(void *))) {
         revert_current(backup);
         vfree(task);
         log_boot("    failed to resolve both task cred pointers\n");
