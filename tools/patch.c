@@ -402,7 +402,7 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
         size_t banner_remaining = (size_t)(imgend - banner);
         if (banner_remaining > prefix_len + 1 &&
             isdigit((unsigned char)banner[prefix_len]) && banner[prefix_len + 1] == '.' &&
-            memchr(banner, '\\0', banner_remaining)) {
+            memchr(banner, '\0', banner_remaining)) {
             pimg->banner = banner;
             break;
         }
