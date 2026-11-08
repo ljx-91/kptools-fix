@@ -515,6 +515,8 @@ int parse_image_patch_info_path(const char *kimg_path, patched_kimg_t *pimg)
 
 int print_image_patch_info(patched_kimg_t *pimg)
 {
+    if (!pimg || !pimg->banner || pimg->embed_item_num < 0 ||
+        pimg->embed_item_num > EXTRA_ITEM_MAX_NUM) return -EINVAL;
     int rc = 0;
 
     preset_t *preset = pimg->preset;
@@ -567,7 +569,7 @@ int print_image_patch_info_path(const char *kimg_path)
     kernel_file_t kernel_file;
     read_kernel_file(kimg_path, &kernel_file);
     int rc = parse_image_patch_info(kernel_file.kimg, kernel_file.kimg_len, &pimg);
-    print_image_patch_info(&pimg);
+    if (!rc) rc = print_image_patch_info(&pimg);
     free_kernel_file(&kernel_file);
     return rc;
 }
