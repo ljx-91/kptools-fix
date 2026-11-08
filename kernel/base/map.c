@@ -522,17 +522,31 @@ void __noinline _paging_init()
     uint64_t page_size = 1 << data->page_shift;
     uint64_t old_start_pa = data->start_offset + data->kernel_pa;
     uint64_t reserve_size = data->start_img_size + data->extra_size;
-    uint64_t align_extra_size = (data->extra_size + page_size - 1) & ~(page_size - 1);
-    uint64_t all_size = data->start_size + align_extra_size + data->alloc_size;
+    if (!reserve_size || old_start_pa > ~(uint64_t)0 - reserve_size) __builtin_trap();
 
-    // reserve old start
-    ((memblock_reserve_f)data->map_symbol.memblock_reserve_relo)(old_start_pa, reserve_size);
+    // memblock_reserve() returns 0 on success and a negative errno on failure.
+    // Do not allocate the destination if protecting the source image failed.
+    if (((memblock_reserve_f)data->map_symbol.memblock_reserve_relo)(old_start_pa, reserve_size))
+        __builtin_trap();
+
+    // Check every size calculation before asking memblock to reserve memory.
+    if (data->extra_size > ~(uint64_t)0 - (page_size - 1)) __builtin_trap();
+    uint64_t align_extra_size = (data->extra_size + page_size - 1) & ~(page_size - 1);
+    if (data->start_size > ~(uint64_t)0 - align_extra_size) __builtin_trap();
+    uint64_t start_and_extra = data->start_size + align_extra_size;
+    if (data->alloc_size > ~(uint64_t)0 - start_and_extra) __builtin_trap();
+    uint64_t all_size = start_and_extra + data->alloc_size;
+    if (!all_size || all_size > ~(uint64_t)0 - (page_size - 1)) __builtin_trap();
+
     // alloc
     uint64_t start_pa = map_phys_alloc(data, all_size, page_size);
     if (!start_pa || (start_pa & (page_size - 1)) || start_pa > ~(uint64_t)0 - all_size) __builtin_trap();
-    // mark all size nomap
-    if (data->map_symbol.memblock_mark_nomap_relo)
-        ((memblock_mark_nomap_f)(data->map_symbol.memblock_mark_nomap_relo))(start_pa, all_size);
+
+    // A failed NOMAP update means the destination is not in the state expected
+    // by the later mapping/copy path. Stop before touching it.
+    if (data->map_symbol.memblock_mark_nomap_relo &&
+        ((memblock_mark_nomap_f)data->map_symbol.memblock_mark_nomap_relo)(start_pa, all_size))
+        __builtin_trap();
 
     // paging_init
     uint64_t paging_init_va = data->paging_init_relo;
