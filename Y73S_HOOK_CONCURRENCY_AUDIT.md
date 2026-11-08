@@ -431,3 +431,116 @@ atomic/refcount/wait primitives and callback contexts are proven.
 
 This section is a static audit/design addition only. No production source
 code, device partition, or runtime state was modified.
+
+
+## Follow-up: KPM ELF parser and AArch64 relocation bounds audit (2026-11-08)
+
+The loader and relocation implementation in
+`kernel/patch/module/module.c` and `kernel/patch/module/relo.c` were
+reviewed as a separate input-validation boundary. This is a source audit;
+no malformed module was executed.
+
+### E1 — ELF section-string table index is dereferenced before validation (Critical)
+
+`setup_load_info()` uses `e_shstrndx` to index `sechdrs[]` before checking
+that the index is below `e_shnum`, is not a reserved index, and refers to a
+valid string-table section. `find_sec()` then uses each `sh_name` as an
+unbounded offset into that table and passes the result to `strcmp()`.
+A malformed relocatable object can therefore make the parser read outside
+the section-header array or string-table bounds.
+
+Required validation: validate ELF extended/reserved index rules supported by
+this loader, validate the selected section type and file range, require every
+`sh_name` to be within `shstrtab.sh_size`, and require a NUL terminator
+within the remaining string-table bytes before comparing names.
+
+### E2 — Symbol-table link and symbol names are not bounds-checked (Critical)
+
+The SHT_SYMTAB scan trusts `sh_link` when indexing `sechdrs[]` and trusts
+the linked string table's offset/size. `simplify_symbols()` and
+`layout_symtab()` use `st_name` with `strlen()` without proving it lies
+inside the linked string table or reaches a NUL before its end. The relocation
+path also indexes the symbol table using `ELF64_R_SYM(r_info)` without
+checking the symbol index against the actual symbol count.
+
+Required validation: verify `sh_link < e_shnum`, the linked section is the
+expected string-table type, symbol-table size is an exact multiple of
+`sizeof(Elf_Sym)`, every `st_name < strtab.sh_size`, every symbol name is
+NUL-terminated within that bound, and every relocation symbol index is below
+the symbol count.
+
+### E3 — RELA writes are formed from untrusted offsets without target bounds (Critical)
+
+`apply_relocate_add()` computes
+`loc = target_section.sh_addr + r_offset` and writes 2/4/8 bytes or an
+instruction there, but does not check that the target section index is valid,
+that the target section is allocatable and has the expected type/permissions,
+or that the relocation write width fits within
+`target_section.sh_size - r_offset`. The relocation section's entry size and
+exact divisibility are also not validated before iteration.
+
+A malformed KPM can therefore direct relocation writes outside the intended
+target section, potentially corrupting another module section or unrelated
+memory adjacent to the allocation.
+
+Required validation: validate REL/RELA section header links and entry sizes,
+validate `sh_info` and `sh_link`, reject unsupported target sections, and
+check each relocation's type-specific write width using overflow-safe
+subtraction checks before forming `loc`. Validate instruction alignment for
+instruction relocations.
+
+### E4 — REL relocation sections are silently accepted but not applied (High)
+
+`apply_relocations()` dispatches SHT_REL sections to `apply_relocate()`,
+but the current AArch64 implementation in `relo.c` returns zero without
+applying any entries. The loader consequently treats a REL section as
+successfully processed even though its relocations remain unresolved. The
+loader must either implement and validate the supported REL form or reject
+SHT_REL with `-ENOEXEC`; returning success for a no-op is unsafe.
+
+### E5 — Section file-range and layout arithmetic need overflow-safe checks (High)
+
+`rewrite_section_headers()` checks
+`sh_offset + sh_size` against input length using addition, which should be
+rewritten as subtraction-based bounds checking after first validating
+`sh_offset <= len`. The section layout path accumulates sizes into
+`unsigned int` through `get_offset()` and `layout_sections()` without
+checking alignment/addition overflow or enforcing a documented maximum
+module allocation. Alignment values also need validation (power-of-two and
+bounded) before use in `ALIGN`.
+
+Required validation: use checked-add/checked-align helpers, reject overflow,
+and impose a hard module image size cap before allocation.
+
+### E6 — ELF header validation is incomplete for the fields subsequently used (High)
+
+The current header check validates magic, ET_REL, AArch64 machine, section
+header entry size, and a basic section-header range. It does not fully validate
+`e_ehsize`, `e_shstrndx`, section-table alignment, section-name table,
+symbol/string table relationships, or all section data ranges before later
+dereferences. `e_shnum`/section-header range arithmetic should be kept in a
+single overflow-safe validation routine.
+
+### Required remediation order
+
+1. Add a pure, allocation-free ELF preflight validator that checks all header,
+   section, string-table, symbol-table, and relocation metadata before any
+   pointer arithmetic or executable allocation.
+2. Validate each relocation record completely before writing anything.
+   Prefer a two-pass process: validate all records first, then apply them, so
+   a late malformed record cannot leave a partially relocated image.
+3. Reject SHT_REL until a real AArch64 REL implementation exists.
+4. Add malformed-object fixtures for out-of-range `e_shstrndx`, `sh_name`,
+   `sh_link`, `st_name`, relocation symbol index, `sh_info`,
+   `r_offset`, mis-sized relocation sections, overflowed section ranges,
+   oversized alignment, and oversized total allocation.
+5. Run the parser/relocator harness under ASan/UBSan on a host build where
+   feasible, then run the normal cross-build and static checks.
+
+### Release decision
+
+These parser/relocation findings are additional blockers. Do not load
+third-party or malformed KPMs on the Y73S until preflight validation and
+relocation bounds checks are implemented and tested. This pass changes only
+this audit document; it does not modify production loader code, boot images,
+or device state.
