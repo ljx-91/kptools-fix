@@ -300,7 +300,7 @@ static char *get_next_modinfo(const struct kp_load_info *info, const char *tag, 
 		modinfo = next_string(prev, &size);
 	}
 	for (p = modinfo; p; p = next_string(p, &size)) {
-		if (strncmp(p, tag, taglen) == 0 && p[taglen] == '=')
+		if (strlen(p) >= taglen && strncmp(p, tag, taglen) == 0 && p[taglen] == '=')
 			return p + taglen + 1;
 	}
 	return 0;
@@ -448,10 +448,13 @@ static int apply_relocations(struct kp_module *mod, const struct kp_load_info *i
 	unsigned int i;
 	for (i = 1; i < info->hdr->e_shnum; i++) {
 		unsigned int infosec = info->sechdrs[i].sh_info;
-		if (infosec >= info->hdr->e_shnum)
+		if (info->sechdrs[i].sh_type != SHT_REL &&
+		    info->sechdrs[i].sh_type != SHT_RELA)
 			continue;
-		if (!(info->sechdrs[infosec].sh_flags & SHF_ALLOC))
-			continue;
+		if (infosec == 0 || infosec >= info->hdr->e_shnum ||
+		    !(info->sechdrs[infosec].sh_flags & SHF_ALLOC) ||
+		    info->sechdrs[i].sh_link != info->index.sym)
+			return -ENOEXEC;
 		if (info->sechdrs[i].sh_type == SHT_REL) {
 			rc = kp_apply_relocate(info->sechdrs, info->strtab, info->index.sym, i, mod);
 		} else if (info->sechdrs[i].sh_type == SHT_RELA) {
@@ -474,7 +477,7 @@ static int layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 
 	/* Put symbol section at end of module. */
 	symsect->sh_flags |= SHF_ALLOC;
-	if (get_offset(&mod->size, symsect, (unsigned int *)&sym_offset))
+	if (get_offset(&mod->size, symsect, &sym_offset))
 		return -EOVERFLOW;
 	symsect->sh_entsize = sym_offset;
 
@@ -544,8 +547,9 @@ static int rewrite_section_headers(struct kp_load_info *info)
 		return -ENOEXEC;
 
 	shstr = &info->sechdrs[info->hdr->e_shstrndx];
-	if (shstr->sh_type != SHT_STRTAB ||
-	    !kp_elf_range_valid(info->len, shstr->sh_offset, shstr->sh_size))
+	if (shstr->sh_type != SHT_STRTAB || !shstr->sh_size ||
+	    !kp_elf_range_valid(info->len, shstr->sh_offset, shstr->sh_size) ||
+	    *((const char *)info->hdr + shstr->sh_offset) != '\0')
 		return -ENOEXEC;
 	info->secstrings = (char *)info->hdr + shstr->sh_offset;
 
@@ -719,8 +723,12 @@ static int setup_load_info(struct kp_load_info *info)
 				set_load_error(info, "ELF symbol section index is invalid");
 				return -ENOEXEC;
 			}
-			if (syms[n].st_shndx == SHN_XINDEX) {
-				set_load_error(info, "extended ELF symbol section indexes are unsupported");
+			if (syms[n].st_shndx == SHN_XINDEX ||
+			    (syms[n].st_shndx >= SHN_LORESERVE &&
+			     syms[n].st_shndx != SHN_UNDEF &&
+			     syms[n].st_shndx != SHN_ABS &&
+			     syms[n].st_shndx != SHN_COMMON)) {
+				set_load_error(info, "reserved ELF symbol section index is unsupported");
 				return -ENOEXEC;
 			}
 		}
