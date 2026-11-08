@@ -259,7 +259,9 @@ static bool is_legacy_kconfig_extra(const patch_extra_item_t *item)
 
 static char *bytes_to_hexstr(const unsigned char *data, int len)
 {
+    if (!data || len < 0 || len > (0x7fffffff - 1) / 2) return NULL;
     char *buf = (char *)malloc(2 * len + 1);
+    if (!buf) return NULL;
     buf[2 * len] = '\0';
     for (int i = 0; i < len; i++) {
         sprintf(&buf[2 * i], "%02x", data[i]);
@@ -286,7 +288,7 @@ void print_preset_info(preset_t *preset)
 
     fprintf(stdout, INFO_KP_IMG_SESSION "\n");
     fprintf(stdout, "version=0x%x\n", ver_num);
-    fprintf(stdout, "compile_time=%s\n", header->compile_time);
+    fprintf(stdout, "compile_time=%.*s\n", COMPILE_TIME_LEN, header->compile_time);
     fprintf(stdout, "config=%s,%s\n", is_android ? "android" : "linux", is_debug ? "debug" : "release");
     fprintf(stdout, "arch=%s\n", is_x86_64 ? "x86_64" : "arm64");
     fprintf(stdout, "superkey=%.*s\n", SUPER_KEY_LEN,
@@ -295,7 +297,7 @@ void print_preset_info(preset_t *preset)
     // todo: remove compat version
     if (ver_num > 0xa04) {
         char *hexstr = bytes_to_hexstr(setup->root_superkey, ROOT_SUPER_KEY_HASH_LEN);
-        fprintf(stdout, "root_superkey=%s\n", show_secrets ? hexstr : "<redacted>");
+        fprintf(stdout, "root_superkey=%s\n", show_secrets && hexstr ? hexstr : "<redacted>");
         free(hexstr);
     }
 
