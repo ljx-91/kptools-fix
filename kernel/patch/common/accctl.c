@@ -57,10 +57,17 @@ static bool cred_layout_valid(void)
            cred_field_valid(cred_offset.sgid_offset, sizeof(gid_t));
 }
 
+static bool task_field_valid(int offset, size_t size)
+{
+    return offset >= 0 && size <= TASK_LAYOUT_SIZE &&
+           (size_t)offset <= TASK_LAYOUT_SIZE - size &&
+           ((size_t)offset % sizeof(void *)) == 0;
+}
+
 static bool task_cred_fields_valid(void)
 {
-    return cred_field_valid(task_struct_offset.cred_offset, sizeof(void *)) &&
-           cred_field_valid(task_struct_offset.real_cred_offset, sizeof(void *));
+    return task_field_valid(task_struct_offset.cred_offset, sizeof(void *)) &&
+           task_field_valid(task_struct_offset.real_cred_offset, sizeof(void *));
 }
 
 static int su_cred(struct cred *cred, uid_t uid)
