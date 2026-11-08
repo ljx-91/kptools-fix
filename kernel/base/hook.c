@@ -129,13 +129,21 @@ static uint64_t branch_func_addr_once(uint64_t addr)
 
 uint64_t branch_func_addr(uint64_t addr)
 {
-    uint64_t ret;
-    for (;;) {
-        ret = branch_func_addr_once(addr);
-        if (ret == addr) break;
+    /* Entry thunks must be finite. Reject cycles and unreasonable chains. */
+    uint64_t visited[8];
+    if (is_bad_address((void *)addr) || (addr & 0x3)) return 0;
+    for (int i = 0; i < 8; i++) {
+        for (int j = 0; j < i; j++) {
+            if (visited[j] == addr) return 0;
+        }
+        visited[i] = addr;
+        uint64_t ret = branch_func_addr_once(addr);
+        if (ret == addr) return addr;
+        if (is_bad_address((void *)ret) || (ret & 0x3)) return 0;
         addr = ret;
     }
-    return ret;
+    /* More than eight consecutive entry branches is treated as malformed. */
+    return 0;
 }
 
 #endif
@@ -626,6 +634,7 @@ hook_err_t hook(void *func, void *replace, void **backup)
     if (!func || !replace || !backup) return -HOOK_BAD_ADDRESS;
     *backup = 0;
     uint64_t origin_addr = branch_func_addr((uintptr_t)func);
+    if (is_bad_address((void *)origin_addr)) return -HOOK_BAD_ADDRESS;
     hook_t *hook = (hook_t *)hook_mem_zalloc(origin_addr, INLINE);
     if (!hook) return -HOOK_NO_MEM;
     hook->func_addr = (uint64_t)func;
