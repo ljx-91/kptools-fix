@@ -74,6 +74,19 @@ def main():
     need(r"infosec\s*>=\s*info->hdr->e_shnum", dispatch, "relocation target index")
     need(r"sh_link\s*!=\s*info->index.sym", dispatch, "relocation symbol-table link")
 
+    load = body(module, "long kp_load_module(")
+    need(r"len\s*<=\s*0", load, "non-positive in-memory image length")
+    path_load = body(module, "long kp_load_module_path(")
+    need(r"len\s*<=\s*0\s*\|\|\s*len\s*>\s*INT_MAX", path_load,
+         "oversized on-disk image length")
+
+    trampoline = body(module, "int kp_kpm_safe_kallsyms_on_each_symbol(")
+    need(r"kp_callback_tramp_slot_alloc", trampoline, "exclusive callback trampoline slot")
+    need(r"branch_off\s*>=\s*\(1L\s*<<\s*27\)", trampoline,
+         "AArch64 branch immediate range check")
+    need(r"kp_callback_tramp_slot_free\(slot\)", trampoline,
+         "callback trampoline slot release")
+
     data = body(relo, "static int reloc_data(")
     need(r"len\s*==\s*64", data, "explicit 64-bit relocation width")
     need(r"1ULL\s*<<\s*len", data, "unsigned 64-bit narrow mask")
@@ -97,6 +110,7 @@ def main():
     print("[PASS] LKM symbol table, names and section indexes")
     print("[PASS] LKM checked section layout and destination copy extents")
     print("[PASS] LKM RELA metadata, symbol and target bounds")
+    print("[PASS] LKM input-size and concurrent callback trampoline guards")
     print("[PASS] unimplemented REL fails closed")
     print("[PASS] 64-bit relocation mask avoids undefined shifts")
 
