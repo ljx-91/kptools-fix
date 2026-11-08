@@ -484,17 +484,59 @@ int resolve_task_offset()
         return -EINVAL;
     }
 
-    char flag_cred[CRED_MAX_SIZE];
-    lib_memcpy(flag_cred, init_cred, sizeof(flag_cred));
-    *(uintptr_t *)((uintptr_t)init_task + cred_offset[0]) = (uintptr_t)flag_cred;
-    if ((uintptr_t)init_cred == (uintptr_t)flag_cred) {
-        task_struct_offset.real_cred_offset = cred_offset[0];
-        task_struct_offset.cred_offset = cred_offset[1];
-    } else {
-        task_struct_offset.real_cred_offset = cred_offset[1];
-        task_struct_offset.cred_offset = cred_offset[0];
+    /*
+     * init_task->cred and ->real_cred normally point at the same init_cred,
+     * so pointer equality cannot distinguish their offsets. Probe the
+     * subjective pointer on the scratch current task instead of temporarily
+     * writing a stack address into the live init_task.
+     */
+    if (!kfunc(prepare_creds) || !kfunc(override_creds) ||
+        !kfunc(revert_creds) || !kfunc(abort_creds)) {
+        revert_current(backup);
+        vfree(task);
+        log_boot("    credential pointer probe helpers unavailable\\n");
+        return -EINVAL;
     }
-    *(uintptr_t *)((uintptr_t)init_task + cred_offset[0]) = (uintptr_t)init_cred;
+
+    struct cred *probe_cred = prepare_creds();
+    if (!probe_cred) {
+        revert_current(backup);
+        vfree(task);
+        return -ENOMEM;
+    }
+    const struct cred *old_cred = override_creds(probe_cred);
+    if (!old_cred) {
+        abort_creds(probe_cred);
+        revert_current(backup);
+        vfree(task);
+        return -EINVAL;
+    }
+
+    int subjective_idx = -1;
+    for (int i = 0; i < 2; i++) {
+        uintptr_t value = *(uintptr_t *)((uintptr_t)task + cred_offset[i]);
+        if (value == (uintptr_t)probe_cred) {
+            if (subjective_idx >= 0) {
+                subjective_idx = -2;
+                break;
+            }
+            subjective_idx = i;
+        }
+    }
+
+    revert_creds(old_cred);
+    abort_creds(probe_cred);
+
+    if (subjective_idx < 0) {
+        revert_current(backup);
+        vfree(task);
+        log_boot("    failed to distinguish task cred from real_cred\\n");
+        return -EINVAL;
+    }
+
+    int real_idx = 1 - subjective_idx;
+    task_struct_offset.cred_offset = cred_offset[subjective_idx];
+    task_struct_offset.real_cred_offset = cred_offset[real_idx];
 
     log_boot("    cred offset: %x\n", task_struct_offset.cred_offset);
     log_boot("    real_cred offset: %x\n", task_struct_offset.real_cred_offset);
