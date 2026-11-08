@@ -147,6 +147,7 @@ static __noinline void mem_proc(map_data_t *data)
     }
     data->page_shift = page_shift;
 
+#ifndef KP_TARGET_Y73S
     // linear
     if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_FIND_IN_RANGE &&
         data->map_symbol.memblock_virt_alloc_relo && data->map_symbol.memblock_free_relo) {
@@ -182,7 +183,44 @@ static __noinline void mem_proc(map_data_t *data)
     } else {
         __builtin_trap();
     }
+#endif // !KP_TARGET_Y73S
 }
+
+
+#ifdef KP_TARGET_Y73S
+/*
+ * Y73S Linux 4.14 calls paging_init() before building the full linear map.
+ * memblock_virt_alloc_try_nid_nopanic() zeroes its allocation through
+ * phys_to_virt(), so it must not be used as a linear-map probe before
+ * paging_init() has completed. Run this probe immediately after paging_init()
+ * returns, when map_mem() has established the normal RAM linear mapping.
+ */
+static void __noinline detect_y73s_linear_voffset(map_data_t *data)
+{
+    if (data->map_symbol.memblock_phys_alloc_type != MAP_SYM_MEMBLOCK_FIND_IN_RANGE ||
+        !data->map_symbol.memblock_phys_alloc_relo ||
+        !data->map_symbol.memblock_virt_alloc_relo ||
+        !data->map_symbol.memblock_free_relo) {
+        __builtin_trap();
+    }
+
+    uint64_t page_size = 1ull << data->page_shift;
+    uint64_t detect_phys =
+        ((memblock_find_in_range_f)data->map_symbol.memblock_phys_alloc_relo)(
+            0, 0, page_size, page_size);
+    if (!detect_phys || detect_phys > ~(uint64_t)0 - page_size) __builtin_trap();
+
+    uint64_t detect_virt =
+        (uint64_t)((memblock_virt_alloc_try_nid_f)data->map_symbol.memblock_virt_alloc_relo)(
+            page_size, page_size, detect_phys, detect_phys + page_size, NUMA_NO_NODE);
+    if (!detect_virt || detect_virt <= detect_phys) __builtin_trap();
+
+    data->linear_voffset = detect_virt - detect_phys;
+
+    /* The probe page is no longer needed; keep it available to memblock. */
+    ((memblock_free_f)data->map_symbol.memblock_free_relo)(detect_phys, page_size);
+}
+#endif // KP_TARGET_Y73S
 
 // todo: 52-bits pa
 static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint64_t pa, uint64_t attr_indx)
@@ -593,6 +631,10 @@ void __noinline _paging_init()
 #endif // KP_TARGET_Y73S
     flush_icache_all();
     ((paging_init_f)(paging_init_va))();
+#ifdef KP_TARGET_Y73S
+    /* The 4.14 linear map only becomes usable after paging_init()/map_mem(). */
+    detect_y73s_linear_voffset(data);
+#endif
     // can't write data below
 
 #ifndef KP_TARGET_Y73S
