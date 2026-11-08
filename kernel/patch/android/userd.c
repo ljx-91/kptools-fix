@@ -1242,6 +1242,7 @@ int load_ap_package_config()
     const char *data = kernel_read_file(AP_PACKAGE_CONFIG_PATH, &len);
 
     if (!data || len <= 0) {
+        kvfree(data);
         log_boot("package_config not found or empty\n");
         return -ENOENT;
     }
