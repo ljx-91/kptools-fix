@@ -48,7 +48,10 @@ struct task_ext
  */
 static inline bool task_ext_valid(struct task_ext *ext)
 {
-    return !IS_ERR(ext) && (*(int *)(ext->size + (uintptr_t)ext) == TASK_EXT_MAGIC);
+    if (!ext || IS_ERR(ext)) return false;
+    int size = READ_ONCE(ext->size);
+    if (size != task_ext_size || size < (int)offsetof(struct task_ext, _magic)) return false;
+    return READ_ONCE(*(int *)((uintptr_t)ext + size)) == TASK_EXT_MAGIC;
 }
 
 /**
