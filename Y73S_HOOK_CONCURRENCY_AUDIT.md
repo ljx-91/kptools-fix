@@ -813,3 +813,54 @@ validate this LKM change. Do not count existing KPIMG/host-tools runs as
 validation for these LKM edits. Keep the LKM loader unsupported for
 untrusted KPM input until the remaining loader and lifecycle issues are
 fixed and a dedicated LKM build/test job passes.
+
+
+## 10. LKM loader hardening follow-up (2026-11-09)
+
+Additional production changes in `lkm/kpm/module.c`:
+
+- Reject null/empty in-memory images and invalid/oversized path-loaded files
+  before converting lengths or allocating buffers.
+- Require `.kpm.init` and `.kpm.exit` to be non-empty executable sections.
+- Require `.kpm.info` to be a non-empty `SHT_PROGBITS` section with a
+  terminating NUL; bound metadata tag matching.
+- Avoid constructing file-backed pointers for `SHT_NOBITS` sections.
+- Remove redundant unchecked section-header/string-table pointer setup;
+  use the section table range-checked by `elf_header_check()`.
+- Replace the single shared kallsyms callback trampoline with per-call
+  16-byte slots allocated under the short manager spinlock. Concurrent
+  iterators no longer overwrite the same trampoline slot.
+- Check AArch64 `B imm26` alignment and signed +/-128 MiB reach before
+  encoding the direct branch; out-of-range callbacks fail with `-ERANGE`
+  instead of receiving a truncated branch.
+
+A dedicated source contract verifier now also checks image-length validation,
+per-call trampoline slot acquisition/release, and branch reach. The verifier
+is wired into `.github/workflows/build-y73s-kptools-host.yml` and that
+workflow now watches `lkm/**`.
+
+Latest verified workflow before this report append:
+- Run `42503198058`, head `78e2022fc8694d26db0956060126eb9b8a6663e1`,
+  conclusion `success`.
+- The `Audit LKM KPM ELF loader source` job passed.
+- The Linux host kptools build/package job passed.
+
+The subsequent commits adding the image-size and trampoline checks and
+clarifying the trampoline comments are newer than that run and require their
+own CI result. This is source-level regression coverage only; no LKM kernel
+module build against a real target KDIR has been run.
+
+### Remaining high-severity blockers
+
+- Module registry writers/readers still use ordinary list operations with
+  RCU read-side sections but no RCU-safe writer protocol or consistent lock.
+- Concurrent duplicate loads and module unload versus control/event callbacks
+  still lack active references and a quiescence protocol.
+- `kp_loading_mod` publication and CFI-range inspection still have a
+  lifetime race if a load fails/frees while another CPU inspects it.
+- The per-call trampoline slots fix slot overwrite, but do not fix the
+  module-registry lifetime issues above.
+- RELA arithmetic-overflow helpers still need a complete no-partial-write
+  guarantee, and no target KDIR compile/fuzz/UBSan validation has been done.
+
+Do not treat this branch as safe for arbitrary or untrusted KPMs yet.
