@@ -80,3 +80,39 @@ The new CI verifier is `scripts/verify_y73s_runtime_contract.py`. It is a source
 - Artifact SHA-256: `8a9a18167fce3b7bb40d76eeaeb11dacbf86e71a2dd4bd626c6ceb0732ad8742`
 
 This validates the CI build and the listed static checks only. It does not establish device boot, APatch initialization, AVB validity, or root availability. No device-side test or partition write was performed.
+
+
+## Hotpatch / hook lifecycle audit (2026-11-08)
+
+### Confirmed defect in the previous implementation
+
+The previous `hotpatch_cb()` used `num_online_cpus()` both to elect the patching CPU and to make the other CPUs wait. The Y73S KALLSYMS audit found no `cpu_online_mask`, `__cpu_online_mask`, or `nr_cpu_ids`. In this repository's `cpumask.h`, `cpu_online_mask` resolves to one of those optional symbols and `num_online_cpus()` immediately passes that pointer to `cpumask_weight()`. The fallback in `hotpatch()` was entered precisely when those symbols were unavailable, but it still called this callback. This was a real source-level inconsistency and a potential null-mask dereference, not merely a style issue.
+
+The prior GCC ELF disassembly also showed the callback calling `__bitmap_weight` and loading the online-mask state. That confirms the problematic dependency survived compilation.
+
+### Changes in the hardening branch
+
+- Removed the per-CPU counter / `num_online_cpus()` callback protocol.
+- The callback now preflights every target address and snapshots original instructions before changing any text.
+- It applies the patch on the single callback execution coordinated by `stop_machine(hotpatch_cb, &patch, NULL)`; the callback does not need KP-resolved CPU-mask symbols.
+- If a later write fails, the callback attempts reverse-order rollback. A rollback failure returns `-EUCLEAN`.
+- Missing `stop_machine` or an unsafe interrupt context returns `-EOPNOTSUPP`; the old uncoordinated direct callback fallback is removed.
+- `hook_install()` and `hook_uninstall()` now return patch status. `hook()` checks installation failure, clears the backup pointer on ordinary failure, and retains trampoline storage if rollback is uncertain. `unhook()` likewise retains storage if restoring the original text fails.
+- The source verifier now rejects reintroduction of the CPU-mask dependency and checks error propagation.
+
+### Early-boot stop_machine consideration
+
+Linux v4.14 has an explicit pre-initialization path in `stop_machine_cpuslocked()`: before the stopper threads are initialized, it warns if the online CPU count is not one, disables local interrupts, and executes the callback directly. This is important because the initial `rest_init` hook is installed before normal initcalls. The kernel's own `stop_machine` implementation handles that early state; KP no longer needs to resolve the missing CPU-mask globals itself. The target kernel's exact implementation and runtime state still need confirmation against the supplied vendor image.
+
+### CI and binary evidence
+
+- Workflow: https://github.com/ljx-91/kptools-fix/actions/runs/42474757991
+- Commit: `55bbd5fbe02ea41276746a06295e51ae9f0cfc47`
+- GCC 14.2 build: passed
+- ELF stack-frame, memblock, runtime-contract, and map-relocation checks: passed
+- New hotpatch and hook lifecycle checks: passed
+- KPIMG binary SHA-256: `f70d78c22f04d7a8e6c26ace7bab53f2e6466a1603eadfa1bb0a10856182b61a`
+- KPIMG ELF SHA-256: `7b373a9901b3f62dfbcb576b226ed4f11b124df07e8938063af422313d3bd3cf`
+- Artifact ZIP SHA-256: `418d0a163440e2e0393e9eeb23ef1d615c8c8cd4f5215dccbaa68a4ce6debae1`
+
+These checks establish that the changed source compiles and the listed static checks pass. They do not establish that the vendor kernel's `stop_machine` implementation, early-boot CPU state, CFI behavior, AVB chain, or actual device boot is correct. No device-side test or partition write was performed.
