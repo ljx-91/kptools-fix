@@ -475,7 +475,7 @@ static bool kp_elf_string_valid(const char *table, unsigned long table_size,
 				unsigned long offset)
 {
 	return table && offset < table_size &&
-		memchr(table + offset, '\\0', table_size - offset) != NULL;
+		memchr(table + offset, '\0', table_size - offset) != NULL;
 }
 
 static int rewrite_section_headers(struct kp_load_info *info)
@@ -630,7 +630,7 @@ static int setup_load_info(struct kp_load_info *info)
 		strsec = &info->sechdrs[symsec->sh_link];
 		if (strsec->sh_type != SHT_STRTAB ||
 		    !kp_elf_range_valid(info->len, strsec->sh_offset, strsec->sh_size) ||
-		    !strsec->sh_size || *((const char *)info->hdr + strsec->sh_offset) != '\\0') {
+		    !strsec->sh_size || *((const char *)info->hdr + strsec->sh_offset) != '\0') {
 			set_load_error(info, "invalid ELF symbol string table");
 			return -ENOEXEC;
 		}
