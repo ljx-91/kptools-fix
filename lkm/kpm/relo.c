@@ -47,7 +47,7 @@ static int reloc_data(enum kp_aarch64_reloc_op op, void *place, u64 val, int len
 	else if (len == 16 || len == 32)
 		imm_mask = (1ULL << len) - 1;
 	else {
-		pr_err("Invalid length (%d) for data relocation\\n", len);
+		pr_err("Invalid length (%d) for data relocation\n", len);
 		return -EINVAL;
 	}
 	switch (len) {
@@ -61,8 +61,7 @@ static int reloc_data(enum kp_aarch64_reloc_op op, void *place, u64 val, int len
 		*(s64 *)place = sval;
 		break;
 	default:
-		pr_err("Invalid length (%d) for data relocation\n", len);
-		return 0;
+		return -EINVAL;
 	}
 
 	/* Extract the upper value bits (including the sign bit) and
