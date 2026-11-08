@@ -141,3 +141,20 @@ After adding the missing public declarations for `hotpatch()` and `hotpatch_set_
 The generated ELF disassembly confirms that `hotpatch_cb` calls the page-table preflight and `hotpatch_nosync`, and contains no call to `num_online_cpus()` / `__bitmap_weight()`. The `hotpatch()` disassembly passes a NULL third argument to the resolved `stop_machine` function and gates IRQ-masked execution on the explicit early-boot flag.
 
 Reference source for the upstream early-stop path: https://github.com/torvalds/linux/blob/v4.14/kernel/stop_machine.c. Vendor-kernel equivalence is not yet proven.
+
+
+## ARM64 inline-hook relocation audit (2026-11-08)
+
+### Confirmed source-level buffer bound defect
+
+`hook_t.relo_insts` was sized to 36 32-bit words, while the relocation handlers can emit up to 8 words for one overwritten instruction (`relo_b` for conditional branches / `relo_ldr` for SIMD literal loads). The trampoline can overwrite 4 instructions normally or 5 when a PACIASP/PACIBSP prologue is preserved with a BTI landing instruction. The conservative upper bound for the declared six-instruction limit is therefore `TRAMPOLINE_MAX_NUM * 8 + 4` words (six slots plus the maximum absolute jump-back). The old 36-word array did not establish that bound and could be overrun by a valid instruction mix. The header now uses the conservative 52-word bound.
+
+### Confirmed A64 B-range boundary defect
+
+The old `can_b_rel()` used a symmetric absolute-distance check of `<= 0x08000000`. AArch64 `B` has a signed imm26 scaled by four, so the actual byte range is [-0x08000000, +0x07fffffc]. The previous test could accept the positive +128 MiB endpoint, which is not representable, and did not explicitly reject unaligned addresses. The new implementation checks four-byte alignment and the asymmetric signed range before encoding.
+
+### Regression checks and validation status
+
+The source verifier now checks the relocation buffer expression, both alignment guards, and the exact positive/negative range endpoints. Workflow for the new source commit: https://github.com/ljx-91/kptools-fix/actions/runs/42475461806
+
+The prior compiled artifact's disassembly was inspected with LLVM objdump; it predates these latest two source changes and therefore is not evidence for the newly corrected code. Wait for the current workflow to complete before treating the new KPIMG as a verified build. No target device execution has been performed.
