@@ -84,13 +84,14 @@ int try_alloc_kstroage_group()
 int kstorage_group_size(int gid)
 {
     if (gid < 0 || gid >= KSTRORAGE_MAX_GROUP_NUM) return -ENOENT;
-    return group_sizes[gid];
+    return READ_ONCE(group_sizes[gid]);
 }
 
 int write_kstorage(int gid, long did, void *data, int offset, int len, bool data_is_user)
 {
     int rc = -ENOENT;
     if (gid < 0 || gid >= KSTRORAGE_MAX_GROUP_NUM) return rc;
+    if (!data || offset < 0 || len < 0 || offset > 0x7fffffff - len) return -EINVAL;
 
     struct hlist_head *bucket = kstorage_bucket(gid, did);
     spinlock_t *lock = &kstorage_glocks[gid];
@@ -199,66 +200,78 @@ KP_EXPORT_SYMBOL(on_each_kstorage_elem);
 
 int read_kstorage(int gid, long did, void *data, int offset, int len, bool data_is_user)
 {
-    int rc = 0;
+    if (gid < 0 || gid >= KSTRORAGE_MAX_GROUP_NUM ||
+        !data || offset < 0 || len < 0) return -EINVAL;
+
+    void *snapshot = NULL;
+    if (data_is_user && len) {
+        snapshot = vmalloc((unsigned long)len);
+        if (!snapshot) return -ENOMEM;
+    }
+
     rcu_read_lock();
-
     const struct kstorage *pos = get_kstorage(gid, did);
-
     if (IS_ERR(pos)) {
         rcu_read_unlock();
+        kvfree(snapshot);
         return PTR_ERR(pos);
     }
 
-    int min_len = pos->dlen - offset > len ? len : pos->dlen - offset;
+    if (offset >= pos->dlen || !len) {
+        rcu_read_unlock();
+        kvfree(snapshot);
+        return 0;
+    }
+    int available = pos->dlen - offset;
+    int min_len = available < len ? available : len;
+    if (data_is_user)
+        memcpy(snapshot, pos->data + offset, min_len);
+    else
+        memcpy(data, pos->data + offset, min_len);
+    rcu_read_unlock();
 
     if (data_is_user) {
-        int cplen = compat_copy_to_user(data, pos->data + offset, min_len);
+        int cplen = compat_copy_to_user(data, snapshot, min_len);
+        kvfree(snapshot);
         if (cplen <= 0) {
             logkfe("compat_copy_to_user error: %d", cplen);
-            rc = cplen;
+            return cplen ? cplen : -EFAULT;
         }
-    } else {
-        memcpy(data, pos->data + offset, min_len);
     }
-
-    rcu_read_unlock();
-    return rc;
+    return 0;
 }
 KP_EXPORT_SYMBOL(read_kstorage);
 
 int list_kstorage_ids(int gid, long *ids, int idslen, bool data_is_user)
 {
     if (gid < 0 || gid >= KSTRORAGE_MAX_GROUP_NUM) return -ENOENT;
+    if (!ids || idslen < 0) return -EINVAL;
+    if (!idslen) return 0;
+    if ((unsigned long)idslen > (~0UL / sizeof(long))) return -EOVERFLOW;
 
+    long *snapshot = vmalloc((unsigned long)idslen * sizeof(long));
+    if (!snapshot) return -ENOMEM;
     int cnt = 0;
-    int rc = 0;
-
     struct kstorage *pos = 0;
 
     rcu_read_lock();
-
     for (int b = 0; b < KSTORAGE_NBUCKETS; b++) {
-        hlist_for_each_entry_rcu(pos, &kstorage_groups[gid][b], hnode)
-        {
+        hlist_for_each_entry_rcu(pos, &kstorage_groups[gid][b], hnode) {
             if (cnt >= idslen) goto out;
-
-            if (data_is_user) {
-                int cplen = compat_copy_to_user(ids + cnt, &pos->did, sizeof(pos->did));
-                if (cplen <= 0) {
-                    logkfe("compat_copy_to_user error: %d", cplen);
-                    rc = cplen;
-                    goto out;
-                }
-            } else {
-                memcpy(ids + cnt, &pos->did, sizeof(pos->did));
-            }
-            cnt++;
+            snapshot[cnt++] = pos->did;
         }
     }
-
 out:
     rcu_read_unlock();
 
+    int rc = 0;
+    if (data_is_user) {
+        int cplen = compat_copy_to_user(ids, snapshot, cnt * sizeof(long));
+        if (cplen <= 0 && cnt) rc = cplen ? cplen : -EFAULT;
+    } else if (cnt) {
+        memcpy(ids, snapshot, cnt * sizeof(long));
+    }
+    kvfree(snapshot);
     return rc ? rc : cnt;
 }
 KP_EXPORT_SYMBOL(list_kstorage_ids);
