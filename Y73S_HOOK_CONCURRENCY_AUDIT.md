@@ -913,12 +913,16 @@ definitions, name reservation, active reference acquisition/release,
 retryable unload, event snapshots, call-local control arguments, CFI callback
 owner pinning, and removal of the old RCU registry reader pattern.
 
-Latest verified workflow:
-- Run 42504446091
-- Head c99d5e7a7b91fc48342e2b16cba8b77aae7e1a47
+Latest verified LKM/host workflow:
+- Run 42504673787
+- Head 33b432d34841fd7c282375292f8c9e1946e46ee5
 - Conclusion: success
 - Audit LKM KPM ELF loader source: success
 - build-kptools host build/package: success
+
+The separate Y73S KPIMG GCC workflow also completed successfully on the
+same source-contract commit (run 42504673911, same head SHA). This validates
+the KPIMG build/audit path, not compilation of the independent LKM module.
 
 This workflow validates the source-contract script and host kptools build.
 It does not compile lkm/kpm/module.c against the target kernel headers.
