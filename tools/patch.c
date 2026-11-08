@@ -876,7 +876,8 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
         if (config->priority) item->priority = config->priority;
     }
 
-    qsort(extra_configs, extra_config_num, sizeof(extra_config_t), extra_compare);
+    if (extra_config_num > 1)
+        qsort(extra_configs, extra_config_num, sizeof(extra_config_t), extra_compare);
 
     for (int i = 0; i < extra_config_num; i++) {
         extra_config_t *config = extra_configs + i;
@@ -939,7 +940,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     bool is_debug = header->config_flags & CONFIG_DEBUG;
     bool is_x86_64 = header->config_flags & CONFIG_FLAG_X86_64;
     tools_logi("kpimg version: %x\n", ver_num);
-    tools_logi("kpimg compile time: %s\n", header->compile_time);
+    tools_logi("kpimg compile time: %.*s\n", COMPILE_TIME_LEN, header->compile_time);
     tools_logi("kpimg config: %s, %s, %s\n", is_android ? "android" : "linux",
                is_debug ? "debug" : "release", is_x86_64 ? "x86_64" : "arm64");
 
