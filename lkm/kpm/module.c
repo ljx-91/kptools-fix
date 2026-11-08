@@ -313,7 +313,7 @@ static unsigned long get_sh_size(struct kp_load_info *info, const char *secname)
 	if (!idx)
 		return 0;
 	Elf_Shdr *infosec = &info->sechdrs[idx];
-	return infosec->sh_entsize;
+	return infosec->sh_size;
 }
 
 static void layout_sections(struct kp_module *mod, struct kp_load_info *info)
@@ -465,15 +465,50 @@ static void layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 	strsect->sh_entsize = get_offset(mod, &mod->size, strsect, info->index.str);
 }
 
+static bool kp_elf_range_valid(unsigned long total, unsigned long offset,
+				 unsigned long size)
+{
+	return offset <= total && size <= total - offset;
+}
+
+static bool kp_elf_string_valid(const char *table, unsigned long table_size,
+				unsigned long offset)
+{
+	return table && offset < table_size &&
+		memchr(table + offset, '\\0', table_size - offset) != NULL;
+}
+
 static int rewrite_section_headers(struct kp_load_info *info)
 {
+	Elf_Shdr *shstr;
+	unsigned int i;
+
+	if (!info || !info->hdr || !info->sechdrs ||
+	    info->hdr->e_shstrndx == SHN_UNDEF ||
+	    info->hdr->e_shstrndx >= info->hdr->e_shnum)
+		return -ENOEXEC;
+
+	shstr = &info->sechdrs[info->hdr->e_shstrndx];
+	if (shstr->sh_type != SHT_STRTAB ||
+	    !kp_elf_range_valid(info->len, shstr->sh_offset, shstr->sh_size))
+		return -ENOEXEC;
+	info->secstrings = (char *)info->hdr + shstr->sh_offset;
+
 	info->sechdrs[0].sh_addr = 0;
-	for (int i = 1; i < info->hdr->e_shnum; i++) {
+	for (i = 1; i < info->hdr->e_shnum; i++) {
 		Elf_Shdr *shdr = &info->sechdrs[i];
-		if (shdr->sh_type != SHT_NOBITS && info->len < shdr->sh_offset + shdr->sh_size)
+
+		if (shdr->sh_type != SHT_NOBITS &&
+		    !kp_elf_range_valid(info->len, shdr->sh_offset, shdr->sh_size))
 			return -ENOEXEC;
+		if (shdr->sh_addralign > 1 &&
+		    (shdr->sh_addralign & (shdr->sh_addralign - 1)))
+			return -ENOEXEC;
+		if (!kp_elf_string_valid(info->secstrings, shstr->sh_size, shdr->sh_name))
+			return -ENOEXEC;
+
 		/* Mark all sections sh_addr with their address in the temporary image. */
-		shdr->sh_addr = (size_t)info->hdr + shdr->sh_offset;
+		shdr->sh_addr = (unsigned long)info->hdr + shdr->sh_offset;
 	}
 	return 0;
 }
@@ -595,20 +630,35 @@ static int setup_load_info(struct kp_load_info *info)
 
 static int elf_header_check(struct kp_load_info *info)
 {
-	if (info->len <= sizeof(*(info->hdr))) {
+	const Elf_Ehdr *ehdr;
+	unsigned long shdr_bytes;
+
+	if (!info || !info->hdr || info->len < sizeof(*info->hdr)) {
 		set_load_error(info, "ELF header is truncated");
 		return -ENOEXEC;
 	}
-	if (memcmp(info->hdr->e_ident, ELFMAG, SELFMAG) || info->hdr->e_type != ET_REL ||
-	    info->hdr->e_machine != EM_AARCH64 || info->hdr->e_shentsize != sizeof(Elf_Shdr)) {
-		set_load_error(info, "ELF header is not a supported AArch64 relocatable module");
+	ehdr = info->hdr;
+	if (memcmp(ehdr->e_ident, ELFMAG, SELFMAG) ||
+	    ehdr->e_ident[EI_CLASS] != ELFCLASS64 ||
+	    ehdr->e_ident[EI_DATA] != ELFDATA2LSB ||
+	    ehdr->e_ident[EI_VERSION] != EV_CURRENT ||
+	    ehdr->e_version != EV_CURRENT || ehdr->e_ehsize != sizeof(*ehdr) ||
+	    ehdr->e_type != ET_REL || ehdr->e_machine != EM_AARCH64 ||
+	    ehdr->e_shentsize != sizeof(Elf_Shdr) || ehdr->e_shnum < 2 ||
+	    ehdr->e_shstrndx == SHN_UNDEF || ehdr->e_shstrndx >= ehdr->e_shnum) {
+		set_load_error(info, "ELF header is not a supported AArch64 ELF64 relocatable module");
 		return -ENOEXEC;
 	}
-	if (info->hdr->e_shoff >= info->len ||
-	    (info->hdr->e_shnum * sizeof(Elf_Shdr) > info->len - info->hdr->e_shoff)) {
-		set_load_error(info, "ELF section headers are invalid");
+	if (ehdr->e_shnum > (~0UL / sizeof(Elf_Shdr))) {
+		set_load_error(info, "ELF section header count overflows");
 		return -ENOEXEC;
 	}
+	shdr_bytes = (unsigned long)ehdr->e_shnum * sizeof(Elf_Shdr);
+	if (!kp_elf_range_valid(info->len, ehdr->e_shoff, shdr_bytes)) {
+		set_load_error(info, "ELF section headers are outside the input image");
+		return -ENOEXEC;
+	}
+	info->sechdrs = (Elf_Shdr *)((char *)info->hdr + ehdr->e_shoff);
 	return 0;
 }
 
