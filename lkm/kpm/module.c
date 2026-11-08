@@ -965,13 +965,14 @@ int kp_kpm_safe_kallsyms_on_each_symbol(kp_kallsyms_cb_t fn, void *data)
 
 	if (!kp_real_kallsyms_on_each_symbol)
 		return -EOPNOTSUPP;
-	if (!kp_kpm_cfi_allowed_addr((unsigned long)fn))
-		return kp_real_kallsyms_on_each_symbol(fn, data);
+	/* Acquire the owner before making any CFI-range decision. This closes
+	 * the check-then-unload gap for ordinary KPM callbacks. */
 	owner = kp_module_get_by_addr((unsigned long)fn);
-	/* A true CFI range result with no LIVE/LOADING owner means teardown
-	 * raced the range check; fail closed instead of calling stale text. */
-	if (!owner)
-		return -EBUSY;
+	if (!owner) {
+		if (kp_kpm_cfi_allowed_addr((unsigned long)fn))
+			return -EBUSY;
+		return kp_real_kallsyms_on_each_symbol(fn, data);
+	}
 	if (!kp_callback_tramp) {
 		kp_module_put(owner);
 		return -EOPNOTSUPP;
