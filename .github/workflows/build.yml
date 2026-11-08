@@ -113,8 +113,9 @@ jobs:
           aarch64-none-elf-objdump -d --disassemble=start kpimg.elf
 
           python3 ../scripts/verify_kpimg_elf_stack_frame.py kpimg.elf
+          python3 ../scripts/verify_kpimg_map_relocation.py kpimg.elf
 
-          echo "Y73S KPIMG build and ELF stack verification successful"
+          echo "Y73S KPIMG build and ELF/map relocation verification successful"
 
       - name: Generate kptools headers
         shell: bash
