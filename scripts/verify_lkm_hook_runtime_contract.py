@@ -21,7 +21,7 @@ checks = {
         "list_del(&mem->list);" in runtime and
         "void hook_mem_retire(void *payload)" in runtime and
         "kp_hook_exec_free(mem->region);" not in runtime.split(
-            "void hook_mem_retire(void *payload)", 1)[1].split("\\n}", 1)[0],
+            "void hook_mem_retire(void *payload)", 1)[1].split("\n}", 1)[0],
     "duplicate origin is rejected atomically":
         "pos->origin == origin" in runtime and
         runtime.index("pos->origin == origin") < runtime.index("list_add_tail(&mem->list"),
