@@ -922,7 +922,7 @@ static int find_trusted_manager_apk_path(char *apk_path,
     if (!apk_path || apk_path_len == 0)
         return -EINVAL;
 
-    if (index < 0 || index >= ARRAY_SIZE(trusted_managers))
+    if (index < 0 || index >= (int)(sizeof(trusted_managers) / sizeof(trusted_managers[0])))
         return -EINVAL;
 
     if (trusted_managers[index].package[0] == '\0')
