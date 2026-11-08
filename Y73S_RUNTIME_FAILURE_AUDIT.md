@@ -116,3 +116,12 @@ Linux v4.14 has an explicit pre-initialization path in `stop_machine_cpuslocked(
 - Artifact ZIP SHA-256: `418d0a163440e2e0393e9eeb23ef1d615c8c8cd4f5215dccbaa68a4ce6debae1`
 
 These checks establish that the changed source compiles and the listed static checks pass. They do not establish that the vendor kernel's `stop_machine` implementation, early-boot CPU state, CFI behavior, AVB chain, or actual device boot is correct. No device-side test or partition write was performed.
+
+
+### Follow-up: explicit early-boot IRQ window
+
+The first fail-closed implementation still rejected the initial hook if DAIF showed IRQ/FIQ masked. That is incompatible with the initial KP entry point, which runs during early `setup_arch()/paging_init()`, before `start_kernel()` reaches its later `local_irq_enable()`.
+
+The branch now exposes `hotpatch_set_early_boot()`. `patch()` enables this narrowly scoped mode before installing the first boot hooks; `before_rest_init()` clears it on every exit, and error/no-hook paths clear it in `patch()`. While this flag is set, `hotpatch()` may call the kernel's own `stop_machine()` despite masked IRQ/FIQ. Linux v4.14's `stop_machine_cpuslocked()` has a pre-initialization path that checks the single-online-CPU condition and runs the callback locally with IRQs saved/disabled; once initialized, normal stop-machine coordination is used. The KP callback itself still never dereferences unresolved CPU-mask symbols.
+
+This early-mode lifecycle is now part of `verify_y73s_runtime_contract.py`. The exact vendor v4.14.141 implementation and the device's actual call context must still be checked against the original Y73S kernel image; the upstream v4.14 reference is not a substitute for that binary evidence.
