@@ -72,7 +72,7 @@ def main():
     reserve_call = alloc.find("(pa, size)")
     if find_call < 0 or reserve_call <= find_call:
         raise AssertionError("range result must be reserved before it is returned")
-    require(r"if\s*\(is_in_tramp\(hook,\s*addr\)\)\s*return -HOOK_BAD_RELO;", adr_relocator,
+    require(r"if\s*\(\(\(memblock_reserve_f\).*?\)\(pa,\s*size\)\)\s*return 0;",
             alloc, "reservation failure must reject the physical allocation")
     require(r"return pa;", alloc, "physical allocator must return the reserved PA")
 
@@ -160,7 +160,7 @@ def main():
     print("[PASS] early-boot stop_machine window is explicitly scoped")
     print("[PASS] hook install/uninstall propagate patch failures safely")
     adr_relocator = function_body(hook_c, "static __noinline hook_err_t relo_adr(")
-    require(r"if\\s*\\(is_in_tramp\\(hook,\\s*addr\\)\\)\\s*return -HOOK_BAD_RELO;", adr_relocator,
+    require(r"if\s*\(is_in_tramp\(hook,\s*addr\)\)\s*return -HOOK_BAD_RELO;", adr_relocator,
             "ADR references into overwritten prologue must fail closed")
 
     # Branch thunk chains can be cyclic or malformed; callers must reject failure.
