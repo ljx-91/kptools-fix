@@ -240,67 +240,20 @@ int commit_su(uid_t to_uid, const char *sctx)
     }
 }
 
-// todo: rcu
+/*
+ * Updating another task's cred/real_cred requires the kernel's credential
+ * COW, reference-counting and RCU publication protocol. This KP implementation
+ * does not provide a safe cross-task credential replacement primitive.
+ * Keep task_su current-task-only and reuse prepare_creds()/commit_creds().
+ */
 int task_su(pid_t pid, uid_t to_uid, const char *sctx)
 {
-    int rc = 0;
-    int scontext_changed = 0;
-    struct task_struct *task = find_get_task_by_vpid(pid);
-    if (!task) {
-        logkfe("no such pid: %d\n", pid);
-        return -ESRCH;
+    if (pid <= 0) return -EINVAL;
+    if (task_pid_vnr(current) != pid) {
+        logkfe("task_su: cross-task credential update is unsupported\\n");
+        return -EOPNOTSUPP;
     }
-    struct task_ext *ext = kf_task_ext_ensure(task);
-
-    if (unlikely(!ext || !task_ext_valid(ext))) {
-        logkfe("task_ext ensure failed, pid(maybe dirty): %d\n", ext ? ext->pid : -1);
-        rc = -ENOMEM;
-        goto out;
-    }
-
-    if (!task_cred_fields_valid() || !cred_layout_valid()) {
-        rc = -EINVAL;
-        goto out;
-    }
-
-    struct thread_info *thi = get_task_thread_info(task);
-    if (!thi) {
-        rc = -EINVAL;
-        goto out;
-    }
-    thi->flags &= ~(_TIF_SECCOMP);
-
-    if (task_range_valid(task_struct_offset.seccomp_offset, sizeof(struct seccomp))) {
-        struct seccomp *seccomp = (struct seccomp *)((uintptr_t)task + task_struct_offset.seccomp_offset);
-        seccomp->mode = SECCOMP_MODE_DISABLED;
-        // only be called when the task is exiting, so no barriers
-        // todo: WARN_ON(tsk->sighand != NULL);
-        // seccomp_filter_release(task);
-    } else {
-        logkfe("task_su: unresolved seccomp offset; leaving seccomp unchanged\\n");
-    }
-
-    struct cred *cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
-    struct cred *real_cred = *(struct cred **)((uintptr_t)task + task_struct_offset.real_cred_offset);
-    if (!cred || !real_cred) {
-        rc = -EINVAL;
-        goto out;
-    }
-    rc = su_cred(cred, to_uid);
-    if (rc) goto out;
-    if (sctx && sctx[0]) scontext_changed = !set_security_override_from_ctx(cred, sctx);
-
-    if (cred != real_cred) {
-        rc = su_cred(real_cred, to_uid);
-        if (rc) goto out;
-        if (sctx && sctx[0]) scontext_changed = scontext_changed && !set_security_override_from_ctx(real_cred, sctx);
-    }
-    ext->priv_sel_allow = !scontext_changed;
-
-    logkfi("pid: %d, tgid: %d, to_uid: %d, sctx: %s, via_hook: %d\n", ext->pid, ext->tgid, to_uid, sctx,
-           ext->priv_sel_allow);
-out:
-    return rc;
+    return commit_common_su(to_uid, sctx);
 }
 
 static int (*avc_denied_backup)(struct selinux_state *state, void *ssid, void *tsid, void *tclass, void *requested,
