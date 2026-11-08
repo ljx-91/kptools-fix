@@ -355,12 +355,14 @@ static int layout_sections(struct kp_module *mod, struct kp_load_info *info)
 
 	for (int m = 0; m < (int)(sizeof(masks) / sizeof(masks[0])); ++m) {
 		for (int i = 0; i < info->hdr->e_shnum; ++i) {
+			unsigned int offset;
 			Elf_Shdr *s = &info->sechdrs[i];
 			if ((s->sh_flags & masks[m][0]) != masks[m][0] || (s->sh_flags & masks[m][1]) ||
 			    s->sh_entsize != ~0UL)
 				continue;
-			if (get_offset(&mod->size, s, (unsigned int *)&s->sh_entsize))
+			if (get_offset(&mod->size, s, &offset))
 				return -EOVERFLOW;
+			s->sh_entsize = offset;
 		}
 		switch (m) {
 		case 0: /* executable */
@@ -466,12 +468,14 @@ static int layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 	Elf_Shdr *symsect = info->sechdrs + info->index.sym;
 	Elf_Shdr *strsect = info->sechdrs + info->index.str;
 	const Elf_Sym *src;
-	unsigned int i, nsrc, ndst, strtab_size = 0;
+	unsigned int i, nsrc, ndst;
+	unsigned long strtab_size = 0, sym_offset;
 
 	/* Put symbol section at end of module. */
 	symsect->sh_flags |= SHF_ALLOC;
-	if (get_offset(&mod->size, symsect, (unsigned int *)&symsect->sh_entsize))
+	if (get_offset(&mod->size, symsect, (unsigned int *)&sym_offset))
 		return -EOVERFLOW;
+	symsect->sh_entsize = sym_offset;
 
 	src = (void *)info->hdr + symsect->sh_offset;
 	nsrc = symsect->sh_size / sizeof(*src);
@@ -480,15 +484,23 @@ static int layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 	strtab_size = 1;
 	for (ndst = i = 0; i < nsrc; i++) {
 		if (i == 0 || is_core_symbol(src + i, info->sechdrs, info->hdr->e_shnum)) {
-			strtab_size += strlen(&info->strtab[src[i].st_name]) + 1;
+			unsigned long name_size = strlen(&info->strtab[src[i].st_name]) + 1;
+			if (name_size > UINT_MAX - strtab_size)
+				return -EOVERFLOW;
+			strtab_size += name_size;
 			ndst++;
 		}
 	}
 
 	/* Append room for core symbols at end. */
-	if (mod->size > UINT_MAX - (symsect->sh_addralign ?: 1) + 1)
-		return -EOVERFLOW;
-	info->symoffs = ALIGN(mod->size, symsect->sh_addralign ?: 1);
+	{
+		unsigned int aligned;
+		unsigned long align = symsect->sh_addralign ?: 1;
+		if (align > UINT_MAX || mod->size > UINT_MAX - (align - 1))
+			return -EOVERFLOW;
+		aligned = (mod->size + align - 1) & ~(align - 1);
+		info->symoffs = aligned;
+	}
 	if (ndst > (UINT_MAX - info->symoffs) / sizeof(Elf_Sym))
 		return -EOVERFLOW;
 	info->stroffs = info->symoffs + ndst * sizeof(Elf_Sym);
@@ -498,8 +510,12 @@ static int layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 
 	/* Put string table section at end of module. */
 	strsect->sh_flags |= SHF_ALLOC;
-	if (get_offset(&mod->size, strsect, (unsigned int *)&strsect->sh_entsize))
-		return -EOVERFLOW;
+	{
+		unsigned int offset;
+		if (get_offset(&mod->size, strsect, &offset))
+			return -EOVERFLOW;
+		strsect->sh_entsize = offset;
+	}
 	return 0;
 }
 
@@ -564,6 +580,9 @@ static int move_module(struct kp_module *mod, struct kp_load_info *info)
 		Elf_Shdr *shdr = &info->sechdrs[i];
 		if (!(shdr->sh_flags & SHF_ALLOC))
 			continue;
+		if (shdr->sh_entsize > mod->size ||
+		    shdr->sh_size > mod->size - shdr->sh_entsize)
+			return -ENOEXEC;
 
 		dest = mod->start + shdr->sh_entsize;
 		const char *sname = info->secstrings + shdr->sh_name;
