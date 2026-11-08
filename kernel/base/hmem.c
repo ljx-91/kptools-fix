@@ -84,3 +84,15 @@ void *hook_get_mem_from_origin(uint64_t origin_addr)
     }
     return 0;
 }
+
+void *hook_get_mem_from_origin_type(uint64_t origin_addr, enum hook_type type)
+{
+    uint64_t start = mem_region_start;
+
+    for (uint64_t addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
+        hook_mem_warp_t *wrap = (hook_mem_warp_t *)addr;
+        if (wrap->using == 1 && wrap->addr == origin_addr && wrap->type == type)
+            return &wrap->chain;
+    }
+    return 0;
+}
