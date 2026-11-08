@@ -21,8 +21,6 @@
 #include <linux/list.h>
 #include <linux/mm.h>
 #include <linux/module.h>
-#include <linux/rculist.h>
-#include <linux/rcupdate.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
@@ -1193,8 +1191,6 @@ long kp_unload_module(const char *name, void __user *reserved)
 	spin_unlock_irqrestore(&module_lock, flags);
 	if (mod->args)
 		kvfree(mod->args);
-	if (mod->ctl_args)
-		kvfree(mod->ctl_args);
 	if (kp_set_memory_nx && mod->start) {
 		int npages = (mod->size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 		kp_do_set_memory_nx((unsigned long)mod->start, npages);
