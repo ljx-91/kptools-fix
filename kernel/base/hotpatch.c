@@ -32,17 +32,18 @@ int kfunc_def(aarch64_insn_patch_text)(void *addrs[], uint32_t insns[], int cnt)
 /*
  * Text-patching backend selection, decided at runtime by kver.
  *
- * The hotpatch framework (stop_machine + the alias/aarch64_insn_patch_text_nosync
- * trick) broke boot on 4.4/4.14: the alias path feeds a vmalloc alias address to
- * the kernel's aarch64_insn_patch_text_nosync, whose patch_map() resolves it via
- * virt_to_page() and writes to a bogus physical page.  Those kernels used to boot
- * through the kernel's own aarch64_insn_patch_text(), which is what the legacy
- * backend restores below.
+ * The alias backend is unsuitable for 4.4/4.14: it feeds a vmalloc alias
+ * address to aarch64_insn_patch_text_nosync(), whose patch_map() may resolve
+ * that alias through virt_to_page() as if it were a kernel-image address.
  *
- * Legacy (4.14 and below): prefer the kernel's aarch64_insn_patch_text() (fixmap +
- * stop_machine, the path KP used before the hotpatch migration); fall back to a
- * direct page-table write only if it cannot be resolved.  5.0+ keep the hotpatch
- * framework.
+ * On 4.14 (and 4.6+ legacy kernels), hotpatch() instead coordinates CPUs
+ * with stop_machine(..., NULL), then hotpatch_nosync() changes the target
+ * PTE permissions and writes the instruction directly. This avoids the
+ * vendor text-patching callback's num_online_cpus()/cpu_online_mask
+ * dependency, which is not resolvable from the supplied Y73S KALLSYMS.
+ *
+ * Kernels older than 4.6 use the kernel's aarch64_insn_patch_text() API.
+ * Kernels 4.15+ retain the alias/aarch64_insn_patch_text_nosync() backend.
  */
 static bool hotpatch_use_legacy(void)
 {
