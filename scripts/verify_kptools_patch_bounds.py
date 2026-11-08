@@ -45,13 +45,13 @@ def main():
          "patch parser must reject null and empty input")
     need(r"kpimg_size\s*<\s*0", parse, "embedded KPIMG size must reject negative values")
     need(r"extra_size\s*<\s*0", parse, "extra payload size must reject negative values")
-    need(r"extra_size\s*>\s*\(uint64_t\)kimg_len\s*-\s*extra_offset", parse,
+    need(r"\\(uint64_t\\)extra_size\\s*>\\s*\\(uint64_t\\)kimg_len\\s*-\\s*extra_offset", parse,
          "extra payload must fit the remaining kernel image")
     need(r"args_size\s*<\s*0.*?con_size\s*<\s*0", parse,
          "extra item lengths must reject negative values")
-    need(r"args_size\)\s*>\s*remaining\s*-\s*sizeof\(\*item\)", parse,
+    need(r"\\(size_t\\)item->args_size\\s*>\\s*remaining\\s*-\\s*sizeof\\(\\*item\\)", parse,
          "extra item args must fit before content")
-    need(r"con_size\)\s*>\s*remaining\s*-\s*sizeof\(\*item\)\s*-\s*\(size_t\)item->args_size", parse,
+    need(r"\\(size_t\\)item->con_size\\s*>\\s*remaining\\s*-\\s*sizeof\\(\\*item\\)\\s*-\\s*\\(size_t\\)item->args_size", parse,
          "extra item content must fit the remaining record")
     need(r"memchr\(item->name", parse, "extra item name must be NUL-terminated")
 
