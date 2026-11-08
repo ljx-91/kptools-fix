@@ -1,0 +1,51 @@
+name: Build Y73S Android KPIMG (Arm GNU GCC)
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'kernel/**'
+      - 'scripts/**'
+      - '.github/workflows/build-y73s-kpimg-gcc.yml'
+permissions:
+  contents: read
+concurrency:
+  group: y73s-kpimg-gcc-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install host tools
+        run: sudo apt-get update && sudo apt-get install -y make python3 binutils xz-utils
+      - name: Install Arm GNU Toolchain 12.2.rel1
+        run: |
+          set -euxo pipefail
+          archive=arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf.tar.xz
+          curl --fail --location --retry 3 -o "$archive" "https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/12.2.rel1/binrel/$archive"
+          tar -xJf "$archive"
+          test -x arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-gcc
+      - name: Build and audit
+        run: |
+          set -euxo pipefail
+          export TARGET_COMPILE="$GITHUB_WORKSPACE/arm-gnu-toolchain-12.2.rel1-x86_64-aarch64-none-elf/bin/aarch64-none-elf-"
+          test "$("${TARGET_COMPILE}gcc" -dumpmachine)" = aarch64-none-elf
+          "${TARGET_COMPILE}gcc" --version | head -n 1 | grep -Eiq 'GNU|GCC'
+          cd kernel
+          make clean
+          ANDROID=1 make hdr kpimg
+          cd ..
+          mkdir -p dist-y73s
+          cp kernel/kpimg dist-y73s/kpimg-android
+          cp kernel/kpimg.elf dist-y73s/kpimg-android.elf
+          python3 scripts/verify_kpimg_stack_frame.py dist-y73s/kpimg-android | tee dist-y73s/verification.txt
+          "${TARGET_COMPILE}readelf" -h dist-y73s/kpimg-android.elf > dist-y73s/elf-header.txt
+          grep -Eq 'Class:[[:space:]]+ELF64' dist-y73s/elf-header.txt
+          grep -Eq 'Machine:[[:space:]]+AArch64' dist-y73s/elf-header.txt
+          sha256sum dist-y73s/* > dist-y73s/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: y73s-kpimg-arm-gnu-gcc-audit
+          path: dist-y73s/
+          if-no-files-found: error
+          retention-days: 14
