@@ -699,7 +699,7 @@ void unhook(void *func)
               (uint64_t)func, rc);
         return;
     }
-    hook_mem_free(hook);
+    hook_mem_retire(hook);
     logkv("Unhook func: %llx\\n", (uint64_t)func);
 }
 KP_EXPORT_SYMBOL(unhook);
@@ -868,7 +868,7 @@ void hook_unwrap_remove(void *func, void *before, void *after, int remove)
             return;
         }
     }
-    hook_mem_free(chain);
+    hook_mem_retire(chain);
     logkv("Unwrap func: %llx\n", (uint64_t)func);
 }
 KP_EXPORT_SYMBOL(hook_unwrap_remove);
