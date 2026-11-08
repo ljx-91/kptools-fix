@@ -47,6 +47,8 @@ def before(text, first, second, message):
 def main():
     map_c = source("kernel/base/map.c")
     symbol_c = source("tools/symbol.c")
+    hotpatch_c = source("kernel/base/hotpatch.c")
+    hook_c = source("kernel/base/hook.c")
 
     # The known-bad memblock_alloc_try_nid fallback returns a kernel VA on
     # the supplied Y73S binary. It must never be selected as a PA allocator.
@@ -98,10 +100,37 @@ def main():
     require(r"pxd_pa\s*=\s*map_phys_alloc\(data,\s*page_size,\s*page_size\);\s*if\s*\(!pxd_pa\)\s*__builtin_trap\(\);",
             pte, "page-table allocation must be checked before descriptor creation")
 
+    # Y73S KALLSYMS lacks cpu_online_mask/nr_cpu_ids. The callback must
+    # therefore never call num_online_cpus() or inspect unresolved cpumask state.
+    callback = function_body(hotpatch_c, "static int hotpatch_cb(void *arg)")
+    for forbidden in ("num_online_cpus", "cpu_online_mask", "nr_cpu_ids", "atomic_inc"):
+        if forbidden in callback:
+            raise AssertionError(f"hotpatch callback must not depend on {forbidden}")
+    hotpatch_fn = function_body(hotpatch_c, "int hotpatch(void *addrs[], uint32_t values[], int cnt)")
+    require(r"stop_machine\\(hotpatch_cb,\\s*&patch,\\s*NULL\\)", hotpatch_fn,
+            "Y73S hotpatch must coordinate CPUs with stop_machine(..., NULL)")
+    require(r"!kfunc\\(stop_machine\\).*?is_interrupt_masked\\(\\).*?return -EOPNOTSUPP;",
+            hotpatch_fn, "missing stop_machine/interrupt state must fail closed")
+    if "hotpatch_cb(&patch)" in hotpatch_fn:
+        raise AssertionError("uncoordinated direct hotpatch callback fallback reintroduced")
+
+    install = function_body(hook_c, "int hook_install(hook_t *hook)")
+    require(r"return hotpatch\\(", install, "hook_install must propagate hotpatch status")
+    hook_fn = function_body(hook_c, "hook_err_t hook(void *func, void *replace, void **backup)")
+    require(r"int patch_rc = hook_install\\(hook\\)", hook_fn,
+            "hook() must inspect hook_install result")
+    require(r"patch_rc == -EUCLEAN", hook_fn,
+            "uncertain rollback must retain trampoline storage")
+    unhook_fn = function_body(hook_c, "void unhook(void *func)")
+    require(r"if \\(rc\\).*?return;", unhook_fn,
+            "unhook must retain trampoline memory when restore fails")
+
     print("[PASS] Y73S allocator dispatch excludes virtual-return fallback")
     print("[PASS] physical ranges are reserved before use")
     print("[PASS] linear-map probe ordering and reservation checks")
     print("[PASS] destination and intermediate page-table allocation guards")
+    print("[PASS] hotpatch avoids unresolved CPU-mask symbols and fails closed")
+    print("[PASS] hook install/uninstall propagate patch failures safely")
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
 
