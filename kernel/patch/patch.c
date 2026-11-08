@@ -171,10 +171,10 @@ int patch()
     hook_err_t rc = 0;
 
     unsigned long panic_addr = patch_config->panic;
-    logkd("panic addr: %llx\\n", panic_addr);
+    logkd("panic addr: %llx\n", panic_addr);
     if (panic_addr) {
         rc = hook_wrap12((void *)panic_addr, before_panic, 0, 0);
-        log_boot("hook panic rc: %d\\n", rc);
+        log_boot("hook panic rc: %d\n", rc);
     }
     if (rc) {
         hotpatch_set_early_boot(0);
@@ -188,7 +188,7 @@ int patch()
     if (!init_addr) init_addr = patch_config->cgroup_init;
     if (init_addr) {
         rc = hook_wrap4((void *)init_addr, before_rest_init, 0, (void *)init_addr);
-        log_boot("hook rest_init rc: %d\\n", rc);
+        log_boot("hook rest_init rc: %d\n", rc);
     }
     if (rc) {
         hotpatch_set_early_boot(0);
