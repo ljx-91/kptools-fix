@@ -207,3 +207,43 @@ physical address zero.
 
 This is an implementation candidate with stronger target-specific evidence,
 not a claim of boot success.
+
+
+## Local validation after allocator-path implementation
+
+The following checks were run against the supplied `KernelPatch-0.13.10-Y73S-source.zip`
+and the original `kernel-b`. They are local static/build checks, not device tests:
+
+- Host `kptools` compiled successfully with GCC.
+- Read-only `kptools -d` completed successfully on the original 47,517,708-byte
+  `kernel-b` and reproduced the expected Linux 4.14.141 banner and allocator
+  symbols.
+- A static patch operation on a temporary copy of `kernel-b` completed.
+  Its log explicitly selected `memblock_find_in_range` +
+  `memblock_reserve` for physical allocation and
+  `memblock_virt_alloc_try_nid_nopanic` for the translation probe.
+  `kptools -l` reported `patched=true` and KPIMG version `0xd0a`.
+- A Y73S-specialized Clang 17 KPIMG build linked successfully with
+  `.setup.map = 0x880`, below the 0x1000-byte limit. However, its
+  `_paging_init` frame layout did not match the audited `start()` tail-return
+  assumption. The ELF verifier correctly rejected it. This Clang artifact is
+  **not boot-safe and must not be used**.
+- The ELF-aware verifier passed a synthetic AArch64 ELF fixture containing
+  the audited frame and restore sequences, and rejected the Clang artifact.
+
+The supplied source ZIP predates some branch changes, including the audited
+`start()` stack restore. Therefore these local checks validate the allocator
+selection and verifier behavior, but do not substitute for building the exact
+branch with the specified Arm GNU GCC 14.2 toolchain.
+
+## Current status and release gate
+
+- Implemented in the audit branch: fail-closed allocator selection, physical
+  range-find plus explicit reservation, current-limit-aware range bounds,
+  nopanic virtual probe, Y73S-only compile flag, and ELF-symbol-scoped stack
+  verifier.
+- The branch workflow now runs the Y73S-specific build and invokes the ELF
+  verifier before packaging.
+- Still pending: a successful GCC 14.2 CI run, verification of the exact
+  generated KPIMG's symbol/frame layout, and a real-device boot test.
+- No image has been declared boot-safe. No image has been flashed.
