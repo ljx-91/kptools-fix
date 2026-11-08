@@ -794,16 +794,17 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
             tools_loge_exit("extra event too long: %s\n", config->set_event);
         }
         if (config->set_name && strnlen(config->set_name, EXTRA_NAME_LEN) >= EXTRA_NAME_LEN) {
-            tools_loge_exit("extra name too long: %s\n", config->set_event);
+            tools_loge_exit("extra name too long: %s\n", config->set_name);
         }
 
+        if (config->is_path && !config->path) tools_loge_exit("extra path is null\n");
         patch_extra_item_t *item = NULL;
-        if (config->item && config->data) {
+        if (config->item && (config->data || config->item->con_size == 0)) {
             item = config->item;
         } else if (config->is_path) {
             // todo: free
-            item = (patch_extra_item_t *)malloc(sizeof(patch_extra_item_t));
-            memset(item, 0, sizeof(patch_extra_item_t));
+            item = (patch_extra_item_t *)calloc(1, sizeof(patch_extra_item_t));
+            if (!item) tools_loge_exit("allocate extra item failed\n");
             const char *path = config->path;
             char *data;
             int len = 0;
@@ -816,7 +817,9 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
                     kpm_info_t kpm_info = { 0 };
                     int rc = get_kpm_info(data, len, &kpm_info);
                     if (rc) tools_loge_exit("can get infomation of kpm, path: %s\n", path);
-                    strcpy(item->name, kpm_info.name);
+                    if (!kpm_info.name) tools_loge_exit("KPM name is missing: %s\n", path);
+                    strncpy(item->name, kpm_info.name, sizeof(item->name) - 1);
+                    item->name[sizeof(item->name) - 1] = '\0';
                 } else {
                     char *rsp = strrchr(path, '/');
                     strncpy(item->name, rsp ? rsp + 1 : path, EXTRA_NAME_LEN - 1);
@@ -824,6 +827,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
             }
         } else {
             const char *name = config->name;
+            if (!name) tools_loge_exit("extra item name is missing\n");
             for (int j = 0; j < pimg.embed_item_num; j++) {
                 item = pimg.embed_item[j];
                 if (strcmp(name, item->name)) continue;
@@ -844,12 +848,25 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
             }
         }
         if (!item) tools_loge_exit("empty extra item\n");
-        strcpy(item->magic, EXTRA_HDR_MAGIC);
+        memcpy(item->magic, EXTRA_HDR_MAGIC, sizeof(item->magic));
         config->item = item;
         item->type = config->extra_type;
-        if (config->set_args) item->args_size = align_ceil(strlen(config->set_args), EXTRA_ALIGN);
-        if (config->set_name) strcpy(item->name, config->set_name);
-        if (config->set_event) strcpy(item->event, config->set_event);
+        if (item->args_size < 0 || item->con_size < 0)
+            tools_loge_exit("negative extra item lengths\\n");
+        if (config->set_args) {
+            uint64_t args_aligned = align_ceil(strlen(config->set_args) + 1, EXTRA_ALIGN);
+            if (args_aligned > 0x7fffffffULL) tools_loge_exit("extra args too long\\n");
+            item->args_size = (int32_t)args_aligned;
+        }
+        if (config->set_name) {
+            strncpy(item->name, config->set_name, sizeof(item->name) - 1);
+            item->name[sizeof(item->name) - 1] = '\0';
+        }
+        if (config->set_event) {
+            strncpy(item->event, config->set_event, sizeof(item->event) - 1);
+            item->event[sizeof(item->event) - 1] = '\0';
+        }
+        if (item->con_size && !config->data) tools_loge_exit("extra item content is null\\n");
         if (config->priority) item->priority = config->priority;
     }
 
