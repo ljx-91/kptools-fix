@@ -43,34 +43,34 @@ def main():
     symbol_c = source("tools/symbol.c")
 
     # Exact vendor-kernel ABI declarations used through function pointers.
-    require(r"typedef int \\(\\*memblock_reserve_f\\)\\(phys_addr_t base, phys_addr_t size\\);",
+    require(r"typedef int \(\*memblock_reserve_f\)\(phys_addr_t base, phys_addr_t size\);",
             map_c, "memblock_reserve must be modeled as int(base,size)")
-    require(r"typedef int \\(\\*memblock_free_f\\)\\(phys_addr_t base, phys_addr_t size\\);",
+    require(r"typedef int \(\*memblock_free_f\)\(phys_addr_t base, phys_addr_t size\);",
             map_c, "memblock_free must be modeled as int(base,size)")
-    require(r"typedef int \\(\\*memblock_mark_nomap_f\\)\\(phys_addr_t base, phys_addr_t size\\);",
+    require(r"typedef int \(\*memblock_mark_nomap_f\)\(phys_addr_t base, phys_addr_t size\);",
             map_c, "memblock_mark_nomap must be modeled as int(base,size)")
-    require(r"typedef phys_addr_t \\(\\*memblock_find_in_range_f\\)\\(phys_addr_t start, phys_addr_t end, phys_addr_t size,\\s*phys_addr_t align\\);",
+    require(r"typedef phys_addr_t \(\*memblock_find_in_range_f\)\(phys_addr_t start, phys_addr_t end, phys_addr_t size,\s*phys_addr_t align\);",
             map_c, "memblock_find_in_range must retain its four-argument physical-address ABI")
-    require(r"typedef void \\*\\(\\*memblock_virt_alloc_try_nid_f\\)\\(phys_addr_t size, phys_addr_t align, phys_addr_t min_addr,\\s*phys_addr_t max_addr, int nid\\);",
+    require(r"typedef void \*\(\*memblock_virt_alloc_try_nid_f\)\(phys_addr_t size, phys_addr_t align, phys_addr_t min_addr,\s*phys_addr_t max_addr, int nid\);",
             map_c, "memblock virtual allocator must retain its five-argument pointer ABI")
 
     alloc = function_body(map_c, "static uint64_t map_phys_alloc(")
-    require(r"memblock_find_in_range_f[^;]*\\)\\(\\s*0,\\s*0,\\s*size,\\s*align\\)",
+    require(r"memblock_find_in_range_f[^;]*\)\(\s*0,\s*0,\s*size,\s*align\)",
             alloc, "physical allocation must call range finder with (0,0,size,align)")
-    require(r"memblock_reserve_f[^;]*\\)\\(pa,\\s*size\\)", alloc,
+    require(r"memblock_reserve_f[^;]*\)\(pa,\s*size\)", alloc,
             "range finder result must be reserved before use")
     require(r"return pa;", alloc, "physical allocator must return the reserved PA")
 
     probe = function_body(map_c, "static void __noinline detect_y73s_linear_voffset(")
-    require(r"memblock_find_in_range_f[^;]*\\)\\(\\s*0,\\s*0,\\s*page_size,\\s*page_size\\)",
+    require(r"memblock_find_in_range_f[^;]*\)\(\s*0,\s*0,\s*page_size,\s*page_size\)",
             probe, "linear probe must select a page-aligned physical page")
-    require(r"memblock_virt_alloc_try_nid_f[^;]*\\)\\(\\s*page_size,\\s*page_size,\\s*detect_phys,\\s*detect_phys \\+ page_size,\\s*NUMA_NO_NODE\\)",
+    require(r"memblock_virt_alloc_try_nid_f[^;]*\)\(\s*page_size,\s*page_size,\s*detect_phys,\s*detect_phys \+ page_size,\s*NUMA_NO_NODE\)",
             probe, "linear probe must request the exact PA interval")
-    require(r"still_free[\\s\\S]*?if \\(still_free\\) __builtin_trap\\(\\);",
+    require(r"still_free[\s\S]*?if \(still_free\) __builtin_trap\(\);",
             probe, "linear probe must reject allocator fallback to a different PA")
-    require(r"data->linear_voffset\\s*=\\s*detect_virt\\s*-\\s*detect_phys;",
+    require(r"data->linear_voffset\s*=\s*detect_virt\s*-\s*detect_phys;",
             probe, "linear offset must be derived from verified PA/VA pair")
-    require(r"memblock_free_f[^;]*\\)\\(detect_phys,\\s*page_size\\)\\)",
+    require(r"memblock_free_f[^;]*\)\(detect_phys,\s*page_size\)\)",
             probe, "linear probe reservation must be released and checked")
 
     paging = function_body(map_c, "void __noinline _paging_init(")
