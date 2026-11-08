@@ -159,6 +159,10 @@ def main():
     print("[PASS] hotpatch avoids unresolved CPU-mask symbols and fails closed")
     print("[PASS] early-boot stop_machine window is explicitly scoped")
     print("[PASS] hook install/uninstall propagate patch failures safely")
+    adr_relocator = function_body(hook_c, "static __noinline hook_err_t relo_adr(")
+    require(r"if\\s*\\(is_in_tramp\\(hook,\\s*addr\\)\\)\\s*return -HOOK_BAD_RELO;", adr_relocator,
+            "ADR references into overwritten prologue must fail closed")
+
     # Branch thunk chains can be cyclic or malformed; callers must reject failure.
     branch_resolver = function_body(hook_c, "uint64_t branch_func_addr(uint64_t addr)")
     require(r"uint64_t visited\[8\]", branch_resolver,
@@ -198,6 +202,7 @@ def main():
 
     print("[PASS] relocation buffer bound and A64 branch range/alignment")
     print("[PASS] hook-chain install/restore failures are propagated safely")
+    print("[PASS] ADR references into overwritten prologue fail closed")
     print("[PASS] ARM64 entry thunk resolver is bounded and fail-closed")
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
