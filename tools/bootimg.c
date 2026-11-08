@@ -1007,9 +1007,19 @@ int repack_bootimg_mem(const char *orig_boot_path,
     if (method == 5) { // BZIP2
         tools_logi(" Compressing new kernel with BZIP2 (Level 9)...\n");
 
-        unsigned int max_out_size = (unsigned int)(raw_k_size * 1.01) + 600;
+        uint64_t max_out64 = ((uint64_t)raw_k_size * 101) / 100 + 600;
+        if (max_out64 > ~0U) {
+            free(extracted_dtb);
+            fclose(f_orig);
+            return -1;
+        }
+        unsigned int max_out_size = (unsigned int)max_out64;
         compressed_buf = (uint8_t *)malloc(max_out_size);
-        if (!compressed_buf) return -1;
+        if (!compressed_buf) {
+            free(extracted_dtb);
+            fclose(f_orig);
+            return -1;
+        }
 
         unsigned int final_size = max_out_size;
         unsigned int source_size = (unsigned int)raw_k_size;
@@ -1024,6 +1034,8 @@ int repack_bootimg_mem(const char *orig_boot_path,
             tools_loge("BZIP2 compression failed: %d\n", ret);
             free(compressed_buf);
             compressed_buf = NULL;
+            free(extracted_dtb);
+            fclose(f_orig);
             return -1;
         }
     }
@@ -1035,6 +1047,8 @@ int repack_bootimg_mem(const char *orig_boot_path,
             tools_logi("Repacked as GZIP. New Size: %u bytes\n", final_k_size);
         } else {
             tools_loge("GZIP compression failed during XZ-to-GZIP conversion.\n");
+            free(extracted_dtb);
+            fclose(f_orig);
             return -1;
         }
     }
