@@ -272,3 +272,28 @@ These are defensive checks, not proof of successful boot. The exact branch
 still requires the GCC 14.2 build, ELF verifier, Windows kptools build, and
 ultimately an independently supervised device boot test. No generated image
 is currently certified boot-safe.
+
+
+## CI validation milestone (2026-11-08)
+
+GitHub Actions run
+[42454420292](https://github.com/ljx-91/kptools-fix/actions/runs/42454420292)
+completed successfully for commit
+`7549b9fc9d93924ec63ba91b24651d7c7be6cb7c`.
+
+Verified in that run:
+
+- Arm GNU Toolchain 14.2 was downloaded and identified successfully.
+- Y73S-targeted ARM64 KPIMG compiled and linked.
+- The ELF verifier parsed the actual GCC-generated frame:
+  `_paging_init frame=0x130`, `FP offset=0`, expected SP restore
+  `0x130`, actual restore `0x130`.
+- The verifier reported `[PASS] ELF-symbol-scoped Y73S stack handoff verifier`.
+- The Windows MSYS2 UCRT64 `kptools.exe` build completed successfully.
+- Both workflow artifacts were uploaded: `kpimg-and-headers` and
+  `KernelPatch-Windows-Y73S`.
+
+This establishes a successful reproducible CI build and matching compiler-frame
+handoff check. It does **not** establish that the patched Vivo Y73s will boot:
+the binary has not been tested on the phone, and no real-device boot result is
+available. Keep the artifact classified as CI-validated, not device-validated.
