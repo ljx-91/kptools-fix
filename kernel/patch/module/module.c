@@ -245,6 +245,11 @@ static int layout_sections(struct module *mod, struct load_info *info)
             break;
         }
     }
+    for (int i = 1; i < info->hdr->e_shnum; i++) {
+        Elf_Shdr *section = &info->sechdrs[i];
+        if ((section->sh_flags & SHF_ALLOC) && section->sh_entsize == ~0UL)
+            return -ENOEXEC;
+    }
     return 0;
 }
 
@@ -408,6 +413,8 @@ static int move_module(struct module *mod, struct load_info *info)
         Elf_Shdr *shdr = &info->sechdrs[i];
         if (!(shdr->sh_flags & SHF_ALLOC)) continue;
 
+        if (shdr->sh_entsize > mod->size ||
+            shdr->sh_size > mod->size - shdr->sh_entsize) return -ENOEXEC;
         dest = mod->start + shdr->sh_entsize;
         const char *sname = info->secstrings + shdr->sh_name;
 
