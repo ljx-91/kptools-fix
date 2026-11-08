@@ -157,3 +157,53 @@ must verify the target's exact range-bound semantics and add an explicit
 reservation step: the find-range wrapper itself does not reserve the selected
 range. Reservation failure and rollback must be handled before this can be a
 safe replacement.
+
+
+## Binary-verified Y73S physical-range path and source implementation
+
+Further disassembly of the original `kernel-b` confirms the target interfaces:
+
+- Plain symbol `memblock_find_in_range` at `0x01914914` is a branch stub to its CFI body at `0x003919a8`.
+- The CFI body receives four arguments. It rearranges them as
+  `(size, align, start, end, NUMA_NO_NODE, flags)` for
+  `memblock_find_in_range_node`, then returns the range result in `x0`.
+- The range-finder implementation treats an `end` argument of zero as the
+  current memblock allocation limit. Therefore the KP call uses
+  `start=0, end=0`, not `end=~0ULL`; the latter would request
+  `MEMBLOCK_ALLOC_ANYWHERE` and could select memory beyond the early-boot
+  accessible limit.
+- Plain `memblock_reserve` at `0x019282d8` branches to CFI body
+  `0x00392884`; the wrapper takes `(base,size)` and returns the underlying
+  status.
+- Plain `memblock_virt_alloc_try_nid_nopanic` at `0x0191492c` branches to
+  CFI body `0x0211affc`; it uses the five-argument virtual-allocation ABI
+  and returns a pointer without entering the panic path on failure.
+
+The source now prefers `memblock_find_in_range` for physical allocations,
+reserves each returned range with `memblock_reserve`, and prefers the
+five-argument `memblock_virt_alloc_try_nid_nopanic` for the translation
+probe. The probe finds one free page below `current_limit`, asks the virtual
+allocator to allocate within that exact one-page interval, derives
+`linear_voffset = returned_virtual - selected_physical`, and releases the
+temporary reservation with `memblock_free`.
+
+The existing `MAP_SYM_MEMBLOCK_FIND_IN_RANGE` enum is reused; the preset
+structure size is unchanged. Allocation results are checked before use, and
+page-table allocation failure now traps instead of writing a descriptor for
+physical address zero.
+
+## Remaining validation gates
+
+- The modified source has not yet passed a full ARM64 KPIMG build in this
+  environment. The branch workflow was adjusted to include this audit branch,
+  but the GitHub connector available here does not expose push-triggered run
+  listings, so CI status is not confirmed.
+- No generated KPIMG has been checked against the original kernel's exact
+  symbol stubs after compilation.
+- No boot image was generated, flashed, or tested.
+- The new exact-range probe must still be confirmed by compiler output and
+  runtime testing; source-level ABI and bounds analysis alone cannot prove
+  successful boot.
+
+This is an implementation candidate with stronger target-specific evidence,
+not a claim of boot success.
