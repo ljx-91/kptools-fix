@@ -521,6 +521,7 @@ void __noinline _paging_init()
 
     uint64_t page_size = 1 << data->page_shift;
     uint64_t old_start_pa = data->start_offset + data->kernel_pa;
+    if (data->start_img_size > ~(uint64_t)0 - data->extra_size) __builtin_trap();
     uint64_t reserve_size = data->start_img_size + data->extra_size;
     if (!reserve_size || old_start_pa > ~(uint64_t)0 - reserve_size) __builtin_trap();
 
