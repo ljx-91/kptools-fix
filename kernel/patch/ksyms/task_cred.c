@@ -24,6 +24,7 @@
 #include <symbol.h>
 #include <linux/mm_types.h>
 #include <asm/processor.h>
+#include <uapi/asm-generic/errno.h>
 
 #define TASK_COMM_LEN 16
 
@@ -141,13 +142,19 @@ KP_EXPORT_SYMBOL(stack_end_offset);
 static int16_t *bl_list = 0;
 static int bl_cap = 0;
 
-static void reinit_bllist(int num)
+static int reinit_bllist(int num)
 {
+    if (num <= 0) return -EINVAL;
+    bl_list = (int16_t *)vmalloc(num * sizeof(int16_t));
+    if (!bl_list) {
+        bl_cap = 0;
+        return -ENOMEM;
+    }
     bl_cap = num;
-    bl_list = (int16_t *)vmalloc(bl_cap * sizeof(int16_t));
     for (int i = 0; i < bl_cap; i++) {
         bl_list[i] = -1;
     }
+    return 0;
 }
 
 static void uninit_bllist()
@@ -167,8 +174,10 @@ static int is_bl(int16_t off)
 
 static void add_bll(int16_t off, int16_t size)
 {
+    if (!bl_list || bl_cap <= 0 || off < 0 || size <= 0) return;
     for (int i = 0; i < bl_cap; i++) {
         if (bl_list[i] < 0) {
+            if (size == 8 && i + 1 >= bl_cap) return;
             bl_list[i] = off;
             if (size == 8) bl_list[i + 1] = off + 4;
             break;
@@ -180,11 +189,24 @@ int resolve_cred_offset()
 {
     log_boot("struct cred: \n");
 
-    reinit_bllist(128);
+    if (!init_task || !init_cred || task_struct_offset.cred_offset < 0 ||
+        task_struct_offset.real_cred_offset < 0 ||
+        task_struct_offset.cred_offset > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *) ||
+        task_struct_offset.real_cred_offset > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *)) {
+        return -EINVAL;
+    }
+    if (reinit_bllist(128)) return -ENOMEM;
 
     struct cred *cred = (struct cred *)vmalloc(CRED_MAX_SIZE);
     struct cred *cred1 = (struct cred *)vmalloc(CRED_MAX_SIZE);
     struct task_struct *task = vmalloc(TASK_STRUCT_MAX_SIZE);
+    if (!cred || !cred1 || !task) {
+        if (cred) vfree(cred);
+        if (cred1) vfree(cred1);
+        if (task) vfree(task);
+        uninit_bllist();
+        return -ENOMEM;
+    }
     lib_memcpy(cred, init_cred, CRED_MAX_SIZE);
     lib_memcpy(cred1, init_cred, CRED_MAX_SIZE);
     lib_memcpy(task, init_task, TASK_STRUCT_MAX_SIZE);
@@ -395,15 +417,26 @@ int resolve_task_offset()
 {
     log_boot("struct task_struct: \n");
 
+    if (!init_task) return -EINVAL;
     struct task_struct *task = (struct task_struct *)vmalloc(TASK_STRUCT_MAX_SIZE);
+    if (!task) return -ENOMEM;
     lib_memcpy(task, init_task, TASK_STRUCT_MAX_SIZE);
 
     const struct task_struct *backup = override_current(task);
+    if (!backup) {
+        vfree(task);
+        return -EINVAL;
+    }
 
     // init_cred
-    int cred_offset[2];
+    int cred_offset[2] = { -1, -1 };
     int cred_offset_idx = 0;
     init_cred = get_task_cred(init_task); // todo: get_task_cred not export
+    if (!init_cred) {
+        revert_current(backup);
+        vfree(task);
+        return -EINVAL;
+    }
     log_boot("    init_cred addr: %llx\n", init_cred);
     for (uintptr_t i = (uintptr_t)init_task; i + sizeof(uintptr_t) <= (uintptr_t)init_task + TASK_STRUCT_MAX_SIZE;
          i += sizeof(uint32_t)) {
@@ -412,6 +445,15 @@ int resolve_task_offset()
             cred_offset[cred_offset_idx++] = i - (uintptr_t)init_task;
             if (cred_offset_idx >= 2) break;
         }
+    }
+
+    if (cred_offset_idx != 2 || cred_offset[0] < 0 || cred_offset[1] < 0 ||
+        cred_offset[0] > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *) ||
+        cred_offset[1] > TASK_STRUCT_MAX_SIZE - (int)sizeof(void *)) {
+        revert_current(backup);
+        vfree(task);
+        log_boot("    failed to resolve both task cred pointers\n");
+        return -EINVAL;
     }
 
     char flag_cred[CRED_MAX_SIZE];
