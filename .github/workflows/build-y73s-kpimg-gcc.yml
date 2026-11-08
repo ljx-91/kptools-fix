@@ -59,6 +59,7 @@ jobs:
           aarch64-none-elf-objdump -d --disassemble=start kpimg.elf
           python3 ../scripts/verify_kpimg_elf_stack_frame.py kpimg.elf
           python3 ../scripts/verify_y73s_memblock_contract.py
+          python3 ../scripts/verify_y73s_runtime_contract.py
           python3 ../scripts/verify_kpimg_map_relocation.py kpimg.elf
           mkdir -p ../dist-y73s
           cp kpimg ../dist-y73s/kpimg-android
