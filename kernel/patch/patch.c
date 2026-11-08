@@ -2,6 +2,7 @@
 #include <ksyms.h>
 #include <kallsyms.h>
 #include <hook.h>
+#include <hotpatch.h>
 #include <accctl.h>
 #include <linux/sched.h>
 #include <linux/sched/task.h>
@@ -113,6 +114,7 @@ static void before_rest_init(hook_fargs4_t *args, void *udata)
 #endif
 
 out:
+    hotpatch_set_early_boot(0);
     return;
 }
 
@@ -158,6 +160,8 @@ static void after_kernel_init(hook_fargs4_t *args, void *udata)
 
 int patch()
 {
+    /* Initial hooks run before rest_init/early_initcalls on Y73S. */
+    hotpatch_set_early_boot(1);
     linux_libs_symbol_init();
     linux_misc_symbol_init();
     hotpatch_symbol_init();
@@ -167,30 +171,35 @@ int patch()
     hook_err_t rc = 0;
 
     unsigned long panic_addr = patch_config->panic;
-    logkd("panic addr: %llx\n", panic_addr);
+    logkd("panic addr: %llx\\n", panic_addr);
     if (panic_addr) {
         rc = hook_wrap12((void *)panic_addr, before_panic, 0, 0);
-        log_boot("hook panic rc: %d\n", rc);
+        log_boot("hook panic rc: %d\\n", rc);
     }
-    if (rc) return rc;
+    if (rc) {
+        hotpatch_set_early_boot(0);
+        return rc;
+    }
 
     extra_event_init(EXTRA_EVENT_PAGING_INIT);
 
-    // rest_init or cgroup_init
+    /* rest_init or cgroup_init */
     unsigned long init_addr = patch_config->rest_init;
     if (!init_addr) init_addr = patch_config->cgroup_init;
     if (init_addr) {
         rc = hook_wrap4((void *)init_addr, before_rest_init, 0, (void *)init_addr);
-        log_boot("hook rest_init rc: %d\n", rc);
+        log_boot("hook rest_init rc: %d\\n", rc);
     }
-    if (rc) return rc;
+    if (rc) {
+        hotpatch_set_early_boot(0);
+        return rc;
+    }
 
-    // kernel_init
+    /* kernel_init */
     unsigned long kernel_init_addr = patch_config->kernel_init;
     if (kernel_init_addr) {
         rc = hook_wrap4((void *)kernel_init_addr, before_kernel_init, after_kernel_init, 0);
-        log_boot("hook kernel_init rc: %d\n", rc);
     }
-
+    if (rc || !init_addr) hotpatch_set_early_boot(0);
     return rc;
 }
