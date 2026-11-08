@@ -30,20 +30,27 @@
 
 void read_kernel_file(const char *path, kernel_file_t *kernel_file)
 {
-    int img_offset = 0;
+    if (!path || !kernel_file) tools_loge_exit("invalid kernel file arguments\\n");
+    memset(kernel_file, 0, sizeof(*kernel_file));
     read_file(path, &kernel_file->kfile, &kernel_file->kfile_len);
+    if (!kernel_file->kfile || kernel_file->kfile_len < 0)
+        tools_loge_exit("failed to read kernel file %s\\n", path);
     kernel_file->is_uncompressed_img = kernel_file->kfile_len >= 20 &&
-                                       !strncmp("UNCOMPRESSED_IMG", kernel_file->kfile, 16);
-    if (kernel_file->is_uncompressed_img) img_offset = 20;
+                                       !memcmp("UNCOMPRESSED_IMG", kernel_file->kfile, 16);
+    int img_offset = kernel_file->is_uncompressed_img ? 20 : 0;
     kernel_file->kimg = kernel_file->kfile + img_offset;
     kernel_file->kimg_len = kernel_file->kfile_len - img_offset;
 }
 
 void update_kernel_file_img_len(kernel_file_t *kernel_file, int kimg_len, bool is_different_endian)
 {
+    if (!kernel_file || !kernel_file->kfile || kimg_len < 0 ||
+        (kernel_file->is_uncompressed_img && kimg_len > 0x7fffffff - 20))
+        tools_loge_exit("invalid kernel image output length\\n");
     kernel_file->kimg_len = kimg_len;
     if (kernel_file->is_uncompressed_img) {
-        *(uint32_t *)(kernel_file->kfile + 16) = (uint32_t)(is_different_endian ? i32swp(kimg_len) : kimg_len);
+        *(uint32_t *)(kernel_file->kfile + 16) =
+            (uint32_t)(is_different_endian ? i32swp(kimg_len) : kimg_len);
         kernel_file->kfile_len = kimg_len + 20;
     } else {
         kernel_file->kfile_len = kimg_len;
@@ -52,17 +59,25 @@ void update_kernel_file_img_len(kernel_file_t *kernel_file, int kimg_len, bool i
 
 void new_kernel_file(kernel_file_t *kernel_file, kernel_file_t *old, int kimg_len, bool is_different_endian)
 {
-    int prefix_len = old->kimg - old->kfile;
+    if (!kernel_file || !old || !old->kfile || !old->kimg || kimg_len < 0)
+        tools_loge_exit("invalid new kernel file arguments\\n");
+    int prefix_len = (int)(old->kimg - old->kfile);
+    if (prefix_len < 0 || kimg_len > 0x7fffffff - prefix_len)
+        tools_loge_exit("new kernel file size overflow\\n");
     int new_len = kimg_len + prefix_len;
-    kernel_file->kfile = (char *)malloc(new_len);
+    memset(kernel_file, 0, sizeof(*kernel_file));
+    kernel_file->kfile = (char *)malloc(new_len ? (size_t)new_len : 1);
+    if (!kernel_file->kfile) tools_loge_exit("allocate new kernel file failed\\n");
     kernel_file->kimg = kernel_file->kfile + prefix_len;
-    memcpy(kernel_file->kfile, old->kfile, prefix_len);
+    if (prefix_len) memcpy(kernel_file->kfile, old->kfile, (size_t)prefix_len);
     kernel_file->is_uncompressed_img = old->is_uncompressed_img;
     update_kernel_file_img_len(kernel_file, kimg_len, is_different_endian);
 }
 
 void write_kernel_file(kernel_file_t *kernel_file, const char *path)
 {
+    if (!kernel_file || !kernel_file->kfile || !path || kernel_file->kfile_len < 0)
+        tools_loge_exit("invalid kernel file write arguments\\n");
     write_file(path, kernel_file->kfile, kernel_file->kfile_len, false);
 }
 
