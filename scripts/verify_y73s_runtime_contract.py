@@ -218,6 +218,73 @@ def main():
     print("[PASS] hook-chain install/restore failures are propagated safely")
     print("[PASS] ADR and overlapping ADRP references into overwritten prologue fail closed")
     print("[PASS] ARM64 entry thunk resolver is bounded and fail-closed")
+    # Credential/task-extension hardening: slot identity is published only
+    # after its payload is initialized, and all mutable policy flag accesses
+    # are single-copy accesses. These checks guard the recently audited races.
+    taskext_h = source("kernel/patch/include/taskext.h")
+    taskob_c = source("kernel/patch/common/taskob.c")
+    accctl_c = source("kernel/patch/common/accctl.c")
+    taskcred_c = source("kernel/patch/ksyms/task_cred.c")
+
+    valid_ext = function_body(taskext_h, "static inline bool task_ext_valid(")
+    require(r"if\s*\(!ext\s*\|\|\s*IS_ERR\(ext\)\)", valid_ext,
+            "task_ext_valid must reject null and error pointers")
+    require(r"READ_ONCE\(ext->size\)", valid_ext,
+            "task_ext_valid must read the published size once")
+    require(r"size\s*!=\s*task_ext_size", valid_ext,
+            "task_ext_valid must reject malformed extension sizes")
+    require(r"READ_ONCE\(ext->_magic\)", valid_ext,
+            "task_ext_valid must read the in-structure magic once")
+
+    create_ext = function_body(taskob_c, "static struct task_ext *task_ext_create(")
+    before(create_ext, "task_ext_reset(ret)", "WRITE_ONCE(task_ext_slots[i].task, task)",
+           "task extension must be initialized before publishing its task key")
+    before(create_ext, "WRITE_ONCE(ret->sel_allow", "WRITE_ONCE(task_ext_slots[i].task, task)",
+           "inherited policy flags must be initialized before publishing the task key")
+    require(r"if\s*\(sel_allow\)\s*WRITE_ONCE\(ret->sel_allow,\s*true\)", create_ext,
+            "existing task extension must preserve inherited SELinux allow state")
+    lookup_ext = function_body(taskob_c, "struct task_ext *kf_get_task_ext(")
+    require(r"READ_ONCE\(task_ext_slots\[i\]\.task\)", lookup_ext,
+            "task extension lookup must read the published key once")
+    before(lookup_ext, "if (slot_task != task) continue;", "dsb(ish);",
+           "task extension identity read must follow matching published task key")
+    require(r"READ_ONCE\(task_ext_slots\[i\]\.ext\.pid\)", lookup_ext,
+            "task extension lookup must read PID identity once")
+
+    prepare_ext = function_body(taskob_c, "static void prepare_task_ext(")
+    require(r"READ_ONCE\(old_ext->sel_allow\)", prepare_ext,
+            "fork inheritance must read mutable SELinux flag once")
+    require(r"task_ext_create\(new,\s*sel_allow,\s*priv_sel_allow\)", prepare_ext,
+            "fork inheritance must initialize child policy before publication")
+
+    commit_su = function_body(accctl_c, "int commit_common_su(")
+    before(commit_su, "rc = commit_creds(new)", "WRITE_ONCE(ext->sel_allow",
+           "SELinux bypass flag must not publish before credential commit")
+    require(r"if\s*\(unlikely\(!ext_ok\)\).*?goto out;", commit_su,
+            "credential transition must fail closed without a valid task extension")
+    slow_audit = function_body(accctl_c, "static int slow_avc_audit_replace(")
+    require(r"READ_ONCE\(ext->sel_allow\).*?READ_ONCE\(ext->priv_sel_allow\)", slow_audit,
+            "slow AVC hook must use single-copy policy flag reads")
+    require(r"READ_ONCE\(ext->sel_allow\).*?READ_ONCE\(ext->priv_sel_allow\)",
+            function_body(accctl_c, "static int avc_denied_replace("),
+            "AVC hook must use single-copy policy flag reads")
+    task_su_fn = function_body(accctl_c, "int task_su(")
+    require(r"return -EOPNOTSUPP;", task_su_fn,
+            "cross-task credential mutation must remain unsupported")
+
+    require(r"task_struct_offset\.seccomp_offset\s*=\s*-1;", taskcred_c,
+            "unused seccomp offset must remain explicitly disabled")
+    if "int mode_back = *modep" in taskcred_c or "*modep = 1158" in taskcred_c:
+        raise AssertionError("raw seccomp probing of scratch task_struct must not return")
+    resolve_current_fn = function_body(taskcred_c, "int resolve_current(")
+    require(r"!init_task\s*\|\|\s*!is_kimg_range\(\(uintptr_t\)init_task\)", resolve_current_fn,
+            "resolve_current must fail closed before dereferencing an unresolved init_task")
+
+    print("[PASS] task_ext null/size/magic validation and publication ordering")
+    print("[PASS] task_ext mutable policy flags use READ_ONCE/WRITE_ONCE")
+    print("[PASS] credential commit gates SELinux state; cross-task SU stays disabled")
+    print("[PASS] seccomp state is preserved without raw task_struct probing")
+
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
 
