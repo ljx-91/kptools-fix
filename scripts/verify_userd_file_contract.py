@@ -49,7 +49,8 @@ def main():
     path_lookup = body(src, "static int find_trusted_manager_apk_path(")
     need(r"index\s*>=\s*ARRAY_SIZE\(trusted_managers\)", path_lookup,
          "trusted-manager index must be bounded by the table")
-    for sig in ("static bool apk_inner_actor(", "static int apk_inner_actor_int("):
+    for sig in ("static bool apk_inner_actor(", "static int apk_inner_actor_int(",
+                "static bool apk_outer_actor(", "static int apk_outer_actor_int("):
         actor = body(src, sig)
         need(r"namelen\s*<=\s*0.*?namelen\s*>\s*NAME_MAX", actor,
              "APK directory entry name length must be validated")
