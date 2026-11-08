@@ -773,3 +773,43 @@ untrusted KPM input until L1-L7 are fixed and independently tested.
 The previous inventory count and older commit/run references in this report
 are historical snapshots, not claims about the current HEAD. The current
 branch ref and file-tree count above were re-fetched on 2026-11-09.
+
+
+## 9. LKM AArch64 relocation hardening — partial implementation (2026-11-09)
+
+Production source changes were made in `lkm/kpm/relo.c`:
+
+- The 64-bit data-relocation mask now uses an explicit all-ones case and
+  16/32-bit masks use `1ULL`, avoiding the prior 32-bit `1 << 64` UB.
+- Invalid relocation widths now return `-EINVAL`.
+- `kp_apply_relocate()` now returns `-EOPNOTSUPP` rather than falsely
+  reporting success for unapplied AArch64 REL records.
+- RELA handling validates section type, entry size/divisibility, target
+  section index/link, allocatable target, symbol table shape, symbol index,
+  relocation write width, target-section extent, and alignment before writes.
+- The RELA path performs a first pass over records before applying them, so
+  malformed bounds/symbol references are rejected before relocation writes.
+
+Commits:
+- `bac74da768c8728927d2de3685b254b93421eecc` — initial LKM RELA bounds work.
+- `b628ab44415d16c2c654dbb0d45a60bbcac85f22` — invalid width handling correction.
+- `293ecaecf8b28eb68911ef0e2503dbb4256a82c7` — explicit REL rejection.
+
+### Important limitations
+
+This is a partial fix, not a completed LKM loader hardening. The current
+RELA validation still relies on the caller having validated the relocation
+section's own in-memory address and the section-header array. The module
+loader still has the ELF/header/string-table, section-layout, symbol
+simplification, module-list concurrency, and unload lifetime defects L1-L3
+and L6 described above. Relocation helper writes are not fully transactional
+for arithmetic-overflow failures (the helper encodes before returning an
+overflow error). The relocation source has not yet been compiled by an LKM
+kernel-header build or exercised with ASan/UBSan/fuzz fixtures.
+
+The Y73S KPIMG workflow path filter currently watches `kernel/**` and
+`scripts/**`, not `lkm/**`; therefore a green KPIMG workflow would not
+validate this LKM change. Do not count existing KPIMG/host-tools runs as
+validation for these LKM edits. Keep the LKM loader unsupported for
+untrusted KPM input until the remaining loader and lifecycle issues are
+fixed and a dedicated LKM build/test job passes.
