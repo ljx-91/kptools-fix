@@ -8,6 +8,7 @@
 #include <symbol.h>
 #include <pgtable.h>
 #include <hotpatch.h>
+#include <uapi/asm-generic/errno.h>
 #include "hmem.h"
 
 // transit0
@@ -219,9 +220,9 @@ int fp_hook(uintptr_t fp_addr, void *replace, void **backup)
     values[0] = (uint32_t)(uintptr_t)replace;
     values[1] = (uint32_t)((uintptr_t)replace >> 32);
     uintptr_t original = *(volatile uintptr_t *)fp_addr;
-    int rc = hotpatch((void **)addrs, values, 2);
-    if (!rc) *backup = (void *)original;
-    return rc;
+    /* Keep the trampoline's origin valid even if patch rollback is uncertain. */
+    *backup = (void *)original;
+    return hotpatch((void **)addrs, values, 2);
 }
 KP_EXPORT_SYMBOL(fp_hook);
 
