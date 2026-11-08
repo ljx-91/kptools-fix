@@ -164,19 +164,22 @@ void kp_debug_write(const char *fmt, ...)
     filp_close(filp, 0);
 }
 
-static inline void prepare_init_ext(struct task_struct *task)
+static int prepare_init_ext(struct task_struct *task)
 {
+    if (!task) return -EINVAL;
     struct task_ext *ext = task_ext_create(task);
     if (!ext) {
-        logkfe("task_ext_create(init) FAILED\n");
-        return;
+        logkfe("task_ext_create(init) FAILED\\n");
+        return -ENOMEM;
     }
     task_ext_reset(ext);
     dsb(ish);
+    return 0;
 }
 
 static void prepare_task_ext(struct task_struct *new, struct task_struct *old)
 {
+    if (unlikely(!new || IS_ERR(new) || !old || IS_ERR(old))) return;
     struct task_ext *old_ext = get_task_ext(old);
     /*
      * Slots are only needed by the su lineage: a task outside it holds no ext
@@ -214,6 +217,7 @@ static void after_copy_process(hook_fargs8_t *args, void *udata)
 static void after_cgroup_post_fork(hook_fargs4_t *args, void *udata)
 {
     struct task_struct *new = (struct task_struct *)args->arg0;
+    if (unlikely(!new || IS_ERR(new))) return;
     prepare_task_ext(new, current);
 }
 
@@ -227,18 +231,20 @@ int task_observer()
     int rc = 0;
 
     spin_lock_init(&task_ext_lock);
-    prepare_init_ext(init_task);
+    rc = prepare_init_ext(init_task);
+    if (rc) return rc;
 
     unsigned long copy_process_addr = patch_config->copy_process;
     if (copy_process_addr) {
-        rc |= hook_wrap8((void *)copy_process_addr, 0, after_copy_process, 0);
-        log_boot("hook copy_process: %llx, rc: %d\n", copy_process_addr, rc);
-    } else {
+        rc = hook_wrap8((void *)copy_process_addr, 0, after_copy_process, 0);
+        log_boot("hook copy_process: %llx, rc: %d\\n", copy_process_addr, rc);
+    }
+    if (!copy_process_addr || rc) {
         unsigned long cgroup_post_fork_addr = patch_config->cgroup_post_fork;
         if (cgroup_post_fork_addr) {
-            rc |= hook_wrap4((void *)cgroup_post_fork_addr, 0, after_cgroup_post_fork, 0);
-            log_boot("hook cgroup_post_fork: %llx, rc: %d\n", cgroup_post_fork_addr, rc);
-        } else {
+            rc = hook_wrap4((void *)cgroup_post_fork_addr, 0, after_cgroup_post_fork, 0);
+            log_boot("hook cgroup_post_fork: %llx, rc: %d\\n", cgroup_post_fork_addr, rc);
+        } else if (!rc) {
             rc = HOOK_BAD_ADDRESS;
         }
     }
