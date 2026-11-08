@@ -62,7 +62,6 @@ struct task_ext *kf_get_task_ext(const struct task_struct *task)
 {
     if (unlikely(!task)) return &task_ext_invalid;
     if (likely(!atomic_read(&task_ext_active_count))) return &task_ext_invalid;
-    dsb(ish);
     pid_t pid = __task_pid_nr_ns((struct task_struct *)task, PIDTYPE_PID, 0);
     for (int i = 0; i < TASK_EXT_SLOT_NUM; i++) {
         struct task_struct *slot_task = READ_ONCE(task_ext_slots[i].task);
