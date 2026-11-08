@@ -127,3 +127,33 @@ allocation semantics, reservation behavior, and rollback requirements.
 The stack-frame verifier remains a separate issue: it needs ELF symbol-range
 awareness and verification of the caller's frame-record setup. A passing
 flat-binary byte-pattern check is not a full ABI proof.
+
+## Fail-closed source guard committed
+
+A tool-side guard was committed in `tools/symbol.c` (commit
+`6880bd05d95214357726d1a3ed5bbba0a5447f62`). It no longer substitutes
+`memblock_alloc_try_nid` for either the physical allocator or the
+five-argument virtual allocator. If either correctly typed allocator is
+missing, the patching tool exits with an explicit diagnostic instead of
+emitting a KPIMG with an incompatible pointer.
+
+This is intentionally a compatibility stop, not a completed Y73S allocator
+implementation. It prevents the known-bad fallback from being generated, but
+does not yet make APatch boot on this kernel. The source change has not yet
+been built or exercised in CI; no boot image was produced.
+
+## Physical allocator candidate for further investigation
+
+The original binary also contains `memblock_find_in_range.cfi` at
+`0x003919a8`. Its wrapper consumes four arguments (`start, end, size,
+align`) and forwards them to `memblock_find_in_range_node` with
+`NUMA_NO_NODE`, returning the range result directly. Unlike
+`memblock_alloc_try_nid.cfi`, this wrapper does not perform a physical-to-
+virtual conversion in its own body, so it is a plausible physical-range
+allocator candidate.
+
+It is not wired into the runtime path. Before using it, the implementation
+must verify the target's exact range-bound semantics and add an explicit
+reservation step: the find-range wrapper itself does not reserve the selected
+range. Reservation failure and rollback must be handled before this can be a
+safe replacement.
