@@ -215,6 +215,13 @@ int resolve_cred_offset()
     *(struct cred **)((uintptr_t)task + task_struct_offset.real_cred_offset) = cred;
 
     const struct task_struct *backup = override_current(task);
+    if (!backup) {
+        vfree(cred);
+        vfree(cred1);
+        vfree(task);
+        uninit_bllist();
+        return -EINVAL;
+    }
 
     // cap_inheritable, cap_permitted, cap_effective
     kernel_cap_t effective, inheritable, permitted;
@@ -390,6 +397,21 @@ int resolve_cred_offset()
     }
     log_boot("    cap_ambient offset: %x\n", cred_offset.cap_ambient_offset);
 
+    int resolve_rc = 0;
+    if (cred_offset.cap_effective_offset < 0 ||
+        cred_offset.cap_inheritable_offset < 0 ||
+        cred_offset.cap_permitted_offset < 0 ||
+        cred_offset.cap_bset_offset < 0 ||
+        cred_offset.cap_ambient_offset < 0 ||
+        cred_offset.securebits_offset < 0 ||
+        cred_offset.uid_offset < 0 || cred_offset.euid_offset < 0 ||
+        cred_offset.suid_offset < 0 || cred_offset.fsuid_offset < 0 ||
+        cred_offset.gid_offset < 0 || cred_offset.egid_offset < 0 ||
+        cred_offset.sgid_offset < 0 || cred_offset.fsgid_offset < 0) {
+        log_boot("    credential layout incomplete; refusing unsafe credential writes\\n");
+        resolve_rc = -EINVAL;
+    }
+
     revert_current(backup);
 
     vfree(cred);
@@ -397,7 +419,7 @@ int resolve_cred_offset()
     vfree(task);
 
     uninit_bllist();
-    return 0;
+    return resolve_rc;
 }
 
 static int find_swapper_comm_offset(uint64_t start, int size)
