@@ -90,6 +90,9 @@ int hotpatch_nosync(void *addr, uint32_t value)
     modify_entry_kernel(tp, entry, (ori_prot | PTE_DBM) & ~PTE_RDONLY);
     *(uint32_t *)tp = value;
     modify_entry_kernel(tp, entry, ori_prot);
+    /* Publish the data-side instruction bytes before invalidating I-cache.
+     * IALLUIS alone does not clean dirty D-cache lines to the PoU. */
+    __flush_dcache_area((void *)tp, sizeof(uint32_t));
     flush_icache_all();
     return 0;
 }
