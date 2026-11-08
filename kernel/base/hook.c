@@ -193,6 +193,8 @@ static __noinline hook_err_t relo_adr(hook_t *hook, uint64_t inst_addr, uint32_t
 
     if (type == INST_ADR) {
         addr = inst_addr + sign64_extend((immhi << 2u) | immlo, 21u);
+        /* Do not retain a pointer into text that hook_install will overwrite. */
+        if (is_in_tramp(hook, addr)) return -HOOK_BAD_RELO;
     } else {
         addr = (inst_addr + sign64_extend((immhi << 14u) | (immlo << 12u), 33u)) & 0xFFFFFFFFFFFFF000;
         if (is_in_tramp(hook, addr)) return -HOOK_BAD_RELO;
