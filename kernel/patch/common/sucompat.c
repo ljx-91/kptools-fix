@@ -174,6 +174,7 @@ static int allow_uids_cb(struct kstorage *kstorage, void *udata)
     } *up = (typeof(up))udata;
 
     if (up->idx >= up->out_num) return -ENOBUFS;
+    if (!kstorage || kstorage->dlen < sizeof(struct su_profile)) return -EINVAL;
     struct su_profile *profile = (struct su_profile *)kstorage->data;
     up->out_uids[up->idx++] = profile->uid;
     return 0;
