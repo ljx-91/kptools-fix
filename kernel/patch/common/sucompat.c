@@ -112,7 +112,7 @@ static int is_su_allow_uid_slow(uid_t uid)
     int rc = 0;
     rcu_read_lock();
     const struct kstorage *ks = get_kstorage(su_kstorage_gid, uid);
-    if (IS_ERR_OR_NULL(ks) || ks->dlen <= 0) goto out;
+    if (IS_ERR_OR_NULL(ks) || ks->dlen < sizeof(uid_t)) goto out;
 
     struct su_profile *profile = (struct su_profile *)ks->data;
     rc = profile->uid == uid;
@@ -145,7 +145,8 @@ int su_add_allow_uid(uid_t uid, uid_t to_uid, const char *scontext)
         uid,
         to_uid,
     };
-    memcpy(profile.scontext, scontext, SUPERCALL_SCONTEXT_LEN);
+    strncpy(profile.scontext, scontext, sizeof(profile.scontext) - 1);
+    profile.scontext[sizeof(profile.scontext) - 1] = '\0';
     int rc = write_kstorage(su_kstorage_gid, uid, &profile, 0, sizeof(struct su_profile), false);
     logkfd("uid: %d, to_uid: %d, sctx: %s, rc: %d\n", uid, to_uid, scontext, rc);
     return rc;
@@ -220,6 +221,10 @@ int su_allow_uid_profile(int is_user, uid_t uid, struct su_profile *out_profile)
     const struct kstorage *ks = get_kstorage(su_kstorage_gid, uid);
     if (IS_ERR(ks)) {
         rc = -ENOENT;
+        goto out;
+    }
+    if (ks->dlen < sizeof(struct su_profile)) {
+        rc = -EINVAL;
         goto out;
     }
     struct su_profile *profile = (struct su_profile *)ks->data;
