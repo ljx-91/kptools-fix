@@ -22,3 +22,4 @@ No Fastboot, partition write, boot/vbmeta modification, or device-side operation
 - Hook install/uninstall now propagate patch errors. Trampoline storage is retained when rollback or restore state is uncertain.
 - The latest GCC 14.2 run passed: https://github.com/ljx-91/kptools-fix/actions/runs/42474757991
 - The initial pre-`rest_init` hook has an explicit early-boot mode so the Linux 4.14 `stop_machine()` pre-initialization path can run while DAIF IRQ/FIQ masks are set; the mode is cleared on the `before_rest_init()` exit path and on patch setup failures.
+- Final early-boot hotpatch build (including the public API declarations) passed GCC 14.2 CI: https://github.com/ljx-91/kptools-fix/actions/runs/42475073570. KPIMG SHA-256: `d1ea5a0c7b13df2d30369d4111bd62515c44e3a0ca3f134d11665887285dcaed`.
