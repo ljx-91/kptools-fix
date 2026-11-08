@@ -1197,14 +1197,27 @@ int repack_bootimg_mem(const char *orig_boot_path,
                    memcmp(magic, "AVB0", sizeof(magic)) != 0) {
             err = "AVB vbmeta_offset does not point at a vbmeta image";
         } else {
-            new_image_size = (uint64_t)((int64_t)old_image_size + delta);
-            new_vbmeta_offset = (uint64_t)((int64_t)old_vbmeta_offset + delta);
-            if (new_image_size < (uint64_t)page_size + new_k_total_aligned) {
+            uint64_t shift = delta >= 0 ? (uint64_t)delta : (uint64_t)(-delta);
+            if (delta >= 0) {
+                if (old_image_size > ~0ULL - shift || old_vbmeta_offset > ~0ULL - shift) {
+                    err = "AVB footer offset arithmetic overflow";
+                } else {
+                    new_image_size = old_image_size + shift;
+                    new_vbmeta_offset = old_vbmeta_offset + shift;
+                }
+            } else if (old_image_size < shift || old_vbmeta_offset < shift) {
+                err = "AVB footer offset arithmetic underflow";
+            } else {
+                new_image_size = old_image_size - shift;
+                new_vbmeta_offset = old_vbmeta_offset - shift;
+            }
+
+            if (!err && new_image_size < (uint64_t)page_size + new_k_total_aligned) {
                 err = "AVB image_size would not cover the repacked kernel";
-            } else if (new_vbmeta_offset < new_image_size) {
+            } else if (!err && new_vbmeta_offset < new_image_size) {
                 err = "AVB vbmeta_offset would precede the repacked image";
-            } else if (new_vbmeta_offset > footer_offset ||
-                       old_vbmeta_size > footer_offset - new_vbmeta_offset) {
+            } else if (!err && (new_vbmeta_offset > footer_offset ||
+                       old_vbmeta_size > footer_offset - new_vbmeta_offset)) {
                 err = "AVB metadata would not fit the repacked image";
             }
         }
