@@ -626,8 +626,9 @@ static int move_module(struct kp_module *mod, struct kp_load_info *info)
 static int setup_load_info(struct kp_load_info *info)
 {
 	int rc = 0;
-	info->sechdrs = (void *)info->hdr + info->hdr->e_shoff;
-	info->secstrings = (void *)info->hdr + info->sechdrs[info->hdr->e_shstrndx].sh_offset;
+	/* elf_header_check() has already range-checked and assigned sechdrs. */
+	if (!info->sechdrs)
+		return -ENOEXEC;
 
 	if ((rc = rewrite_section_headers(info))) {
 		logke("rewrite section error\n");
