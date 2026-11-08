@@ -342,7 +342,7 @@ static inline void *wrap_get_origin_func(void *hook_args)
  * @param replace 
  * @param backup 
  */
-void fp_hook(uintptr_t fp_addr, void *replace, void **backup);
+int fp_hook(uintptr_t fp_addr, void *replace, void **backup);
 
 /**
  * @brief 
@@ -350,7 +350,7 @@ void fp_hook(uintptr_t fp_addr, void *replace, void **backup);
  * @param fp_addr 
  * @param backup 
  */
-void fp_unhook(uintptr_t fp_addr, void *backup);
+int fp_unhook(uintptr_t fp_addr, void *backup);
 
 /**
  * @brief 
