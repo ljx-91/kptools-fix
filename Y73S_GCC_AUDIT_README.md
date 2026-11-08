@@ -21,3 +21,4 @@ No Fastboot, partition write, boot/vbmeta modification, or device-side operation
 - The Y73S hotpatch callback no longer uses `num_online_cpus()`, `cpu_online_mask`, or `nr_cpu_ids`; it uses `stop_machine(..., NULL)`, preflights targets, snapshots original instructions, and attempts reverse rollback on failure.
 - Hook install/uninstall now propagate patch errors. Trampoline storage is retained when rollback or restore state is uncertain.
 - The latest GCC 14.2 run passed: https://github.com/ljx-91/kptools-fix/actions/runs/42474757991
+- The initial pre-`rest_init` hook has an explicit early-boot mode so the Linux 4.14 `stop_machine()` pre-initialization path can run while DAIF IRQ/FIQ masks are set; the mode is cleared on the `before_rest_init()` exit path and on patch setup failures.
