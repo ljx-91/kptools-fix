@@ -1143,11 +1143,16 @@ long kp_unload_module(const char *name, void __user *reserved)
 		spin_unlock_irqrestore(&module_lock, flags);
 		return -EBUSY;
 	}
-	list_del_init(&mod->list);
-	mod->state = KP_MODULE_DEAD;
+	/* EXITING prevents a second unload while keeping the image visible to
+	 * CFI range checks during the module's own exit callback. */
+	mod->state = KP_MODULE_EXITING;
 	spin_unlock_irqrestore(&module_lock, flags);
 
 	rc = kp_call_exit(mod->exit, reserved);
+	spin_lock_irqsave(&module_lock, flags);
+	list_del_init(&mod->list);
+	mod->state = KP_MODULE_DEAD;
+	spin_unlock_irqrestore(&module_lock, flags);
 	if (mod->args)
 		kvfree(mod->args);
 	if (mod->ctl_args)
@@ -1271,92 +1276,131 @@ long kp_module_control1(const char *name, void *a1, void *a2, void *a3)
 
 long kp_notify_modules_event(const char *event, const char *args, void __user *reserved)
 {
+	struct kp_module **snapshot;
+	struct kp_module *pos;
+	unsigned long flags;
+	unsigned int capacity, n, i;
+	long result = 0;
+	int count = 0;
+
 	if (!event)
 		return -EINVAL;
 
-	long result = 0;
-	int count = 0;
-	rcu_read_lock();
+	/* Count, allocate outside the spinlock, then recheck capacity while
+	 * taking references. Retry if concurrent loads grew the live set. */
+	for (;;) {
+		capacity = 0;
+		spin_lock_irqsave(&module_lock, flags);
+		list_for_each_entry(pos, &modules.list, list)
+			if (pos->state == KP_MODULE_LIVE && pos->event && *pos->event)
+				capacity++;
+		spin_unlock_irqrestore(&module_lock, flags);
 
-	struct kp_module *pos;
-	list_for_each_entry(pos, &modules.list, list)
-	{
-		if (!pos->event || !*pos->event)
+		snapshot = kcalloc(capacity ? capacity : 1, sizeof(*snapshot), GFP_KERNEL);
+		if (!snapshot)
+			return -ENOMEM;
+
+		spin_lock_irqsave(&module_lock, flags);
+		n = 0;
+		list_for_each_entry(pos, &modules.list, list)
+			if (pos->state == KP_MODULE_LIVE && pos->event && *pos->event)
+				n++;
+		if (n > capacity) {
+			spin_unlock_irqrestore(&module_lock, flags);
+			kfree(snapshot);
 			continue;
-
-		long rc = kp_call_event(pos->event, event, args, reserved);
-		logkfi("event: %s, module: %s, rc: %ld\n", event, pos->info.name, rc);
-		if (rc < 0 && !result)
-			result = rc;
-		count++;
+		}
+		n = 0;
+		list_for_each_entry(pos, &modules.list, list) {
+			if (pos->state != KP_MODULE_LIVE || !pos->event || !*pos->event)
+				continue;
+			pos->active_calls++;
+			snapshot[n++] = pos;
+		}
+		spin_unlock_irqrestore(&module_lock, flags);
+		break;
 	}
 
-	rcu_read_unlock();
+	for (i = 0; i < n; i++) {
+		pos = snapshot[i];
+		{
+			long rc = kp_call_event(pos->event, event, args, reserved);
+			logkfi("event: %s, module: %s, rc: %ld\n",
+			       event, pos->info.name, rc);
+			if (rc < 0 && !result)
+				result = rc;
+		}
+		count++;
+		kp_module_put(pos);
+	}
+	kfree(snapshot);
 	return result ?: count;
 }
 
 int kp_get_module_nums(void)
 {
-	rcu_read_lock();
-
 	struct kp_module *pos;
+	unsigned long flags;
 	int n = 0;
-	list_for_each_entry(pos, &modules.list, list)
-	{
-		n++;
-	}
-	rcu_read_unlock();
 
+	spin_lock_irqsave(&module_lock, flags);
+	list_for_each_entry(pos, &modules.list, list)
+		if (pos->state == KP_MODULE_LIVE)
+			n++;
+	spin_unlock_irqrestore(&module_lock, flags);
 	logkfd("%d\n", n);
 	return n;
 }
 
 int kp_list_modules(char *out_names, int size)
 {
+	struct kp_module *pos;
+	unsigned long flags;
+	int off = 0;
+
 	if (!out_names || size <= 0)
 		return -EINVAL;
 	out_names[0] = '\0';
 
-	rcu_read_lock();
-
-	struct kp_module *pos;
-	int off = 0;
-	list_for_each_entry(pos, &modules.list, list)
-	{
-		off += snprintf(out_names + off, size - 1 - off, "%s\n", pos->info.name);
+	spin_lock_irqsave(&module_lock, flags);
+	list_for_each_entry(pos, &modules.list, list) {
+		int written;
+		if (pos->state != KP_MODULE_LIVE)
+			continue;
+		if (off >= size - 1)
+			break;
+		written = scnprintf(out_names + off, size - off, "%s\n", pos->info.name);
+		off += written;
 	}
+	spin_unlock_irqrestore(&module_lock, flags);
 	if (off > 0)
 		out_names[off - 1] = '\0';
-
-	rcu_read_unlock();
 	return off;
 }
 
 int kp_get_module_info(const char *name, char *out_info, int size)
 {
-	if (size <= 0)
-		return 0;
-	rcu_read_lock();
+	struct kp_module *mod;
+	int sz;
 
-	struct kp_module *mod = kp_find_module(name);
+	if (!name || !out_info || size <= 0)
+		return -EINVAL;
+	mod = kp_module_get(name);
 	if (!mod)
 		return -ENOENT;
 
-	int sz = snprintf(out_info, size - 1,
-			  "name=%s\n"
-			  "version=%s\n"
-			  "license=%s\n"
-			  "author=%s\n"
-			  "description=%s\n"
-			  "args=%s\n",
-			  mod->info.name, mod->info.version, mod->info.license, mod->info.author,
-			  mod->info.description, mod->args ? mod->args : "");
-
-	if (sz > 0)
-		out_info[sz - 1] = '\0';
+	sz = scnprintf(out_info, size,
+		       "name=%s\n"
+		       "version=%s\n"
+		       "license=%s\n"
+		       "author=%s\n"
+		       "description=%s\n"
+		       "args=%s\n",
+		       mod->info.name, mod->info.version, mod->info.license,
+		       mod->info.author, mod->info.description,
+		       mod->args ? mod->args : "");
 	logkfd("%s", out_info);
-
-	rcu_read_unlock();
+	kp_module_put(mod);
 	return sz;
 }
 
