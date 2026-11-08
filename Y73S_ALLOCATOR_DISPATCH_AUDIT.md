@@ -1,80 +1,77 @@
-# Y73S continuation audit: allocator dispatch and preconditions
+# Y73S allocator ABI audit — binary-level correction
 
 Branch: `y73s-gcc-audit-20261108`
 
-This is a source-audit note only. It does not change runtime code, build a KPIMG, modify a boot image, or establish that a particular failure caused the device reboot loop.
+Scope: read-only analysis of the original `kernel-b` and the current branch source. No runtime source was changed, no KPIMG or boot image was generated, and no device operation was performed.
 
-## Newly confirmed source-level issue: allocator pointer precondition
+## Exact input identity
 
-In `kernel/base/map.c`, `mem_proc()` enters the probe when
-`memblock_virt_alloc_relo` is nonzero, but it calls
-`memblock_phys_alloc_relo` first without checking that pointer.
+- File: original `kernel-b`
+- Size: 47,517,708 bytes
+- SHA-256: `345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`
+- Matching Kallsyms report: `Y73S-kallsyms-report.txt`
 
-Consequently, the condition currently proves only that the virtual allocator
-pointer exists. It does not prove that the physical allocator pointer exists.
-If the physical pointer is unresolved, the first indirect call can fail before
-the map hook reaches its later work.
+## Confirmed binary finding: fallback allocator returns a virtual address
 
-A source-level correction would need to validate both pointers and provide a
-defined failure path. Merely adding an early return is not automatically safe:
-`_paging_init()` is replacing a kernel paging hook, and callers depend on
-memory reservations, mappings, and the original paging_init call being handled
-consistently.
+The Kallsyms report contains:
 
-## Allocator dispatch is ABI-sensitive
+- `memblock_alloc_try_nid` at image offset `0x01914928`
+- `memblock_alloc_try_nid.cfi` at `0x0211af28`
+- `memblock_virt_alloc_try_nid` at `0x01914930`
+- `memblock_virt_alloc_try_nid.cfi` at `0x0211b364`
 
-`map_phys_alloc()` dispatches both
+No `memblock_phys_alloc_try_nid` symbol appears in the supplied complete Kallsyms report.
+
+The original-kernel AArch64 disassembly of `memblock_alloc_try_nid.cfi` at `0x0211af28` confirms a three-argument entry: it consumes `x0` (size), `x1` (alignment), and `x2` (node ID). However, its return semantics are **not physical-address semantics**:
+
+1. The allocator's internal result is retained as a physical address.
+2. The function subtracts a kernel physical-memory base/offset value from that result.
+3. It ORs the result with the kernel virtual base pattern `0xffffffc000000000`.
+4. It uses the converted address as the destination for zeroing and returns that converted value in `x0`.
+
+This is the physical-to-virtual conversion pattern. Therefore, for this exact binary, the three-argument `memblock_alloc_try_nid.cfi` entry returns a kernel virtual pointer, not a physical address.
+
+The separate `memblock_virt_alloc_try_nid.cfi` entry at `0x0211b364` consumes five arguments (`x0`–`x4`) and is also a virtual allocator. These two symbols must not be conflated.
+
+## Direct mismatch in current branch source
+
+In `kernel/base/map.c`, `map_phys_alloc()` sends both
 `MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID` and
-`MAP_SYM_MEMBLOCK_ALLOC_TRY_NID` through the same three-argument function
-pointer type returning a physical address.
+`MAP_SYM_MEMBLOCK_ALLOC_TRY_NID` through a function pointer typed as:
 
-That is valid only if the selected target entry really has the three-argument,
-physical-address-returning ABI expected by this call site. Current upstream
-Linux declares `memblock_phys_alloc_try_nid(size, align, nid)` as a physical
-allocator, but declares `memblock_alloc_try_nid(size, align, min_addr,
-max_addr, nid)` as a virtual allocator. These upstream declarations do not
-settle the ABI of Vivo's vendor 4.14.141 kernel. The branch comment asserting a
-Y73S-specific three-argument CFI entry must therefore be treated as a
-target-specific hypothesis until the exact original-kernel function body,
-CFI entry, and call sites are independently disassembled.
+```c
+typedef phys_addr_t (*memblock_phys_alloc_try_nid_f)(
+    phys_addr_t size, phys_addr_t align, int nid);
+```
 
-Do not change the dispatch based only on upstream headers. First identify
-whether the resolver selected a real function, a CFI jump-table entry, or a
-compiler-generated wrapper, and verify argument registers and return-value
-semantics in the original Y73S binary.
+It then treats the return value as a physical address.
 
-## Zero-size probe is another target-specific assumption
+If the resolver selects the available Y73S `memblock_alloc_try_nid` entry as the fallback, this is a semantic ABI mismatch: the call has the correct three argument registers, but the return value is a virtual address that the KP code treats as a physical address.
 
-`mem_proc()` invokes the physical allocator with size zero, then invokes the
-virtual allocator with size zero and `min_addr == max_addr == detect_phys`.
-The computed `linear_voffset` assumes both calls have meaningful and
-compatible zero-size semantics on this exact vendor kernel.
+The consequences propagate into the current map path:
 
-The source alone does not establish that assumption. Verify the actual
-4.14.141 implementations and the CFI entry bodies before relying on this
-probe. A nonzero pointer result is not sufficient evidence that the returned
-virtual/physical pair is valid.
+- `mem_proc()` stores this result in `detect_phys`, then supplies it as a physical-address bound to `memblock_virt_alloc_try_nid`.
+- `_paging_init()` uses the allocation result as `start_pa`.
+- It passes `start_pa` to `memblock_mark_nomap`.
+- It computes `start_va = start_pa + kimage_voffset` and uses the result for page-table construction and copying.
 
-## Required checks before any runtime patch
+A virtual address misinterpreted as a physical address can therefore corrupt the early mapping calculations before `start()` is reached.
 
-1. Record every resolved memblock symbol address, symbol category, and resolver
-   path in one diagnostic report.
-2. Disassemble the exact target entry and any CFI thunk; identify argument
-   registers, return type/semantics, and whether the symbol is a wrapper.
-3. Verify the zero-size allocation behavior in the target implementation.
-4. Add explicit validation for both allocator pointers and all allocation
-   results, with a rollback/fallback design for partially completed map work.
-5. Make `get_or_create_pte()` propagate intermediate-table allocation failure
-   rather than publishing a descriptor for an unchecked address.
-6. Build an ELF-aware verifier that checks actual `start` and
-   `_paging_init` symbol ranges and frame-record instructions. The existing
-   flat-binary pattern checker is not a full ABI verifier.
+## Assessment
 
-## Status
+<em>High-confidence static defect in the fallback path:</em> the target function's three-argument ABI does not make it a physical allocator. The current code's function-pointer return type and subsequent physical-address use are incompatible with the observed target implementation.
 
-- Confirmed: missing physical-allocator pointer check in `mem_proc()`.
-- Confirmed: both allocator categories share one three-argument dispatch type.
-- Not confirmed: whether Vivo's selected `memblock_alloc_try_nid` CFI entry
-  actually has that three-argument physical allocator ABI.
-- Not confirmed: zero-size probe semantics on the target kernel.
-- Not changed: runtime code, KPIMG, boot image, or flashing state.
+This is a strong candidate for the Y73S early reboot loop, but it is not yet a proven unique root cause. To close the chain, verify from the KPIMG resolver/preset logic that this exact fallback entry is what gets stored in `memblock_phys_alloc_relo` on the failing build. Also inspect the exact embedded KPIMG and compare its resolved offsets with the original kernel.
+
+## Additional confirmed source risks
+
+- `mem_proc()` checks `memblock_virt_alloc_relo` but does not check `memblock_phys_alloc_relo` before calling it.
+- The zero-size probe assumes meaningful behavior from both allocators and assumes the returned pair is suitable for calculating `linear_voffset`; this needs target-specific proof.
+- `get_or_create_pte()` does not propagate intermediate page-table allocation failure.
+- `_paging_init()` does not validate the main allocation before mark-nomap, mapping, and copying.
+
+## Next safe engineering step
+
+Do not patch the runtime path by guessing an inverse address conversion. First trace the resolver's symbol selection and the embedded KPIMG's preset fields. Then choose a genuinely physical allocator if one exists, or design a separately verified conversion path based on the exact Y73S memory layout. The failure path must also account for partial reservations and the fact that this hook replaces the kernel's `paging_init`.
+
+The stack-frame verifier remains a separate issue: it needs ELF symbol-range awareness and verification of the caller's frame-record setup. A passing flat-binary byte-pattern check is not a full ABI proof.
