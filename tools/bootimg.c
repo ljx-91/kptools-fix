@@ -877,13 +877,17 @@ int repack_bootimg_mem(const char *orig_boot_path,
                        const char *out_boot_path) {
     tools_logi(" Starting automatic repack...\n");
 
+    if (!orig_boot_path || !new_kernel || !new_kernel_size || !out_boot_path) return -EINVAL;
     FILE *f_orig = fopen(orig_boot_path, "rb");
     if (!f_orig) return -1;
 
     struct boot_img_hdr hdr;
     struct avb_footer avb;
     uint32_t extracted_size = 0;
-    fread(&hdr, sizeof(hdr), 1, f_orig);
+    if (fread(&hdr, sizeof(hdr), 1, f_orig) != 1) {
+        fclose(f_orig);
+        return -2;
+    }
 
     if (memcmp(hdr.magic, "ANDROID!", 8) != 0) {
         tools_logi("Not a valid Android Boot Image.\n");
@@ -891,8 +895,15 @@ int repack_bootimg_mem(const char *orig_boot_path,
         return -2;
     }
 
-    fseek(f_orig, 0, SEEK_END);
+    if (fseek(f_orig, 0, SEEK_END) != 0) {
+        fclose(f_orig);
+        return -2;
+    }
     long total_size = ftell(f_orig);
+    if (total_size < (long)sizeof(hdr)) {
+        fclose(f_orig);
+        return -2;
+    }
 
     // The AVB footer is the last sizeof(avb) bytes of the image.  Without its
     // magic the tail is opaque and is only copied back verbatim further down.
@@ -914,9 +925,19 @@ int repack_bootimg_mem(const char *orig_boot_path,
 
     tools_logi("Header Version: %u, Page Size: %u, fmt_size: %u\n", header_ver, page_size,fmt_size);
 
+    if (page_size < sizeof(hdr) || (page_size & (page_size - 1)) ||
+        page_size > (uint64_t)total_size || hdr.kernel_size < sizeof(compress_head) ||
+        hdr.kernel_size > (uint64_t)total_size - page_size) {
+        fclose(f_orig);
+        return -2;
+    }
     uint8_t *old_k_full = malloc(hdr.kernel_size);
-    fseek(f_orig, page_size, SEEK_SET);
-    fread(old_k_full, 1, hdr.kernel_size, f_orig);
+    if (!old_k_full || fseek(f_orig, page_size, SEEK_SET) != 0 ||
+        fread(old_k_full, 1, hdr.kernel_size, f_orig) != hdr.kernel_size) {
+        free(old_k_full);
+        fclose(f_orig);
+        return -2;
+    }
 
 
     compress_head k_head;
@@ -931,6 +952,11 @@ int repack_bootimg_mem(const char *orig_boot_path,
         if (dtb_off > 0) {
             dtb_size = hdr.kernel_size - dtb_off;
             extracted_dtb = malloc(dtb_size);
+            if (!extracted_dtb) {
+                free(old_k_full);
+                fclose(f_orig);
+                return -1;
+            }
             memcpy(extracted_dtb, old_k_full + dtb_off, dtb_size);
             tools_logi("Detected DTB appended to kernel. Size: %u\n", dtb_size);
         }
@@ -945,25 +971,36 @@ int repack_bootimg_mem(const char *orig_boot_path,
     uint8_t *compressed_buf = NULL;
 
     if (method == 1) {
-        tools_logi("Compressing new kernel with GZIP...\n");
-        if (compress_gzip(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size) == 0) {
-            final_k_buf = compressed_buf;
+        tools_logi("Compressing new kernel with GZIP...\\n");
+        if (compress_gzip(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size) != 0) {
+            free(extracted_dtb);
+            fclose(f_orig);
+            return -1;
         }
+        final_k_buf = compressed_buf;
     }
     if (method == 2) {
-        tools_logi("Compressing new kernel with LZ4...\n");
-        if (compress_lz4(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size, k_head) == 0) {
-            final_k_buf = compressed_buf;
+        tools_logi("Compressing new kernel with LZ4...\\n");
+        if (compress_lz4(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size, k_head) != 0) {
+            free(extracted_dtb);
+            fclose(f_orig);
+            return -1;
         }
+        final_k_buf = compressed_buf;
     }
     if (method == 3) {
-        tools_logi("Compressing new kernel with LZ4 Legacy...\n");
-        if (compress_lz4_le(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size, k_head) == 0) {
-            final_k_buf = compressed_buf;
+        tools_logi("Compressing new kernel with LZ4 Legacy...\\n");
+        if (compress_lz4_le(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size, k_head) != 0) {
+            free(extracted_dtb);
+            fclose(f_orig);
+            return -1;
         }
+        final_k_buf = compressed_buf;
     }
     if (method == 4) {
         tools_logi(" Kernel uses zstd, we have not supported it yet, please report to dev\n");
+        free(extracted_dtb);
+        fclose(f_orig);
         return -1;
     }
 
@@ -1017,8 +1054,14 @@ int repack_bootimg_mem(const char *orig_boot_path,
         // calloc so the last sizeof(avb) bytes (not read from file, they hold the
         // separate AVB footer) are deterministic instead of heap garbage
         rest_buf_tmp = calloc(1, rest_data_size);
-        fseek(f_orig, rest_data_offset, SEEK_SET);
-        fread(rest_buf_tmp, 1, rest_data_size-sizeof(avb), f_orig);
+        if (!rest_buf_tmp || fseek(f_orig, rest_data_offset, SEEK_SET) != 0 ||
+            fread(rest_buf_tmp, 1, rest_data_size - sizeof(avb), f_orig) != rest_data_size - sizeof(avb)) {
+            free(rest_buf_tmp);
+            free(compressed_buf);
+            free(extracted_dtb);
+            fclose(f_orig);
+            return -2;
+        }
         for (int32_t i = (int32_t)(rest_data_size - sizeof(avb)) - 1; i >= 0; i--) {
             if (rest_buf_tmp[i] != 0) {
                 rest_buf_offset = (uint32_t)(i + 1);
@@ -1032,8 +1075,15 @@ int repack_bootimg_mem(const char *orig_boot_path,
             rest_data_size = rest_buf_offset + sizeof(avb);
 
         }else{
-            rest_buf = malloc(rest_buf_offset);
-            memcpy(rest_buf, rest_buf_tmp, rest_buf_offset);
+            rest_buf = rest_buf_offset ? malloc(rest_buf_offset) : NULL;
+            if (rest_buf_offset && !rest_buf) {
+                free(rest_buf_tmp);
+                free(compressed_buf);
+                free(extracted_dtb);
+                fclose(f_orig);
+                return -1;
+            }
+            if (rest_buf_offset) memcpy(rest_buf, rest_buf_tmp, rest_buf_offset);
             tools_logi("Rest data size: %u bytes, Actual used size: %u bytes\n", rest_data_size, rest_buf_offset);
             rest_data_size = rest_buf_offset;
             free(rest_buf_tmp);
