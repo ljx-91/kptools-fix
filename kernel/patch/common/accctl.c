@@ -147,24 +147,17 @@ int commit_common_su(uid_t to_uid, const char *sctx)
         goto out;
     }
 
-    struct thread_info *thi = current_thread_info();
-    thi->flags &= ~(_TIF_SECCOMP);
-
-    if (task_range_valid(task_struct_offset.seccomp_offset, sizeof(struct seccomp))) {
-        struct seccomp *seccomp = (struct seccomp *)((uintptr_t)task + task_struct_offset.seccomp_offset);
-        seccomp->mode = SECCOMP_MODE_DISABLED;
-        // only be called when the task is exiting, so no barriers
-        // todo: WARN_ON(tsk->sighand != NULL);
-        // seccomp_filter_release(task);
-    } else {
-        logkfe("commit_common_su: unresolved seccomp offset; leaving seccomp unchanged\\n");
-    }
-
-    ext->sel_allow = 1;
     if (!cred_layout_valid()) {
         rc = -EINVAL;
         goto out;
     }
+
+    /*
+     * Do not change seccomp state or publish the SELinux bypass flag until
+     * the credential transition has committed successfully. Otherwise an
+     * allocation/layout failure leaves a partially privileged task behind.
+     */
+    int sel_allow_after_commit = 1;
 
     struct cred *new = prepare_creds();
     if (!new) {
@@ -186,9 +179,23 @@ int commit_common_su(uid_t to_uid, const char *sctx)
     set_groups(new, group_info);
 
     if (sctx && sctx[0]) {
-        ext->sel_allow = !!set_security_override_from_ctx(new, sctx);
+        sel_allow_after_commit = !!set_security_override_from_ctx(new, sctx);
     }
-    commit_creds(new);
+    rc = commit_creds(new);
+    if (rc) {
+        abort_creds(new);
+        goto out;
+    }
+
+    ext->sel_allow = sel_allow_after_commit;
+    struct thread_info *thi = current_thread_info();
+    if (thi) thi->flags &= ~(_TIF_SECCOMP);
+    if (task_range_valid(task_struct_offset.seccomp_offset, sizeof(struct seccomp))) {
+        struct seccomp *seccomp = (struct seccomp *)((uintptr_t)task + task_struct_offset.seccomp_offset);
+        seccomp->mode = SECCOMP_MODE_DISABLED;
+    } else {
+        logkfe("commit_common_su: unresolved seccomp offset; leaving seccomp unchanged\\n");
+    }
 
 out:
     logkfi("pid: %d, tgid: %d, to_uid: %d, sctx: %s, via_hook: %d\n", ext ? ext->pid : -1, ext ? ext->tgid : -1,
