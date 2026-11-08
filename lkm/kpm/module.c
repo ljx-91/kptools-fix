@@ -566,8 +566,10 @@ static int rewrite_section_headers(struct kp_load_info *info)
 		if (!kp_elf_string_valid(info->secstrings, shstr->sh_size, shdr->sh_name))
 			return -ENOEXEC;
 
-		/* Mark all sections sh_addr with their address in the temporary image. */
-		shdr->sh_addr = (unsigned long)info->hdr + shdr->sh_offset;
+		/* NOBITS has no file-backed address; alloc NOBITS gets its
+		 * destination address later in move_module(). */
+		shdr->sh_addr = shdr->sh_type == SHT_NOBITS ? 0 :
+			(unsigned long)info->hdr + shdr->sh_offset;
 	}
 	return 0;
 }
