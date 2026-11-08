@@ -40,36 +40,38 @@ static u64 do_reloc(enum aarch64_reloc_op reloc_op, void *place, u64 val)
 
 static int reloc_data(enum aarch64_reloc_op op, void *place, u64 val, int len)
 {
-    u64 imm_mask = (1 << len) - 1;
-    s64 sval = do_reloc(op, place, val);
+    u64 imm_mask;
+    s64 sval;
+
+    if (len != 16 && len != 32 && len != 64) {
+        pr_err("Invalid length (%d) for data relocation\\n", len);
+        return -EINVAL;
+    }
+
+    /* Avoid undefined shifts, especially shifting a 32-bit int by 64. */
+    imm_mask = len == 64 ? ~0ULL : ((1ULL << len) - 1);
+    sval = do_reloc(op, place, val);
+
+    /*
+     * Check representability before modifying the destination. For 64-bit
+     * relocations every bit is retained, so the signed-width check is moot.
+     */
+    if (len != 64) {
+        s64 upper = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
+        if ((u64)(upper + 1) > 2) return -ERANGE;
+    }
 
     switch (len) {
     case 16:
-        *(s16 *)place = sval;
+        *(s16 *)place = (s16)sval;
         break;
     case 32:
-        *(s32 *)place = sval;
+        *(s32 *)place = (s32)sval;
         break;
     case 64:
         *(s64 *)place = sval;
         break;
-    default:
-        pr_err("Invalid length (%d) for data relocation\n", len);
-        return 0;
     }
-    /*
-	 * Extract the upper value bits (including the sign bit) and
-	 * shift them to bit 0.
-	 */
-    sval = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
-
-    /*
-	 * Overflow has occurred if the value is not representable in
-	 * len bits (i.e the bottom len bits are not sign-extended and
-	 * the top bits are not all zero).
-	 */
-    if ((u64)(sval + 1) > 2) return -ERANGE;
-
     return 0;
 }
 
@@ -162,8 +164,9 @@ static int reloc_insn_imm(enum aarch64_reloc_op op, void *place, u64 val, int ls
 int apply_relocate(Elf64_Shdr *sechdrs, const char *strtab, unsigned int symindex, unsigned int relsec,
                    struct module *me)
 {
-    return 0;
-};
+    /* AArch64 REL relocations are not implemented by this loader. */
+    return -ENOEXEC;
+}
 
 int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int symindex, unsigned int relsec,
                        struct module *me)
@@ -174,13 +177,41 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
     Elf64_Sym *sym;
     void *loc;
     u64 val;
-    Elf64_Rela *rel = (void *)sechdrs[relsec].sh_addr;
+    Elf64_Shdr *relhdr, *targethdr, *symhdr;
+    Elf64_Rela *rel;
 
-    for (i = 0; i < sechdrs[relsec].sh_size / sizeof(*rel); i++) {
+    if (!sechdrs || relsec == 0 || symindex == 0) return -ENOEXEC;
+    relhdr = &sechdrs[relsec];
+    targethdr = &sechdrs[relhdr->sh_info];
+    symhdr = &sechdrs[symindex];
+    if (relhdr->sh_type != SHT_RELA || relhdr->sh_entsize != sizeof(Elf64_Rela) ||
+        relhdr->sh_size % sizeof(Elf64_Rela) || symhdr->sh_type != SHT_SYMTAB ||
+        symhdr->sh_size % sizeof(Elf64_Sym)) return -ENOEXEC;
+    rel = (void *)relhdr->sh_addr;
+
+    for (i = 0; i < relhdr->sh_size / sizeof(*rel); i++) {
+        unsigned int type = ELF64_R_TYPE(rel[i].r_info);
+        unsigned int symno = ELF64_R_SYM(rel[i].r_info);
+        unsigned int width;
+
+        switch (type) {
+        case R_ARM_NONE:
+        case R_AARCH64_NONE: width = 0; break;
+        case R_AARCH64_ABS64:
+        case R_AARCH64_PREL64: width = 8; break;
+        case R_AARCH64_ABS16:
+        case R_AARCH64_PREL16: width = 2; break;
+        default: width = 4; break;
+        }
+        if (symno >= symhdr->sh_size / sizeof(Elf64_Sym)) return -ENOEXEC;
+        if (rel[i].r_offset > targethdr->sh_size ||
+            width > targethdr->sh_size - rel[i].r_offset) return -ENOEXEC;
+        if (width && (rel[i].r_offset & (width - 1))) return -ENOEXEC;
+
         /* loc corresponds to P in the AArch64 ELF document. */
-        loc = (void *)sechdrs[sechdrs[relsec].sh_info].sh_addr + rel[i].r_offset;
+        loc = (void *)targethdr->sh_addr + rel[i].r_offset;
         /* sym is the ELF symbol we're referring to. */
-        sym = (Elf64_Sym *)sechdrs[symindex].sh_addr + ELF64_R_SYM(rel[i].r_info);
+        sym = (Elf64_Sym *)symhdr->sh_addr + symno;
         /* val corresponds to (S + A) in the AArch64 ELF document. */
         val = sym->st_value + rel[i].r_addend;
 
