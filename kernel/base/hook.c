@@ -9,6 +9,7 @@
 #include <pgtable.h>
 #include <hotpatch.h>
 #include <kpmalloc.h>
+#include <uapi/asm-generic/errno.h>
 #include "hmem.h"
 
 #define bits32(n, high, low) ((uint32_t)((n) << (31u - (high))) >> (31u - (high) + (low)))
