@@ -76,7 +76,19 @@ void free_kernel_file(kernel_file_t *kernel_file)
 preset_t *get_preset(const char *kimg, int kimg_len)
 {
     char magic[MAGIC_LEN] = KP_MAGIC;
-    return (preset_t *)memmem(kimg, kimg_len, magic, sizeof(magic));
+    if (!kimg || kimg_len < (int)sizeof(preset_t)) return NULL;
+
+    const char *cursor = kimg;
+    size_t remaining = (size_t)kimg_len;
+    while (remaining >= sizeof(magic)) {
+        const char *found = memmem(cursor, remaining, magic, sizeof(magic));
+        if (!found) return NULL;
+        size_t tail = (size_t)(kimg + kimg_len - found);
+        if (tail >= sizeof(preset_t)) return (preset_t *)found;
+        cursor = found + 1;
+        remaining = (size_t)(kimg + kimg_len - cursor);
+    }
+    return NULL;
 }
 
 uint32_t get_kpimg_version(const char *kpimg_path)
@@ -85,9 +97,13 @@ uint32_t get_kpimg_version(const char *kpimg_path)
     int kpimg_len = 0;
     read_file(kpimg_path, &kpimg, &kpimg_len);
     preset_t *preset = get_preset(kpimg, kpimg_len);
-    if (!preset) tools_loge_exit("not patched kernel image\n");
+    if (!preset) {
+        free(kpimg);
+        tools_loge_exit("not patched kernel image\n");
+    }
     version_t ver = preset->header.kp_version;
     uint32_t version = (ver.major << 16) + (ver.minor << 8) + ver.patch;
+    free(kpimg);
     return version;
 }
 
@@ -191,11 +207,18 @@ static preset_t *find_patched_preset(const char *kimg, int kimg_len, int32_t *sa
         preset_t *candidate = get_preset(search_ptr, search_len);
         if (!candidate) break;
 
-        int32_t candidate_saved_kimg_len = (int32_t)u64le(candidate->setup.kimg_size);
+        uint64_t saved_size = u64le(candidate->setup.kimg_size);
         int candidate_align_kimg_len = (int)((const char *)candidate - kimg);
+        if (!saved_size || saved_size > 0x7fffffffULL ||
+            align_ceil(saved_size, SZ_4K) > 0x7fffffffULL) {
+            search_ptr = (const char *)candidate + 1;
+            search_len = kimg_len - (int)(search_ptr - kimg);
+            continue;
+        }
+        int32_t candidate_saved_kimg_len = (int32_t)saved_size;
         const uint8_t *header_backup = preset_header_backup(candidate);
 
-        if (candidate_align_kimg_len == (int)align_ceil(candidate_saved_kimg_len, SZ_4K) &&
+        if (candidate_align_kimg_len == (int)align_ceil(saved_size, SZ_4K) &&
             header_backup_has_valid_primary_entry(header_backup)) {
             if (saved_kimg_len) *saved_kimg_len = candidate_saved_kimg_len;
             if (align_kimg_len) *align_kimg_len = candidate_align_kimg_len;
@@ -305,8 +328,8 @@ int print_kp_image_info_path(const char *kpimg_path)
     } else {
         print_preset_info(preset);
         fprintf(stdout, "\n");
-        free(kpimg);
     }
+    free(kpimg);
     return rc;
 }
 
