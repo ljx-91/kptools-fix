@@ -65,7 +65,9 @@ struct task_ext *kf_get_task_ext(const struct task_struct *task)
     dsb(ish);
     pid_t pid = __task_pid_nr_ns((struct task_struct *)task, PIDTYPE_PID, 0);
     for (int i = 0; i < TASK_EXT_SLOT_NUM; i++) {
-        if (task_ext_slots[i].task == task && task_ext_slots[i].ext.pid == pid)
+        struct task_struct *slot_task = READ_ONCE(task_ext_slots[i].task);
+        pid_t slot_pid = READ_ONCE(task_ext_slots[i].ext.pid);
+        if (slot_task == task && slot_pid == pid)
             return &task_ext_slots[i].ext;
     }
     return &task_ext_invalid;
@@ -77,15 +79,17 @@ static struct task_ext *task_ext_create(struct task_struct *task, bool sel_allow
     struct task_ext *ret = NULL;
     unsigned long flags = kp_private_spin_lock(&task_ext_lock);
     for (int i = 0; i < TASK_EXT_SLOT_NUM; i++) {
-        if (task_ext_slots[i].task == task &&
-            task_ext_slots[i].ext.pid == __task_pid_nr_ns(task, PIDTYPE_PID, 0)) {
+        if (READ_ONCE(task_ext_slots[i].task) == task &&
+            READ_ONCE(task_ext_slots[i].ext.pid) == __task_pid_nr_ns(task, PIDTYPE_PID, 0)) {
             ret = &task_ext_slots[i].ext;
+            if (sel_allow) WRITE_ONCE(ret->sel_allow, true);
+            if (priv_sel_allow) WRITE_ONCE(ret->priv_sel_allow, true);
             break;
         }
     }
     if (!ret) {
         for (int i = 0; i < TASK_EXT_SLOT_NUM; i++) {
-            if (!task_ext_slots[i].task) {
+            if (!READ_ONCE(task_ext_slots[i].task)) {
                 ret = &task_ext_slots[i].ext;
                 task_ext_reset(ret);
                 ret->pid = __task_pid_nr_ns(task, PIDTYPE_PID, 0);
@@ -93,7 +97,7 @@ static struct task_ext *task_ext_create(struct task_struct *task, bool sel_allow
                 WRITE_ONCE(ret->sel_allow, sel_allow);
                 WRITE_ONCE(ret->priv_sel_allow, priv_sel_allow);
                 dsb(ish);
-                task_ext_slots[i].task = task;
+                WRITE_ONCE(task_ext_slots[i].task, task);
                 atomic_inc(&task_ext_active_count);
                 break;
             }
