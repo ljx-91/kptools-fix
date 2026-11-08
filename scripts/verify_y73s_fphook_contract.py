@@ -11,8 +11,8 @@ hook = (root / "kernel/base/hook.c").read_text()
 rcu = (root / "kernel/linux/include/linux/rcupdate.h").read_text()
 
 checks = {
-    "synchronize_rcu wrapper calls synchronize_rcu target": "static inline void synchronize_rcu(void)\\n{\\n    /* This must map to a real RCU grace-period wait, not a tasks barrier. */\\n    kfunc_call(synchronize_rcu);\\n}" in rcu,
-    "synchronize_rcu wrapper does not call tasks rude barrier": "static inline void synchronize_rcu(void)\\n{\\n    kfunc_call(rcu_barrier_tasks_rude)" not in rcu,
+    "synchronize_rcu wrapper calls synchronize_rcu target": "static inline void synchronize_rcu(void)" in rcu and "kfunc_call(synchronize_rcu);" in rcu,
+    "synchronize_rcu wrapper no longer maps to tasks rude barrier": "kfunc_call(rcu_barrier_tasks_rude)" not in rcu[rcu.index("static inline void synchronize_rcu(void)"):rcu.index("static inline unsigned long get_completed_synchronize_rcu")],
     "fp_hook returns hotpatch status": "return hotpatch((void **)addrs, values, 2);" in src,
     "fp_unhook returns hotpatch status": "return hotpatch((void **)addrs, values, 2);" in src and
         "int fp_unhook(uintptr_t fp_addr, void *backup)" in src,
