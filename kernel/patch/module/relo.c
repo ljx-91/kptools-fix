@@ -107,9 +107,8 @@ static int reloc_insn_movw(enum aarch64_reloc_op op, void *place, u64 val, int l
         imm_type = AARCH64_INSN_IMM_MOVK;
     }
 
-    /* Update the instruction with the new encoding. */
+    /* Prepare the instruction, but do not commit until overflow is checked. */
     insn = aarch64_insn_encode_immediate(imm_type, insn, imm);
-    *(u32 *)place = cpu_to_le32(insn);
 
     /* Shift out the immediate field. */
     sval >>= 16;
@@ -128,6 +127,7 @@ static int reloc_insn_movw(enum aarch64_reloc_op op, void *place, u64 val, int l
     /* Check the upper bits depending on the sign of the immediate. */
     if ((u64)sval > limit) return -ERANGE;
 
+    *(u32 *)place = cpu_to_le32(insn);
     return 0;
 }
 
@@ -144,9 +144,8 @@ static int reloc_insn_imm(enum aarch64_reloc_op op, void *place, u64 val, int ls
     /* Extract the value bits and shift them to bit 0. */
     imm_mask = (BIT(lsb + len) - 1) >> lsb;
     imm = sval & imm_mask;
-    /* Update the instruction's immediate field. */
+    /* Prepare the instruction's immediate field; commit after validation. */
     insn = aarch64_insn_encode_immediate(imm_type, insn, imm);
-    *(u32 *)place = cpu_to_le32(insn);
     /*
 	 * Extract the upper value bits (including the sign bit) and
 	 * shift them to bit 0.
@@ -158,6 +157,7 @@ static int reloc_insn_imm(enum aarch64_reloc_op op, void *place, u64 val, int ls
 	 */
     if ((u64)(sval + 1) >= 2) return -ERANGE;
 
+    *(u32 *)place = cpu_to_le32(insn);
     return 0;
 }
 
