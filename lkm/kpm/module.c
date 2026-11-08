@@ -846,8 +846,11 @@ static struct kp_module *kp_module_get_by_addr(unsigned long addr)
 
 	spin_lock_irqsave(&module_lock, flags);
 	list_for_each_entry(pos, &modules.list, list) {
+		/* UNLOADING is retained only while an existing active call
+		 * prevents teardown; nested callbacks may safely pin it. */
 		if (pos->state != KP_MODULE_LOADING &&
 		    pos->state != KP_MODULE_LIVE &&
+		    pos->state != KP_MODULE_UNLOADING &&
 		    pos->state != KP_MODULE_EXITING)
 			continue;
 		start = (unsigned long)pos->start;
