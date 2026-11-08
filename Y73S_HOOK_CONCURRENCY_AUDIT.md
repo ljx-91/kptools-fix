@@ -304,3 +304,130 @@ These findings make the existing module manager an unsafe foundation for
 Hook-owner reference tracking until its list serialization, callback-entry
 references, and teardown sequencing are redesigned together. They are not
 fixed by changing only the Hook chain spinlock.
+
+
+### 6. Follow-up: control-buffer and list-reader races (2026-11-08)
+
+The full module-manager path and structure were inspected, including
+`kernel/patch/include/module.h`, `kernel/include/kpmodule.h`,
+`kernel/patch/common/kp_spinlock.c`, and the complete exported manager
+functions.
+
+#### M1 — `module_control0()` shares a mutable argument buffer (Critical)
+
+`struct module` stores one `char *ctl_args`. Each `module_control0()`
+call frees the previous buffer, allocates a replacement, and invokes
+`mod->ctl0(mod->ctl_args, ...)`. There is no per-module serialization.
+Two concurrent control calls can therefore free/replace the buffer while
+another callback is still using it. The callback receives a dangling pointer
+and can read freed memory. Unload also frees `ctl_args`, compounding the
+lifetime race.
+
+Preferred correction: make the control argument copy call-local, pass that
+local immutable buffer to ctl0, and free it only after ctl0 returns. Do not
+store transient call arguments in `struct module`. This assumes the documented
+callback contract does not retain the argument pointer after return; that
+contract must be explicit. A module active-call reference must still pin the
+module text/data for the entire callback.
+
+#### M2 — list operations are not a valid RCU list protocol (Critical)
+
+The list is traversed by ordinary `list_for_each_entry()` in
+`find_module()`, `notify_modules_event()`, and query functions, while
+insertion uses `list_add_tail()` and removal uses `list_del()`. These are
+not the RCU list primitives and no writer lock is taken. Merely surrounding
+ordinary traversal with `rcu_read_lock()` does not make concurrent ordinary
+list mutation safe. In particular, `list_del()` may poison links that a
+concurrent reader is following. The missing target `__rcu_read_lock`
+mapping is an additional independent reason not to rely on these sections.
+
+A correct redesign must choose one coherent scheme: a KP-owned lock held for
+short list traversal/mutation with references acquired before dropping it, or
+a fully implemented RCU list protocol with RCU add/delete primitives and a
+verified target grace-period implementation. Do not mix ordinary list
+operations with nominal RCU read sections.
+
+#### M3 — load publication and duplicate-name check are not atomic (High)
+
+`load_module_ex()` checks `find_module(name)` before allocating, relocating,
+and running `mod->init()`; it later appends the initialized object using
+`list_add_tail()` without a lock. Two concurrent loads of the same name can
+both pass the duplicate check, both run init, and both publish duplicate
+entries. A concurrent unload or query can also overlap publication.
+
+Serialize name reservation/publication with an explicit LOADING reservation
+or manager lock. Do not hold a spinlock across relocation, init, or arbitrary
+module callbacks. Roll back the reservation on every failure path.
+
+#### M4 — event iteration calls arbitrary callbacks while walking mutable list (Critical)
+
+`notify_modules_event()` iterates the live global list and calls each
+module's event callback inline. Concurrent unload can unlink/free the current
+or next module; concurrent load can mutate the traversal links. The RCU
+annotations do not protect this because the list primitives are not RCU-safe
+and the read-side lock mapping is unproven.
+
+Take a stable snapshot of module references under the manager lock, release
+the lock, invoke callbacks while holding each reference, then drop references.
+If snapshot allocation is unavailable in the calling context, use a bounded
+preallocated snapshot or a documented serialization mechanism; never call
+arbitrary callbacks while holding the list spinlock.
+
+#### M5 — query helper has an unmatched read unlock (High)
+
+`get_module_info()` returns `-ENOENT` after acquiring `rcu_read_lock()`
+without calling `rcu_read_unlock()`. This is a direct lock-balance defect.
+It should use a single cleanup exit or, preferably, the redesigned module
+reference API rather than RCU annotations around an ordinary list traversal.
+
+#### Structure and lock observations
+
+`struct module` currently contains only metadata, args/ctl_args pointers,
+callback pointers, allocation sizes, executable start, and list node. It has
+no state, active-call counter, wait primitive, owner identity, or per-module
+lock. `module_lock` is initialized but not used by the manager operations.
+The KP private spinlock helper can protect short KP-owned critical sections;
+its fallback masks local IRQs and uses a local atomic lock. It does not
+provide a sleepable wait, callback lifetime, or safe module unload by itself.
+
+#### Consolidated design contract (design only; no production patch applied)
+
+1. Add explicit module states: `LOADING -> LIVE -> UNLOADING -> QUIESCED -> FREED`.
+   Publish LIVE only after init succeeds and duplicate-name reservation is
+   committed. Reject new ordinary entries and hook registrations after
+   UNLOADING begins.
+2. Under a short manager lock, find a LIVE module and increment its active
+   entry reference before returning the pointer. Drop the lock before any
+   module callback. Every success/error path must release the reference.
+3. For event fan-out, snapshot referenced modules under the lock, then invoke
+   callbacks outside it. If a snapshot cannot be safely allocated, fail or
+   serialize explicitly rather than traversing a concurrently mutable list.
+4. Replace shared `ctl_args` with a call-local immutable buffer. Keep the
+   module entry reference until ctl0 returns.
+5. Hook registration must carry an explicit owner token tied to a LIVE module.
+   Do not infer ownership from arbitrary callback addresses unless executable
+   range validation is complete and handles every callback/data lifetime.
+6. Hook transit must acquire a callback-entry reference before loading the
+   callback tuple and hold it through the entire before/origin/after sequence.
+   Unregister first prevents new acquisitions, then waits/defer-reports until
+   in-flight references drain. Self-unregister/self-unload must return pending
+   or busy; it must not synchronously wait for its own reference.
+7. Unload changes LIVE to UNLOADING under the manager lock, removes visibility
+   and rejects new refs, invokes exit outside the lock, unregisters owned hooks,
+   waits only from a sleepable non-callback context for ordinary and hook refs
+   to reach zero, then frees args/text/object. Define whether exit runs before
+   or after hook quiescence and ensure no new callback can enter either phase.
+8. All APIs must document context constraints (sleepable vs atomic), recursion,
+   callback retention rules, and exact error/pending semantics.
+
+#### Verification gates
+
+Add deterministic model tests for simultaneous duplicate loads, concurrent
+ctl0 calls, event iteration versus unload, lookup versus unlink, failed init
+rollback, missing-module info lookup, hook callback versus unregister, and
+self-unload. Static audit must fail or explicitly mark BLOCKED while the old
+patterns remain. No production change is justified until the target-specific
+atomic/refcount/wait primitives and callback contexts are proven.
+
+This section is a static audit/design addition only. No production source
+code, device partition, or runtime state was modified.
