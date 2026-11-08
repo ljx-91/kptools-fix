@@ -247,3 +247,28 @@ branch with the specified Arm GNU GCC 14.2 toolchain.
 - Still pending: a successful GCC 14.2 CI run, verification of the exact
   generated KPIMG's symbol/frame layout, and a real-device boot test.
 - No image has been declared boot-safe. No image has been flashed.
+
+
+## Follow-up hardening: reservation, NOMAP, and range-size checks
+
+A second pass over the relocation path found that the destination allocator was checked,
+but the return values of the source-image `memblock_reserve()` and destination
+`memblock_mark_nomap()` calls were not. The Y73S branch now stops before copying
+or remapping if either operation fails.
+
+The follow-up also validates:
+- non-negative source/destination size metadata;
+- overflow in `kernel_pa + start_offset` and `start_img_size + extra_size`;
+- overflow in page-rounding and the combined destination allocation size;
+- page alignment of the final destination span, because the PTE loop maps whole pages.
+
+The Linux 4.14 memblock API contract is that `memblock_reserve()`,
+`memblock_free()`, and `memblock_mark_nomap()` return status values, with
+zero indicating success for reserve/mark-nomap. This is consistent with the
+target binary's already inspected CFI wrappers for the reserve/free/mark-nomap
+symbols. The destination is not used after a failed NOMAP operation.
+
+These are defensive checks, not proof of successful boot. The exact branch
+still requires the GCC 14.2 build, ELF verifier, Windows kptools build, and
+ultimately an independently supervised device boot test. No generated image
+is currently certified boot-safe.
