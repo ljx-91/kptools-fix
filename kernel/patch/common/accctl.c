@@ -158,7 +158,7 @@ int commit_kernel_su()
     if (!cred_layout_valid()) return -EINVAL;
     struct cred *new = prepare_kernel_cred(0);
     if (!new) return -ENOMEM;
-    int rc = set_security_override(new, all_allow_sid);
+    int rc = set_security_override(new, READ_ONCE(all_allow_sid));
     if (rc) {
         abort_creds(new);
         return rc;
@@ -309,12 +309,12 @@ static int slow_avc_audit_replace(struct selinux_state *_state, void *_ssid, voi
                                   void *_requested, void *_audited, void *_denied, void *_result,
                                   struct common_audit_data *_a)
 {
-    if (all_allow_sid != SECSID_NULL) {
+    if (READ_ONCE(all_allow_sid) != SECSID_NULL) {
         u32 ssid = (u64)_ssid;
         if ((uint64_t)_state <= 0xffffffffL) {
             ssid = (u64)_state;
         }
-        if (ssid == all_allow_sid) {
+        if (ssid == READ_ONCE(all_allow_sid)) {
             return 0;
         }
     }
