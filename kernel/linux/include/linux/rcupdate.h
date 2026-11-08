@@ -73,7 +73,8 @@ static inline void rcu_barrier_tasks_rude(void)
 }
 static inline void synchronize_rcu(void)
 {
-    kfunc_call(rcu_barrier_tasks_rude)
+    /* This must map to a real RCU grace-period wait, not a tasks barrier. */
+    kfunc_call(synchronize_rcu);
 }
 static inline unsigned long get_completed_synchronize_rcu(void)
 {
