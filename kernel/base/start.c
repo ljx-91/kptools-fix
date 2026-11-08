@@ -726,12 +726,11 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
     symbol_init();
     rc = patch();
     // Return to the kernel's paging_init caller directly, restoring
-    // _paging_init's callee-saved registers from its frame: [our x29] = its
-    // x29 (P); its saved x19-x28 at P+16..P+88; the caller's frame pointer
-    // at [P]; the kernel's return address at P+8; the caller's sp at
-    // P+0x280 (frame 0x290 with x29 = sp + 0x10 — the same layout on the
-    // scratch and legacy _paging_init paths, since it is the same compiled
-    // function entered via blr in both cases).  x29 must be restored from
+    // _paging_init's callee-saved registers from its frame. The d0a
+    // Y73S KPIMG audit found a 0x2a0-byte _paging_init frame with x29 = SP+0x10,
+    // therefore the caller SP is x10+0x290. This is compiler-layout specific;
+    // every new KPIMG must pass the post-build verifier before use.
+    // x29 must be restored from
     // [P], exactly like _paging_init's own epilogue (ldp x29, x30,
     // [sp, #16]) — returning with x29 = P instead of the caller's FP hangs
     // the 4.9 device kernel in setup_arch's post-paging_init code.  This
@@ -751,7 +750,7 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
         "ldp x27, x28, [x10, #80]\n"
         "ldr x29, [x10]\n"
         "ldr x30, [x10, #8]\n"
-        "add sp, x10, #0x280\n"
+        "add sp, x10, #0x290\n"
         "ret\n"
         : : : "x10", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26",
               "x27", "x28", "x29", "x30", "memory");
