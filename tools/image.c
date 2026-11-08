@@ -61,7 +61,7 @@ int32_t get_kernel_info(kernel_info_t *kinfo, const char *img, int32_t imglen)
 
     arm64_hdr_t *khdr = (arm64_hdr_t *)img;
     if (memcmp(khdr->magic, KERNEL_MAGIC, sizeof(khdr->magic))) {
-        tools_loge_exit("kernel image magic error\\n");
+        tools_loge_exit("kernel image magic error\n");
     }
 
     kinfo->uefi = !strncmp((const char *)khdr->hdr.efi.mz, EFI_MAGIC_SIG, strlen(EFI_MAGIC_SIG));
