@@ -129,7 +129,8 @@ int get_kpm_info(const char *kpm, int len, kpm_info_t *out_info)
             return -ENOEXEC;
         if (!elf_string_valid(info->secstrings, shstr->sh_size, shdr->sh_name))
             return -ENOEXEC;
-        shdr->sh_addr = (size_t)info->hdr + shdr->sh_offset;
+        shdr->sh_addr = shdr->sh_type == SHT_NOBITS ? 0 :
+                        (size_t)info->hdr + shdr->sh_offset;
     }
     info->sechdrs[0].sh_addr = 0;
     info->index.info = find_sec(info, ".kpm.info");
