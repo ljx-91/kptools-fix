@@ -636,16 +636,29 @@ static int setup_load_info(struct kp_load_info *info)
 		return rc;
 	}
 
-	if (!find_sec(info, ".kpm.init") || !find_sec(info, ".kpm.exit")) {
-		logke("no .kpm.init or .kpm.exit section\n");
-		set_load_error(info, "no .kpm.init or .kpm.exit section");
-		return -ENOEXEC;
+	{
+		int init_idx = find_sec(info, ".kpm.init");
+		int exit_idx = find_sec(info, ".kpm.exit");
+		if (!init_idx || !exit_idx ||
+		    !(info->sechdrs[init_idx].sh_flags & SHF_EXECINSTR) ||
+		    !(info->sechdrs[exit_idx].sh_flags & SHF_EXECINSTR) ||
+		    !info->sechdrs[init_idx].sh_size ||
+		    !info->sechdrs[exit_idx].sh_size) {
+			logke("missing or invalid .kpm.init/.kpm.exit executable sections\n");
+			set_load_error(info, "missing or invalid .kpm.init/.kpm.exit sections");
+			return -ENOEXEC;
+		}
 	}
 
 	info->index.info = find_sec(info, ".kpm.info");
 	if (!info->index.info) {
 		logke("no .kpm.info section\n");
 		set_load_error(info, "no .kpm.info section");
+		return -ENOEXEC;
+	}
+	if (info->sechdrs[info->index.info].sh_type != SHT_PROGBITS ||
+	    !info->sechdrs[info->index.info].sh_size) {
+		set_load_error(info, ".kpm.info must be a non-empty PROGBITS section");
 		return -ENOEXEC;
 	}
 	info->info.base = get_sh_base(info, ".kpm.info");
