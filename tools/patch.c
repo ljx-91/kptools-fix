@@ -1057,7 +1057,9 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
 
         int kvlen = strlen(kv);
         if (kvlen > 127) tools_loge_exit("addition %s too long\n", kv);
-        if (addition_pos + kvlen + 1 > setup->additional + ADDITIONAL_LEN) tools_loge_exit("no memory for addition\n");
+        size_t addition_remaining = (size_t)((setup->additional + ADDITIONAL_LEN) - addition_pos);
+        if ((size_t)kvlen + 1 > addition_remaining)
+            tools_loge_exit("no memory for addition\n");
 
         *addition_pos = (char)kvlen;
         addition_pos++;
