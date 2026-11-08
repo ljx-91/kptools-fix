@@ -586,3 +586,101 @@ publishes a partially relocated image.
 
 These findings supplement E1-E6. They are source-level findings only; no
 production loader or relocation code was changed in this audit pass.
+
+
+## 7. Whole-branch high-risk implementation pass (2026-11-08)
+
+The branch tree was re-inventoried after the original report. It now contains
+379 tracked files, including first-party KPIMG/KPM code, host tools, CI and
+scripts, plus a separate LKM/BTI subtree and vendored libraries. The pass
+prioritized executable first-party code and input/lifetime boundaries; it is
+not represented as a line-by-line security certification of every vendored
+third-party file.
+
+### Implemented source changes
+
+- Device KPM loader (`kernel/patch/module/module.c`): ELF64/little-endian
+  header validation, bounded section-name and symbol-name strings, section
+  and symbol-table link checks, safe section layout arithmetic, NOBITS
+  handling without file-pointer arithmetic, checked section copy extents,
+  fail-closed REL handling, relocation section metadata checks, and fixes to
+  module-list output bounds, module-info error unlock, and module file-size
+  validation.
+- AArch64 relocation (`kernel/patch/module/relo.c`): width-safe 64-bit mask
+  construction, relocation symbol and target-section write bounds, alignment
+  checks, REL rejection, and delayed instruction/data writes until overflow
+  validation succeeds.
+- Host KPM inspection (`tools/kpm.c`): ELF header/section/string range
+  validation, bounded metadata string iteration, NOBITS handling, required
+  metadata checks, and correct `.kpm.info` `sh_size` reporting.
+- KStorage/SU paths (`kernel/patch/common/kstorage.c`,
+  `kernel/patch/common/sucompat.c`): negative range rejection, serialized
+  writer lookup/replacement, RCU-safe snapshots for user copies, stored
+  profile-size validation, and bounded SELinux-context copying.
+- Android userd (`kernel/patch/android/userd.c`): bounded exact file reads,
+  trusted-manager index checks, directory-entry name bounds, and
+  subtraction-based ZIP central-directory extent validation.
+- Host image tools (`tools/bootimg.c`, `tools/patch.c`,
+  `tools/common.c`, `tools/image.c`): input/read/allocation checks,
+  decompression caps, checked repack extents and AVB offset movement,
+  tail checksum bounds, checked output writes, no uninitialized AVB footer
+  writes, bounded embedded preset/extra parsing, checked extra serialization,
+  safe hex patch sizes/digits, and ARM64 branch range/alignment validation.
+- Added fail-closed source contract checks and connected them to the GCC 14.2
+  KPIMG and host-tools workflows:
+  `verify_kpm_loader_contract.py`,
+  `verify_bootimg_io_contract.py`,
+  `verify_kptools_patch_bounds.py`, and
+  `verify_userd_file_contract.py`; the runtime contract test now also covers
+  KStorage and SU callback ordering.
+
+### Current validation evidence
+
+- GCC 14.2 KPIMG build plus stack-frame, memblock, runtime, relocation,
+  fphook, KPM-loader, and userd source checks passed on commit
+  `07750d150e3523082f47cdd0613d4ae0d6419a2f`.
+- Host kptools build plus KPM, boot-image I/O, and embedded-preset checks
+  passed on commit `8c95481cef97e290d7a40216c5a915cc10db82aa`.
+- The latest audit-script-only commit is
+  `a5866dc1e78fb599cfaeb2cd8dfd1942a6a1779c`; its two workflows were
+  still running when this report was written. Earlier failed runs were
+  inspected and the corresponding verifier/implementation issues were
+  corrected; cancelled runs are not counted as passes.
+
+### Remaining release blockers — explicitly not marked fixed
+
+1. **KPM manager lifetime/concurrency remains critical.** The manager still
+   lacks a proven per-module active-call reference protocol. The global
+   `module_lock` is not consistently used for list publication/removal;
+   plain list mutation mixed with RCU readers is not a valid RCU list
+   protocol. `unload_module()` can still free module text while a callback
+   already holds a function pointer. `module_control0()` still has the
+   shared mutable `ctl_args` lifetime race. The current audit fixes do not
+   make KPM load/unload safe under concurrency.
+2. **Hook registration and callback lifetime remains critical.** Hook slot
+   claim/lookup/retire and first-wrap ownership are not yet serialized, and
+   callback code/data lifetime is not tied to module unload. The RCU wrapper
+   symbol mapping alone is not a quiescence proof.
+3. **Separate LKM subtree remains outside this Y73S KPIMG validation.**
+   `lkm/kpm/module.c` and `lkm/kpm/relo.c` contain a second, older KPM
+   loader implementation with the same classes of weak ELF/relocation
+   validation, including a no-op REL path and unsafe 64-bit mask expression.
+   The LKM subtree has not been brought to parity or validated by the Y73S
+   workflows; do not treat it as production-ready.
+4. **No malformed-input fuzz/ASan/UBSan campaign has run yet.** The new
+   regression checks are source-contract checks, not dynamic proof that all
+   malformed ELF, ZIP/APK, or boot-image inputs are rejected safely.
+5. **AVB signing and actual device behavior remain unverified.** The host
+   repacker preserves/checks footer metadata where possible; it cannot
+   recreate vivo signing descriptors without the signing material. No image
+   from this branch has been flashed or boot-tested.
+
+### Release decision
+
+The parser and host-tool hardening is materially improved and the recorded
+builds above passed, but the branch is **not fully resolved or release-ready**
+until the KPM manager and hook callback lifetime protocols are redesigned,
+the separate LKM loader is either hardened or explicitly excluded from the
+deliverable, and malformed-input dynamic tests are run. All work in this
+pass was repository/CI work only; no Fastboot, 9008, partition write, or
+device-side modification was performed.
