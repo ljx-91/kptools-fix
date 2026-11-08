@@ -579,10 +579,13 @@ static int extra_compare(const void *a, const void *b)
     return 0;
 }
 
-static void extra_append(char *kimg, const void *data, int len, int *offset)
+static int extra_append(char *kimg, size_t capacity, const void *data, size_t len, size_t *offset)
 {
-    memcpy(kimg + *offset, data, len);
+    if (!kimg || !offset || (!data && len) || *offset > capacity || len > capacity - *offset)
+        return -EOVERFLOW;
+    if (len) memcpy(kimg + *offset, data, len);
     *offset += len;
+    return 0;
 }
 
 static int hex_nibble(char c)
@@ -710,6 +713,9 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
                          bool root_key, const char **additional, extra_config_t *extra_configs,
                          int extra_config_num, char **out_kimg, int *out_kimg_len)
 {
+    if (!kimg || kimg_len <= 0 || !kpimg_path || !out_kimg || !out_kimg_len ||
+        extra_config_num < 0 || extra_config_num > EXTRA_ITEM_MAX_NUM ||
+        (extra_config_num && !extra_configs)) return -EINVAL;
     if (!kpimg_path) tools_loge_exit("empty kpimg\n");
     if (!superkey && !root_key) tools_loge_exit("empty superkey\n");
     if (!out_kimg || !out_kimg_len) tools_loge_exit("empty out kernel buffer\n");
@@ -732,8 +738,10 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     int align_kernel_size = align_ceil(kinfo->kernel_size, SZ_4K);
 
     // kimg kallsym
-    char *kallsym_kimg = (char *)malloc(pimg.ori_kimg_len);
-    memcpy(kallsym_kimg, pimg.kimg, pimg.ori_kimg_len);
+    if (pimg.ori_kimg_len <= 0 || pimg.ori_kimg_len > pimg.kimg_len) return -ENOEXEC;
+    char *kallsym_kimg = (char *)malloc((size_t)pimg.ori_kimg_len);
+    if (!kallsym_kimg) return -ENOMEM;
+    memcpy(kallsym_kimg, pimg.kimg, (size_t)pimg.ori_kimg_len);
     kallsym_t kallsym = { 0 };
     int kver = 0;
     find_linux_banner(&kallsym, kallsym_kimg, pimg.ori_kimg_len, &kver);
@@ -768,6 +776,10 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     char *kpimg = NULL;
     int kpimg_len = 0;
     read_file_align(kpimg_path, &kpimg, &kpimg_len, 0x10);
+    if (!kpimg || kpimg_len <= 0) {
+        free(kallsym_kimg);
+        return -ENOEXEC;
+    }
 
     // extra
     int extra_size = 0;
@@ -998,7 +1010,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
 
     // additional [len key=value] set
     char *addition_pos = setup->additional;
-    for (int i = 0;; i++) {
+    for (int i = 0; additional && additional[i]; i++) {
         const char *kv = additional[i];
         if (!kv) break;
         if (!strchr(kv, '=')) tools_loge_exit("addition must be format of key=value\n");
