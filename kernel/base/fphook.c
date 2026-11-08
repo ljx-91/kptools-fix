@@ -209,22 +209,32 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
     return HOOK_NO_ERR;
 }
 
-void fp_hook(uintptr_t fp_addr, void *replace, void **backup)
+int fp_hook(uintptr_t fp_addr, void *replace, void **backup)
 {
-    *(uintptr_t *)backup = *(uintptr_t *)fp_addr;
+    if (!backup || is_bad_address((void *)fp_addr) || (fp_addr & 0x3) || !replace) return -EINVAL;
     uintptr_t addrs[2];
+    uint32_t values[2];
     addrs[0] = fp_addr;
     addrs[1] = fp_addr + 4;
-    hotpatch((void **)addrs, (uint32_t *)&replace, 2);
+    values[0] = (uint32_t)(uintptr_t)replace;
+    values[1] = (uint32_t)((uintptr_t)replace >> 32);
+    uintptr_t original = *(volatile uintptr_t *)fp_addr;
+    int rc = hotpatch((void **)addrs, values, 2);
+    if (!rc) *backup = (void *)original;
+    return rc;
 }
 KP_EXPORT_SYMBOL(fp_hook);
 
-void fp_unhook(uintptr_t fp_addr, void *backup)
+int fp_unhook(uintptr_t fp_addr, void *backup)
 {
+    if (is_bad_address((void *)fp_addr) || (fp_addr & 0x3) || !backup) return -EINVAL;
     uintptr_t addrs[2];
+    uint32_t values[2];
     addrs[0] = fp_addr;
     addrs[1] = fp_addr + 4;
-    hotpatch((void **)addrs, (uint32_t *)&backup, 2);
+    values[0] = (uint32_t)(uintptr_t)backup;
+    values[1] = (uint32_t)((uintptr_t)backup >> 32);
+    return hotpatch((void **)addrs, values, 2);
 }
 KP_EXPORT_SYMBOL(fp_unhook);
 
@@ -239,9 +249,22 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
         chain->hook.fp_addr = fp_addr;
         chain->hook.replace_addr = (uint64_t)chain->transit;
         err = hook_chain_prepare(chain->transit, argno);
-        if (err) return err;
+        if (err) {
+            hook_mem_free(chain);
+            return err;
+        }
         flush_icache_all();
-        fp_hook(chain->hook.fp_addr, (void *)chain->hook.replace_addr, (void **)&chain->hook.origin_fp);
+        int patch_rc = fp_hook(chain->hook.fp_addr, (void *)chain->hook.replace_addr,
+                               (void **)&chain->hook.origin_fp);
+        if (patch_rc) {
+            if (patch_rc == -EUCLEAN) {
+                logkv("Wrap func pointer: %llx patch rollback uncertain: %d; retaining chain memory\\n",
+                      chain->hook.fp_addr, patch_rc);
+                return -HOOK_PATCH_UNCERTAIN;
+            }
+            hook_mem_free(chain);
+            return -HOOK_PATCH_FAILED;
+        }
     }
 
     for (int i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
@@ -291,8 +314,12 @@ void fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after)
     for (int i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
         if (chain->states[i] != CHAIN_ITEM_STATE_EMPTY) return;
     }
-    fp_unhook(chain->hook.fp_addr, (void *)chain->hook.origin_fp);
-    // todo: unsafe
+    int rc = fp_unhook(chain->hook.fp_addr, (void *)chain->hook.origin_fp);
+    if (rc) {
+        logkv("Unwrap func pointer: %llx restore failed: %d; retaining chain memory\\n",
+              fp_addr, rc);
+        return;
+    }
     hook_mem_free(chain);
     logkv("Unwrap func pointer: %llx, %llx, %llx\n", fp_addr, before, after);
 }
