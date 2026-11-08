@@ -76,7 +76,9 @@ void free_kernel_file(kernel_file_t *kernel_file)
 preset_t *get_preset(const char *kimg, int kimg_len)
 {
     char magic[MAGIC_LEN] = KP_MAGIC;
-    if (!kimg || kimg_len < (int)sizeof(preset_t)) return NULL;
+    const size_t min_preset_size = offsetof(preset_t, setup) +
+                                  offsetof(setup_preset_t, header_backup) + HDR_BACKUP_SIZE;
+    if (!kimg || kimg_len < (int)min_preset_size) return NULL;
 
     const char *cursor = kimg;
     size_t remaining = (size_t)kimg_len;
@@ -84,7 +86,7 @@ preset_t *get_preset(const char *kimg, int kimg_len)
         const char *found = memmem(cursor, remaining, magic, sizeof(magic));
         if (!found) return NULL;
         size_t tail = (size_t)(kimg + kimg_len - found);
-        if (tail >= sizeof(preset_t)) return (preset_t *)found;
+        if (tail >= min_preset_size) return (preset_t *)found;
         cursor = found + 1;
         remaining = (size_t)(kimg + kimg_len - cursor);
     }
@@ -326,8 +328,17 @@ int print_kp_image_info_path(const char *kpimg_path)
     if (get_preset(kpimg, len) != preset) {
         rc = -ENOENT;
     } else {
-        print_preset_info(preset);
-        fprintf(stdout, "\n");
+        uint32_t ver_num = preset_version_num(preset);
+        size_t required = offsetof(preset_t, setup) +
+                          (ver_num <= VERSION(0, 10, 4)
+                               ? offsetof(setup_preset_be_000a04_t, additional) + ADDITIONAL_LEN
+                               : sizeof(setup_preset_t));
+        if ((size_t)len < required) {
+            rc = -ENOEXEC;
+        } else {
+            print_preset_info(preset);
+            fprintf(stdout, "\n");
+        }
     }
     free(kpimg);
     return rc;
