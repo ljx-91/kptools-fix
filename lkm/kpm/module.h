@@ -39,7 +39,18 @@ struct kp_load_info {
 	} index;
 };
 
+enum kp_module_state {
+	KP_MODULE_LOADING = 0,
+	KP_MODULE_LIVE,
+	KP_MODULE_UNLOADING,
+	KP_MODULE_DEAD,
+};
+
 struct kp_module {
+	/* state and active_calls are protected by the KPM registry lock. */
+	enum kp_module_state state;
+	unsigned int active_calls;
+
 	struct {
 		const char *base, *name, *version, *license, *author, *description;
 	} info;
