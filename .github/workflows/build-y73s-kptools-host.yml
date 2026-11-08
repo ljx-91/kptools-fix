@@ -8,6 +8,7 @@ on:
     paths:
       - 'tools/**'
       - 'scripts/**'
+      - 'lkm/**'
       - '.github/workflows/build-y73s-kptools-host.yml'
       - y73s-cred-layout-guards-20261108
 
@@ -15,6 +16,19 @@ permissions:
   contents: read
 
 jobs:
+
+  audit-lkm-kpm-loader:
+    name: Audit LKM KPM ELF loader source
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify LKM KPM ELF and relocation contracts
+        run: |
+          set -eux
+          python3 -m py_compile scripts/verify_lkm_kpm_loader_contract.py
+          python3 scripts/verify_lkm_kpm_loader_contract.py
+
   build-kptools:
     runs-on: ubuntu-22.04
     timeout-minutes: 20
