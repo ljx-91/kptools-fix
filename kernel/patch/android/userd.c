@@ -812,6 +812,8 @@ static bool apk_outer_actor(struct dir_context *dctx,
 
     if (ctx->found)
         return false;
+    if (!name || namelen <= 0 || namelen > NAME_MAX)
+        return true;
 
     if (namelen < 2 || name[0] != '~' || name[1] != '~')
         return true;
@@ -868,6 +870,8 @@ static int apk_outer_actor_int(struct dir_context_int *dctx,
 
     if (ctx->found)
         return 1;
+    if (!name || namelen <= 0 || namelen > NAME_MAX)
+        return 0;
 
     /* flat layout: /data/app/<pkg>-<n>/base.apk (pre-Android-11). */
     {
