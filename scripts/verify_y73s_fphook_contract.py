@@ -20,6 +20,11 @@ checks = {
         "return -HOOK_PATCH_UNCERTAIN;" in src,
     "restore failure retains chain": "if (rc) {\n        logkv(\"Unwrap func pointer:" in src and
         "retaining chain memory" in src,
+    "SELinux SID published after context string": acc.index("all_allow_sctx[sizeof(all_allow_sctx) - 1] =") <
+        acc.index("WRITE_ONCE(all_allow_sid, sid);"),
+    "SELinux SID consumers use READ_ONCE": "set_security_override(new, READ_ONCE(all_allow_sid))" in acc and
+        "if (ssid == all_allow_sid)" not in acc and
+        "if (all_allow_sid != SECSID_NULL)" not in acc,
 }
 for label, ok in checks.items():
     print(("PASS" if ok else "FAIL") + ": " + label)
