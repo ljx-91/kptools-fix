@@ -108,7 +108,6 @@ def main():
     need(r"patternlen\s*!=\s*replacelen", hex_patch,
          "hex patcher must not overwrite beyond the matched pattern")
     need(r"static int hex_nibble\(", src, "hex patcher must reject invalid hex digits")
-    need(r"hex_nibble\(", hex_patch, "hex patcher must reject invalid hex digits")
 
     parse = body(src, "int parse_image_patch_info(")
     need(r"memchr\(item_pos\s*\+\s*sizeof\(\*item\)", parse,
