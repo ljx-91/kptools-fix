@@ -47,7 +47,7 @@ def main():
          "package lookup must free the file buffer on early errors")
 
     path_lookup = body(src, "static int find_trusted_manager_apk_path(")
-    need(r"index\s*>=\s*ARRAY_SIZE\(trusted_managers\)", path_lookup,
+    need(r"index\s*>=\s*\(int\)\(sizeof\(trusted_managers\)\s*/\s*sizeof\(trusted_managers\[0\]\)\)", path_lookup,
          "trusted-manager index must be bounded by the table")
     for sig in ("static bool apk_inner_actor(", "static int apk_inner_actor_int(",
                 "static bool apk_outer_actor(", "static int apk_outer_actor_int("):
