@@ -1120,7 +1120,8 @@ int repack_bootimg_mem(const char *orig_boot_path,
             fclose(f_orig);
             return -2;
         }
-        for (int32_t i = (int32_t)(rest_data_size - sizeof(avb)) - 1; i >= 0; i--) {
+        for (size_t i = (size_t)(rest_data_size - sizeof(avb)); i > 0; ) {
+            --i;
             if (rest_buf_tmp[i] != 0) {
                 rest_buf_offset = (uint32_t)(i + 1);
                 break;
@@ -1262,20 +1263,23 @@ int repack_bootimg_mem(const char *orig_boot_path,
             sha256_update(&ctx, (const BYTE *)&hdr.second_size, 4);
             tools_logi("second_size=%d\n",hdr.second_size);
             if (hdr.second_size > 0){
-                checksum_aligned += ALIGN(hdr.second_size , page_size);
+                checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
+                    align_ceil((uint64_t)hdr.second_size, (uint64_t)page_size));
             }
             //to do extra data
             if (extracted_size) {
                 tools_logi("extracted_size=%d\n",extracted_size);
                 sha256_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, page_size);
                 sha256_update(&ctx, (const BYTE *)&extracted_size, 4);
-                checksum_aligned += ALIGN(extracted_size , page_size);
+                checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
+                    align_ceil((uint64_t)extracted_size, (uint64_t)page_size));
             }
             if (header_ver == 1 || header_ver == 2){
                 tools_logi("recovery_dtbo_size=%d\n",hdr.recovery_dtbo_size);
                 sha256_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.recovery_dtbo_size);
                 sha256_update(&ctx, (const BYTE *)&hdr.recovery_dtbo_size, 4);
-                checksum_aligned += ALIGN(hdr.recovery_dtbo_size , page_size);
+                checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
+                    align_ceil((uint64_t)hdr.recovery_dtbo_size, (uint64_t)page_size));
             }
             if (header_ver == 2){
                 tools_logi("dtb_size=%d\n",hdr.dtb_size);
