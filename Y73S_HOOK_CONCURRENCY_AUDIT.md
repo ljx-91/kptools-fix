@@ -863,3 +863,85 @@ against a real target KDIR has been run.
   guarantee, and no target KDIR compile/fuzz/UBSan validation has been done.
 
 Do not treat this branch as safe for arbitrary or untrusted KPMs yet.
+
+## 11. LKM KPM registry lifecycle and callback-reference hardening (2026-11-09)
+
+The independent LKM KPM manager was updated after re-reading the current
+lkm/kpm/module.c and lkm/kpm/module.h. The changes replace the previous
+mixed ordinary-list/RCU-reader approach with one registry-lock protocol and
+explicit module states.
+
+### Implemented changes
+
+- Added LOADING, LIVE, UNLOADING, EXITING, and DEAD states plus an
+  active_calls counter protected by module_lock.
+- Added locked name lookup and kp_module_get() / kp_module_put() helpers.
+  Only LIVE modules can be acquired for normal control callbacks.
+- A load reserves its module name in the registry as LOADING before calling
+  init. A concurrent load of the same name now fails under the same lock.
+  The entry becomes LIVE only after init succeeds.
+- A failed-init exit callback runs while the image remains registered as
+  EXITING; the entry is removed only after that callback returns.
+- Unload atomically changes LIVE to UNLOADING, preventing new normal
+  callback references. If active calls remain, it returns -EBUSY without
+  waiting or freeing the image. The caller must retry after active calls drain.
+  Once quiescent, it changes to EXITING, runs exit outside the spinlock while
+  retaining the CFI-visible image range, then unlinks and frees the module.
+- ctl0 now uses a call-local immutable argument copy; the old shared
+  mod->ctl_args buffer was removed.
+- ctl0 and ctl1 callbacks acquire/release module references.
+- Event fanout takes a dynamically allocated snapshot and increments each
+  target's active reference under the registry lock; callbacks run outside the
+  lock and release their references afterward.
+- Module count/list/info readers now use the registry lock or a module
+  reference. The missing not-found unlock path in module-info lookup is gone.
+- The kallsyms callback wrapper pins the callback's owning KPM for the complete
+  iteration. The CFI address predicate now traverses the registry under the
+  same lock; ordinary list writers are no longer paired with RCU read-side
+  traversal in this LKM manager.
+- The callback owner lookup permits nested kallsyms calls from a module already
+  in UNLOADING only while that module remains registered due to active calls;
+  EXITING remains registered for its synchronous exit callback.
+
+### Source/CI evidence
+
+Lifecycle contracts were added to
+scripts/verify_lkm_kpm_loader_contract.py, including checks for state
+definitions, name reservation, active reference acquisition/release,
+retryable unload, event snapshots, call-local control arguments, CFI callback
+owner pinning, and removal of the old RCU registry reader pattern.
+
+Latest verified workflow:
+- Run 42504446091
+- Head c99d5e7a7b91fc48342e2b16cba8b77aae7e1a47
+- Conclusion: success
+- Audit LKM KPM ELF loader source: success
+- build-kptools host build/package: success
+
+This workflow validates the source-contract script and host kptools build.
+It does not compile lkm/kpm/module.c against the target kernel headers.
+
+### Remaining lifecycle and release limitations
+
+1. Unload is deliberately retry-based rather than waitqueue-based: a call
+   returning -EBUSY leaves the module UNLOADING; the caller must retry.
+   No automatic completion notification is provided.
+2. The active-reference protocol covers the LKM manager's control callbacks,
+   event fanout, and safe kallsyms iteration. It does not yet prove ownership
+   for every Hook callback, arbitrary KPM-created worker/thread, timer,
+   deferred work item, or function pointer retained by an external subsystem.
+   Those paths must be tied to module references or explicitly unregistered
+   and quiesced before unload.
+3. kp_kpm_cfi_allowed_addr() is a range predicate, not a general-purpose
+   reference acquisition API. The safe kallsyms wrapper separately pins its
+   owner, but unrelated consumers that only call the predicate still need
+   their own lifetime guarantee.
+4. The separate LKM ELF/RELA loader still needs a target-KDIR compile,
+   malformed-object fixtures, ASan/UBSan or equivalent dynamic validation,
+   and a complete no-partial-write relocation guarantee.
+5. No device boot, APatch initialization, root, Fastboot, 9008, or partition
+   write test was performed. The branch is not certified for loading arbitrary
+   or untrusted KPMs.
+
+This pass is a meaningful registry/callback-lifetime improvement, not a
+release sign-off.
