@@ -157,7 +157,7 @@ def main():
            "instruction writes must be cleaned from D-cache before I-cache invalidation")
     before(patch_text, "__flush_dcache_area", "flush_icache_all",
            "global I-cache invalidation must follow D-cache clean")
-    require(r"__flush_dcache_area\\(\\(void \\*\\)tp,\\s*sizeof\\(uint32_t\\)\\)",
+    require(r"__flush_dcache_area\(\(void \*\)tp,\s*sizeof\(uint32_t\)\)",
             patch_text, "instruction patch must clean the modified D-cache line")
 
     print("[PASS] instruction patch cleans D-cache before global I-cache invalidation")
