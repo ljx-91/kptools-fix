@@ -57,10 +57,15 @@ static bool cred_layout_valid(void)
            cred_field_valid(cred_offset.sgid_offset, sizeof(gid_t));
 }
 
-static bool task_field_valid(int offset, size_t size)
+static bool task_range_valid(int offset, size_t size)
 {
     return offset >= 0 && size <= TASK_LAYOUT_SIZE &&
-           (size_t)offset <= TASK_LAYOUT_SIZE - size &&
+           (size_t)offset <= TASK_LAYOUT_SIZE - size;
+}
+
+static bool task_field_valid(int offset, size_t size)
+{
+    return task_range_valid(offset, size) &&
            ((size_t)offset % sizeof(void *)) == 0;
 }
 
@@ -145,12 +150,14 @@ int commit_common_su(uid_t to_uid, const char *sctx)
     struct thread_info *thi = current_thread_info();
     thi->flags &= ~(_TIF_SECCOMP);
 
-    if (task_struct_offset.comm_offset > 0) {
+    if (task_range_valid(task_struct_offset.seccomp_offset, sizeof(struct seccomp))) {
         struct seccomp *seccomp = (struct seccomp *)((uintptr_t)task + task_struct_offset.seccomp_offset);
         seccomp->mode = SECCOMP_MODE_DISABLED;
         // only be called when the task is exiting, so no barriers
         // todo: WARN_ON(tsk->sighand != NULL);
         // seccomp_filter_release(task);
+    } else {
+        logkfe("commit_common_su: unresolved seccomp offset; leaving seccomp unchanged\\n");
     }
 
     ext->sel_allow = 1;
@@ -228,12 +235,14 @@ int task_su(pid_t pid, uid_t to_uid, const char *sctx)
     }
     thi->flags &= ~(_TIF_SECCOMP);
 
-    if (task_struct_offset.comm_offset > 0) {
+    if (task_range_valid(task_struct_offset.seccomp_offset, sizeof(struct seccomp))) {
         struct seccomp *seccomp = (struct seccomp *)((uintptr_t)task + task_struct_offset.seccomp_offset);
         seccomp->mode = SECCOMP_MODE_DISABLED;
         // only be called when the task is exiting, so no barriers
         // todo: WARN_ON(tsk->sighand != NULL);
         // seccomp_filter_release(task);
+    } else {
+        logkfe("task_su: unresolved seccomp offset; leaving seccomp unchanged\\n");
     }
 
     struct cred *cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
