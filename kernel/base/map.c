@@ -9,6 +9,8 @@
 typedef uint64_t phys_addr_t;
 typedef int (*memblock_reserve_f)(phys_addr_t base, phys_addr_t size);
 typedef phys_addr_t (*memblock_phys_alloc_try_nid_f)(phys_addr_t size, phys_addr_t align, int nid);
+typedef phys_addr_t (*memblock_find_in_range_f)(phys_addr_t start, phys_addr_t end, phys_addr_t size,
+                                                 phys_addr_t align);
 typedef void *(*memblock_virt_alloc_try_nid_f)(phys_addr_t size, phys_addr_t align, phys_addr_t min_addr,
                                                phys_addr_t max_addr, int nid);
 typedef int (*memblock_free_f)(phys_addr_t base, phys_addr_t size);
@@ -49,21 +51,27 @@ static inline uint64_t phys_to_lm(map_data_t *data, uint64_t phys)
 
 static uint64_t map_phys_alloc(map_data_t *data, uint64_t size, uint64_t align)
 {
-    if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID ||
-        data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_ALLOC_TRY_NID) {
+    if (!size || !align || (align & (align - 1))) return 0;
+
+    if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID) {
+        return ((memblock_phys_alloc_try_nid_f)data->map_symbol.memblock_phys_alloc_relo)(size, align,
+                                                                                         NUMA_NO_NODE);
+    }
+
+    if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_FIND_IN_RANGE) {
+        if (!data->map_symbol.memblock_reserve_relo) return 0;
+
         /*
-         * Y73S's 4.14.141 CFI entry for memblock_alloc_try_nid is a
-         * 3-argument function (size, align, nid), confirmed from the original
-         * kernel's ARM64 instructions. It is not the 5-argument
-         * memblock_virt_alloc_try_nid interface declared separately below.
-         * Keep the existing target-specific node selection unchanged:
-         * NUMA_NO_NODE for memblock_phys_alloc_try_nid and 0 for the
-         * memblock_alloc_try_nid fallback. Re-audit before using on other kernels.
+         * memblock_find_in_range(start, end, size, align) returns a physical
+         * address but does not reserve it. Reserve the exact result before
+         * exposing it to page-table construction or the relocated image.
          */
-        int third_arg = (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID)
-                            ? NUMA_NO_NODE
-                            : 0;
-        return ((memblock_phys_alloc_try_nid_f)data->map_symbol.memblock_phys_alloc_relo)(size, align, third_arg);
+        uint64_t pa = ((memblock_find_in_range_f)data->map_symbol.memblock_phys_alloc_relo)(
+            0, ~(uint64_t)0, size, align);
+        if (!pa || (pa & (align - 1)) || pa > ~(uint64_t)0 - size) return 0;
+
+        if (((memblock_reserve_f)data->map_symbol.memblock_reserve_relo)(pa, size)) return 0;
+        return pa;
     }
 
     return 0;
@@ -138,11 +146,36 @@ static __noinline void mem_proc(map_data_t *data)
     data->page_shift = page_shift;
 
     // linear
-    if (data->map_symbol.memblock_virt_alloc_relo) {
+    if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_FIND_IN_RANGE &&
+        data->map_symbol.memblock_virt_alloc_relo && data->map_symbol.memblock_free_relo) {
+        /*
+         * Y73S 4.14.141 has no memblock_phys_alloc_try_nid. Probe a free page
+         * with the physical range finder, then ask the 5-argument nopanic
+         * virtual allocator to allocate inside that exact one-page interval.
+         * The returned pointer and selected PA therefore describe the same
+         * page. Release the temporary reservation after deriving the offset.
+         */
+        uint64_t page_size = 1ull << data->page_shift;
+        uint64_t detect_phys = ((memblock_find_in_range_f)data->map_symbol.memblock_phys_alloc_relo)(
+            0, ~(uint64_t)0, page_size, page_size);
+        if (!detect_phys || detect_phys > ~(uint64_t)0 - page_size) __builtin_trap();
+
+        uint64_t detect_virt = (uint64_t)((memblock_virt_alloc_try_nid_f)data->map_symbol.memblock_virt_alloc_relo)(
+            page_size, page_size, detect_phys, detect_phys + page_size, NUMA_NO_NODE);
+        if (!detect_virt || detect_virt <= detect_phys) __builtin_trap();
+
+        data->linear_voffset = detect_virt - detect_phys;
+        // A failed free only leaks this one temporary page; it does not
+        // invalidate the already verified physical-to-virtual pair.
+        ((memblock_free_f)data->map_symbol.memblock_free_relo)(detect_phys, page_size);
+    } else if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID &&
+               data->map_symbol.memblock_phys_alloc_relo && data->map_symbol.memblock_virt_alloc_relo) {
         uint64_t detect_phys =
             ((memblock_phys_alloc_try_nid_f)data->map_symbol.memblock_phys_alloc_relo)(0, 0x10, NUMA_NO_NODE);
+        if (!detect_phys) __builtin_trap();
         uint64_t detect_virt = (uint64_t)((memblock_virt_alloc_try_nid_f)data->map_symbol.memblock_virt_alloc_relo)(
             0, 0x10, detect_phys, detect_phys, NUMA_NO_NODE);
+        if (!detect_virt || detect_virt <= detect_phys) __builtin_trap();
         data->linear_voffset = detect_virt - detect_phys;
     } else {
         __builtin_trap();
@@ -189,6 +222,7 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
         } else { // invalid, alloc
             if (lv != 3) {
                 pxd_pa = map_phys_alloc(data, page_size, page_size);
+                if (!pxd_pa) __builtin_trap();
                 alloc_flag = 1;
             } else {
                 pxd_pa = pa;
@@ -492,6 +526,7 @@ void __noinline _paging_init()
     ((memblock_reserve_f)data->map_symbol.memblock_reserve_relo)(old_start_pa, reserve_size);
     // alloc
     uint64_t start_pa = map_phys_alloc(data, all_size, page_size);
+    if (!start_pa || (start_pa & (page_size - 1)) || start_pa > ~(uint64_t)0 - all_size) __builtin_trap();
     // mark all size nomap
     if (data->map_symbol.memblock_mark_nomap_relo)
         ((memblock_mark_nomap_f)(data->map_symbol.memblock_mark_nomap_relo))(start_pa, all_size);
