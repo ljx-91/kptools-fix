@@ -1,24 +1,35 @@
 #!/usr/bin/env python3
-"""ELF-symbol-scoped verifier for the Y73S KPIMG stack handoff."""
+"""Verify the exact AArch64 stack-frame contract used by the Y73S KPIMG tail handoff."""
 from pathlib import Path
 import hashlib
 import struct
 import sys
 
-# GCC 14.2 Y73S build: stp x29, x30, [sp, #-frame]!, then mov x29, sp.
-# The immediate is the signed 7-bit STP pair offset, scaled by 8.
-STP_FP_LR_PREINDEX_MASK = 0xFFC07FFF
-STP_FP_LR_PREINDEX = 0xA9807BFD
+# AArch64 64-bit STP encodings used by GCC:
+#   offset:   STP Xt, Xt2, [SP, #imm]
+#   preindex: STP Xt, Xt2, [SP, #-frame]!
+STP_X_OFFSET_MASK = 0xFFC00000
+STP_X_OFFSET = 0xA9000000
+STP_X_PREINDEX = 0xA9800000
+MOV_FP_SP_MASK = 0xFFC003FF
 MOV_FP_SP = 0x910003FD
 RESTORE = [
     0xF94003AA, 0xA9415153, 0xA9425955, 0xA9436157,
     0xA9446959, 0xA945715B, 0xF940015D, 0xF940055E,
 ]
 RET = 0xD65F03C0
+EXPECTED_FRAME_SIZE = 0x130
+EXPECTED_SAVES = {
+    (19, 20): 0x10,
+    (21, 22): 0x20,
+    (23, 24): 0x30,
+    (25, 26): 0x40,
+    (27, 28): 0x50,
+}
 
 
 def cstr(blob, offset):
-    end = blob.find(b"\0", offset)
+    end = blob.find(b"\\0", offset)
     if end < 0:
         raise ValueError("unterminated ELF string")
     return blob[offset:end].decode("utf-8", "replace")
@@ -26,7 +37,7 @@ def cstr(blob, offset):
 
 def load_elf(path):
     blob = Path(path).read_bytes()
-    if len(blob) < 64 or blob[:4] != b"\x7fELF":
+    if len(blob) < 64 or blob[:4] != b"\\x7fELF":
         raise ValueError("input is not an ELF file")
     if blob[4] != 2 or blob[5] != 1:
         raise ValueError("expected ELF64 little-endian")
@@ -92,6 +103,29 @@ def words_for(blob, sym):
     return list(struct.unpack_from("<" + "I" * n, blob, sym["file_off"]))
 
 
+def sign_extend(value, bits):
+    sign = 1 << (bits - 1)
+    return (value ^ sign) - sign
+
+
+def decode_stp_x(word):
+    """Return (mode, rt, rt2, rn, byte_offset) for 64-bit GPR STP, else None."""
+    masked = word & STP_X_OFFSET_MASK
+    if masked == STP_X_OFFSET:
+        mode = "offset"
+    elif masked == STP_X_PREINDEX:
+        mode = "preindex"
+    else:
+        return None
+    imm7 = sign_extend((word >> 15) & 0x7F, 7)
+    return mode, word & 0x1F, (word >> 10) & 0x1F, (word >> 5) & 0x1F, imm7 * 8
+
+
+def is_call(word):
+    # BL immediate or BLR Xn.
+    return (word & 0xFC000000) == 0x94000000 or (word & 0xFFFFFC1F) == 0xD63F0000
+
+
 def main(path):
     blob, symbols = load_elf(path)
     for name in ("_paging_init", "start"):
@@ -103,26 +137,61 @@ def main(path):
     pw = words_for(blob, paging)
     sw = words_for(blob, start)
 
-    if len(pw) < 2 or (pw[0] & STP_FP_LR_PREINDEX_MASK) != STP_FP_LR_PREINDEX:
-        raise ValueError("_paging_init does not begin with the expected FP/LR pre-index save")
-    if pw[1] != MOV_FP_SP:
+    # _paging_init must establish the exact frame pointer used by start's inline
+    # assembly. The tail code hardcodes 0x130, so any other frame is incompatible.
+    if len(pw) < 2:
+        raise ValueError("_paging_init is too short to contain its frame prologue")
+    first = decode_stp_x(pw[0])
+    if first != ("preindex", 29, 30, 31, -EXPECTED_FRAME_SIZE):
+        raise ValueError("_paging_init does not save x29/x30 with the expected 0x130-byte SP frame")
+    if (pw[1] & MOV_FP_SP_MASK) != MOV_FP_SP:
         raise ValueError("_paging_init does not establish x29 = SP immediately after its frame save")
 
-    imm7 = (pw[0] >> 15) & 0x7F
-    if imm7 & 0x40:
-        imm7 -= 0x80
-    frame_size = -imm7 * 8
-    fp_offset = 0
-    if frame_size < 96 or frame_size % 16:
-        raise ValueError(f"implausible _paging_init frame size: 0x{frame_size:x}")
-    expected_sp = frame_size - fp_offset
+    frame_size = -first[4]
+    if frame_size != EXPECTED_FRAME_SIZE:
+        raise ValueError(f"_paging_init frame changed: expected 0x{EXPECTED_FRAME_SIZE:x}, got 0x{frame_size:x}")
 
-    # Confirm start saves a frame record and establishes x29 before its tail return.
-    saves_fp_lr = any((w & 0xFFC07FFF) in (0xA9007BFD, 0xA9807BFD) for w in sw[:8])
-    sets_fp = any((w & 0xFFC003FF) == 0x910003FD for w in sw[:8])
-    if not saves_fp_lr or not sets_fp:
-        raise ValueError("start entry does not establish a saved x29/x30 frame record")
+    # Verify every callee-saved register pair at the precise offsets consumed
+    # by start's tail-return assembly. A frame-size-only check is insufficient.
+    observed = {}
+    first_call = next((i for i, w in enumerate(pw) if is_call(w)), len(pw))
+    for i, word in enumerate(pw):
+        decoded = decode_stp_x(word)
+        if not decoded:
+            continue
+        mode, rt, rt2, rn, offset = decoded
+        if mode == "offset" and rn == 31 and (rt, rt2) in EXPECTED_SAVES:
+            observed.setdefault((rt, rt2), []).append((offset, i))
+    for pair, expected_offset in EXPECTED_SAVES.items():
+        entries = observed.get(pair, [])
+        if len(entries) != 1:
+            raise ValueError(f"_paging_init must save x{pair[0]}/x{pair[1]} exactly once; found {entries}")
+        actual_offset, insn_index = entries[0]
+        if actual_offset != expected_offset:
+            raise ValueError(
+                f"_paging_init saves x{pair[0]}/x{pair[1]} at 0x{actual_offset:x}, "
+                f"but start restores from 0x{expected_offset:x}"
+            )
+        if insn_index >= first_call:
+            raise ValueError(f"_paging_init saves x{pair[0]}/x{pair[1]} after its first call")
 
+    # The caller's frame record must be established by start before any call.
+    start_frame_records = []
+    start_fp_sets = []
+    for i, word in enumerate(sw[:8]):
+        decoded = decode_stp_x(word)
+        if decoded and decoded[0] == "preindex" and decoded[1:4] == (29, 30, 31):
+            start_frame_records.append((i, decoded[4]))
+        if (word & MOV_FP_SP_MASK) == MOV_FP_SP:
+            start_fp_sets.append(i)
+    if len(start_frame_records) != 1 or len(start_fp_sets) != 1:
+        raise ValueError("start entry does not uniquely establish its x29/x30 frame record")
+    if start_frame_records[0][0] >= start_fp_sets[0]:
+        raise ValueError("start establishes x29 before saving its frame record")
+    if any(is_call(w) for w in sw[:start_fp_sets[0]]):
+        raise ValueError("start calls another function before establishing x29")
+
+    # Match the exact handoff sequence and reject ambiguous duplicate tails.
     restore_candidates = []
     for i in range(len(sw) - len(RESTORE) - 1):
         if sw[i:i + len(RESTORE)] != RESTORE:
@@ -132,18 +201,20 @@ def main(path):
             continue
         if (add_sp & 0xFFC003FF) != 0x9100015F or ((add_sp >> 22) & 1):
             continue
-        restore_candidates.append((add_sp >> 10) & 0xFFF)
+        restore_candidates.append((i, (add_sp >> 10) & 0xFFF))
     if len(restore_candidates) != 1:
         raise ValueError(f"start restore pattern missing/ambiguous: {restore_candidates}")
-    actual_sp = restore_candidates[0]
+    _, actual_sp = restore_candidates[0]
+    if actual_sp != frame_size:
+        raise ValueError(f"SP restore mismatch: expected 0x{frame_size:x}, actual 0x{actual_sp:x}")
 
     print(f"SHA256: {hashlib.sha256(blob).hexdigest()}")
     print(f"_paging_init: 0x{paging['value']:x} size=0x{paging['size']:x} section={paging['section']}")
     print(f"start:         0x{start['value']:x} size=0x{start['size']:x} section={start['section']}")
-    print(f"GCC frame=0x{frame_size:x}; FP offset=0x{fp_offset:x}; expected SP restore=0x{expected_sp:x}; actual=0x{actual_sp:x}")
-    if actual_sp != expected_sp:
-        raise ValueError("SP restore mismatch; refusing KPIMG artifact")
-    print("[PASS] ELF-symbol-scoped Y73S stack handoff verifier")
+    print(f"frame: 0x{frame_size:x}; verified x19-x28 save slots: " +
+          ", ".join(f"x{a}/x{b}@0x{off:x}" for (a, b), off in EXPECTED_SAVES.items()))
+    print(f"start tail SP restore: 0x{actual_sp:x}")
+    print("[PASS] exact Y73S stack handoff contract verified")
 
 
 if __name__ == "__main__":
