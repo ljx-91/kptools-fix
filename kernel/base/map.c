@@ -520,9 +520,12 @@ void __noinline _paging_init()
 #endif
 
     uint64_t page_size = 1 << data->page_shift;
-    uint64_t old_start_pa = data->start_offset + data->kernel_pa;
-    if (data->start_img_size > ~(uint64_t)0 - data->extra_size) __builtin_trap();
-    uint64_t reserve_size = data->start_img_size + data->extra_size;
+    if (data->start_offset < 0 || data->start_img_size < 0 || data->extra_size < 0 ||
+        data->start_size <= 0 || data->alloc_size < 0) __builtin_trap();
+    if ((uint64_t)data->start_offset > ~(uint64_t)0 - data->kernel_pa) __builtin_trap();
+    uint64_t old_start_pa = (uint64_t)data->start_offset + data->kernel_pa;
+    if ((uint64_t)data->start_img_size > ~(uint64_t)0 - (uint64_t)data->extra_size) __builtin_trap();
+    uint64_t reserve_size = (uint64_t)data->start_img_size + (uint64_t)data->extra_size;
     if (!reserve_size || old_start_pa > ~(uint64_t)0 - reserve_size) __builtin_trap();
 
     // memblock_reserve() returns 0 on success and a negative errno on failure.
@@ -536,8 +539,9 @@ void __noinline _paging_init()
     if (data->start_size > ~(uint64_t)0 - align_extra_size) __builtin_trap();
     uint64_t start_and_extra = data->start_size + align_extra_size;
     if (data->alloc_size > ~(uint64_t)0 - start_and_extra) __builtin_trap();
-    uint64_t all_size = start_and_extra + data->alloc_size;
-    if (!all_size || all_size > ~(uint64_t)0 - (page_size - 1)) __builtin_trap();
+    uint64_t all_size = start_and_extra + (uint64_t)data->alloc_size;
+    if (!all_size || all_size > ~(uint64_t)0 - (page_size - 1) ||
+        (all_size & (page_size - 1))) __builtin_trap();
 
     // alloc
     uint64_t start_pa = map_phys_alloc(data, all_size, page_size);
