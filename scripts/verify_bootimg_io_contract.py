@@ -83,7 +83,7 @@ def main():
          "new boot image extent must be calculated without signed overflow")
     need(r"tail_pos\s*>\s*rest_data_size", repack,
          "checksum tail offsets must be checked against available tail bytes")
-    need(r"hdr\.second_size\s*>\s*\(uint64_t\)rest_data_size\s*-\s*tail_pos", repack,
+    need(r"\(uint64_t\)hdr\.second_size\s*>\s*\(uint64_t\)rest_data_size\s*-\s*tail_pos", repack,
          "second-stage checksum data must be bounded")
     need(r"old_image_size\s*>\s*~0ULL\s*-\s*shift", repack,
          "AVB footer movement must avoid signed overflow")
