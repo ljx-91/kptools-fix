@@ -18,6 +18,7 @@ struct kp_hook_mem {
 	struct list_head list;
 	uintptr_t origin;
 	enum hook_type type;
+	bool ready;
 	void *region;
 	union {
 		hook_t hook;
@@ -172,6 +173,20 @@ void *hook_get_mem_from_origin(uint64_t origin)
 	return result;
 }
 
+void hook_mem_publish(void *payload)
+{
+	struct kp_hook_mem *mem;
+
+	mutex_lock(&kp_hook_lock);
+	list_for_each_entry(mem, &kp_hook_mems, list) {
+		if (mem->payload == payload) {
+			mem->ready = true;
+			break;
+		}
+	}
+	mutex_unlock(&kp_hook_lock);
+}
+
 void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
 {
 	struct kp_hook_mem *mem;
@@ -179,7 +194,7 @@ void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
 
 	mutex_lock(&kp_hook_lock);
 	list_for_each_entry(mem, &kp_hook_mems, list) {
-		if (mem->origin == origin && mem->type == type) {
+		if (mem->origin == origin && mem->type == type && mem->ready) {
 			result = mem->payload;
 			break;
 		}
