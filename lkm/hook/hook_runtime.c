@@ -138,6 +138,19 @@ void *hook_mem_zalloc(uintptr_t origin, enum hook_type type)
 	mem->origin = origin;
 	mem->type = type;
 	mutex_lock(&kp_hook_lock);
+	/* Two first-wrap callers can both miss hook_get_mem_from_origin().
+	 * Recheck under the insertion lock so only one chain owns an origin. */
+	{
+		struct kp_hook_mem *pos;
+		list_for_each_entry(pos, &kp_hook_mems, list) {
+			if (pos->origin == origin) {
+				mutex_unlock(&kp_hook_lock);
+				kp_hook_exec_free(mem->region);
+				kfree(mem);
+				return NULL;
+			}
+		}
+	}
 	list_add_tail(&mem->list, &kp_hook_mems);
 	mutex_unlock(&kp_hook_lock);
 	return mem->payload;
@@ -157,6 +170,41 @@ void *hook_get_mem_from_origin(uint64_t origin)
 	}
 	mutex_unlock(&kp_hook_lock);
 	return result;
+}
+
+void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
+{
+	struct kp_hook_mem *mem;
+	void *result = NULL;
+
+	mutex_lock(&kp_hook_lock);
+	list_for_each_entry(mem, &kp_hook_mems, list) {
+		if (mem->origin == origin && mem->type == type) {
+			result = mem->payload;
+			break;
+		}
+	}
+	mutex_unlock(&kp_hook_lock);
+	return result;
+}
+
+/* A successfully restored hook may still have CPUs that entered its old
+ * trampoline. Remove the lookup record but deliberately retain executable
+ * storage; recycling it would turn an in-flight chain pointer into UAF. */
+void hook_mem_retire(void *payload)
+{
+	struct kp_hook_mem *mem, *tmp;
+
+	mutex_lock(&kp_hook_lock);
+	list_for_each_entry_safe(mem, tmp, &kp_hook_mems, list) {
+		if (mem->payload == payload) {
+			list_del(&mem->list);
+			mutex_unlock(&kp_hook_lock);
+			kfree(mem);
+			return;
+		}
+	}
+	mutex_unlock(&kp_hook_lock);
 }
 
 void hook_mem_free(void *payload)
