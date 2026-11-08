@@ -791,6 +791,7 @@ static int elf_header_check(struct kp_load_info *info)
 
 struct kp_module modules = { 0 };
 static spinlock_t module_lock;
+static bool kp_kpm_ready;
 
 /* state and active_calls are protected by module_lock. */
 static struct kp_module *kp_find_module_locked(const char *name)
@@ -878,7 +879,7 @@ static unsigned long kp_callback_tramp_slots[(KP_CALLBACK_TRAMP_SLOT_COUNT + BIT
 typedef int (*kp_kallsyms_on_each_symbol_t)(kp_kallsyms_cb_t fn, void *data);
 static kp_kallsyms_on_each_symbol_t kp_real_kallsyms_on_each_symbol;
 
-static bool kp_kpm_ready; /* modules.list / module_lock / trampoline initialized */
+/* modules.list / module_lock / trampoline initialized */
 
 /* Address-in-KPM-range check used by the find_check_fn CFI bypass and by the
  * safe kallsyms wrapper. Callable from any (including atomic) context. */
