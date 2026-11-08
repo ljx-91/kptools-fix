@@ -1058,18 +1058,25 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
         addition_pos += kvlen;
     }
 
-// append extra
-    int current_offset = out_img_len;
+// append extra with capacity checks; args are strings padded to their recorded size.
+    size_t current_offset = (size_t)out_img_len;
     for (int i = 0; i < extra_config_num; i++) {
         extra_config_t *config = extra_configs + i;
         patch_extra_item_t *item = config->item;
         const char *type = extra_type_str(item->type);
-        tools_logi("embedding %s, name: %s, priority: %d, event: %s, args: %s, size: 0x%x+0x%x+0x%x\n", type,
-                   item->name, item->priority, item->event, config->set_args ?: "", (int)sizeof(*item), item->args_size,
+        if (!memchr(item->name, '\0', sizeof(item->name)) ||
+            !memchr(item->event, '\0', sizeof(item->event)))
+            tools_loge_exit("extra item name/event is not terminated\\n");
+        tools_logi("embedding %s, name: %s, priority: %d, event: %s, args: %s, size: 0x%x+0x%x+0x%x\\n",
+                   type ? type : "unknown", item->name, item->priority, item->event,
+                   config->set_args ? config->set_args : "", (int)sizeof(*item), item->args_size,
                    item->con_size);
 
-        int args_len = item->args_size;
-        int con_len = item->con_size;
+        size_t args_len = (size_t)item->args_size;
+        size_t con_len = (size_t)item->con_size;
+        if (item->args_size < 0 || item->con_size < 0 ||
+            (con_len && !config->data) || (args_len && !config->set_args))
+            tools_loge_exit("invalid extra item payload\\n");
 
         if (is_be() ^ kinfo->is_be) {
             item->type = i32swp(item->type);
@@ -1079,9 +1086,30 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
             item->flags = i32swp(item->flags);
         }
 
-        extra_append(out_kernel_file.kimg, (void *)item, sizeof(*item), &current_offset);
-        if (args_len > 0) extra_append(out_kernel_file.kimg, (void *)config->set_args, args_len, &current_offset);
-        extra_append(out_kernel_file.kimg, (void *)config->data, con_len, &current_offset);
+        if (extra_append(out_kernel_file.kimg, (size_t)out_all_len, item,
+                         sizeof(*item), &current_offset))
+            tools_loge_exit("extra item header exceeds output buffer\\n");
+
+        if (args_len) {
+            size_t text_len = strnlen(config->set_args, args_len);
+            if (text_len == args_len)
+                tools_loge_exit("extra args are not NUL-terminated\\n");
+            size_t used = text_len + 1;
+            if (extra_append(out_kernel_file.kimg, (size_t)out_all_len,
+                             config->set_args, used, &current_offset))
+                tools_loge_exit("extra args exceed output buffer\\n");
+            size_t padding = args_len - used;
+            if (padding) {
+                if (current_offset > (size_t)out_all_len ||
+                    padding > (size_t)out_all_len - current_offset)
+                    tools_loge_exit("extra args padding exceeds output buffer\\n");
+                memset(out_kernel_file.kimg + current_offset, 0, padding);
+                current_offset += padding;
+            }
+        }
+        if (extra_append(out_kernel_file.kimg, (size_t)out_all_len,
+                         config->data, con_len, &current_offset))
+            tools_loge_exit("extra content exceeds output buffer\\n");
     }
 
     // record IKCONFIG gzip blob location for runtime puff inflation
@@ -1097,7 +1125,9 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
 
     // guard extra
     patch_extra_item_t empty_item = { 0 };
-    extra_append(out_kernel_file.kimg, (void *)&empty_item, sizeof(empty_item), &current_offset);
+    if (extra_append(out_kernel_file.kimg, (size_t)out_all_len, &empty_item,
+                     sizeof(empty_item), &current_offset) || current_offset != (size_t)out_all_len)
+        tools_loge_exit("extra output length mismatch\\n");
 
     // transfer ownership of the patched kernel buffer to the caller
     *out_kimg = out_kernel_file.kfile;
