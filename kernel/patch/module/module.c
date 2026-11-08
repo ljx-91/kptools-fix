@@ -90,23 +90,6 @@ static inline bool strstarts(const char *str, const char *prefix)
     return strncmp(str, prefix, strlen(prefix)) == 0;
 }
 
-static char *next_string(char *string, unsigned long *secsize)
-{
-    if (!string || !secsize || !*secsize) return NULL;
-    while (*secsize && *string) {
-        string++;
-        (*secsize)--;
-    }
-    if (!*secsize) return NULL;
-    string++;
-    (*secsize)--;
-    while (*secsize && !*string) {
-        string++;
-        (*secsize)--;
-    }
-    return *secsize ? string : NULL;
-}
-
 /* Update size with this section: return offset, or a negative errno. */
 static long get_offset(struct module *mod, unsigned int *size, Elf_Shdr *sechdr, unsigned int section)
 {
