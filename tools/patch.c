@@ -852,10 +852,10 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
         config->item = item;
         item->type = config->extra_type;
         if (item->args_size < 0 || item->con_size < 0)
-            tools_loge_exit("negative extra item lengths\\n");
+            tools_loge_exit("negative extra item lengths\n");
         if (config->set_args) {
             uint64_t args_aligned = align_ceil(strlen(config->set_args) + 1, EXTRA_ALIGN);
-            if (args_aligned > 0x7fffffffULL) tools_loge_exit("extra args too long\\n");
+            if (args_aligned > 0x7fffffffULL) tools_loge_exit("extra args too long\n");
             item->args_size = (int32_t)args_aligned;
         }
         if (config->set_name) {
@@ -866,7 +866,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
             strncpy(item->event, config->set_event, sizeof(item->event) - 1);
             item->event[sizeof(item->event) - 1] = '\0';
         }
-        if (item->con_size && !config->data) tools_loge_exit("extra item content is null\\n");
+        if (item->con_size && !config->data) tools_loge_exit("extra item content is null\n");
         if (config->priority) item->priority = config->priority;
     }
 
