@@ -316,6 +316,19 @@ def main():
 
     print("[PASS] kstorage range checks and RCU-safe user-copy ordering")
     print("[PASS] SU UID enumeration no longer copies to user inside RCU")
+    require(r"ks->dlen\s*<\s*sizeof\(uid_t\)", sucompat_c,
+            "SU membership lookup must validate stored record length")
+    require(r"kstorage->dlen\s*<\s*sizeof\(struct su_profile\)", sucompat_c,
+            "SU UID enumeration must validate stored profile length")
+    require(r"ks->dlen\s*<\s*sizeof\(struct su_profile\)", sucompat_c,
+            "SU profile lookup must validate stored profile length")
+    add_profile = function_body(sucompat_c, "int su_add_allow_uid(")
+    require(r"strncpy\(profile\.scontext,\s*scontext,\s*sizeof\(profile\.scontext\)\s*-\s*1\)",
+            add_profile, "SU context copy must not read a fixed-size span past a short string")
+    require(r"profile\.scontext\[sizeof\(profile\.scontext\)\s*-\s*1\]\s*=\s*'\\\\0'",
+            add_profile, "SU context copy must always terminate the stored string")
+
+    print("[PASS] SU profile record sizes and bounded SELinux context copy")
 
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
