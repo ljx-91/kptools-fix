@@ -92,27 +92,62 @@ def branch_target(word, pc):
     return None
 
 
+def pc_relative_reference(word, pc):
+    # ADR / ADRP use a signed 21-bit immediate split across immhi/immlo.
+    op = word & 0x9F000000
+    if op in (0x10000000, 0x90000000):
+        imm = (((word >> 5) & 0x7FFFF) << 2) | ((word >> 29) & 0x3)
+        imm = sign_extend(imm, 21)
+        if op == 0x10000000:
+            return ("ADR", pc + imm)
+        return ("ADRP", (pc & ~0xFFF) + (imm << 12))
+    # LDR (literal), LDRSW (literal), PRFM (literal), and SIMD literal loads.
+    if (word & 0x3B000000) == 0x18000000:
+        target = pc + (sign_extend((word >> 5) & 0x7FFFF, 19) << 2)
+        return ("LDR-literal", target)
+    return None
+
+
 def main(path):
     blob, sec, funcs = parse_elf(path)
     lo, hi = sec["addr"], sec["addr"] + sec["size"]
     checked = 0
     bad = []
+    refs_checked = 0
+    bad_refs = []
     for value, size in funcs:
         off = sec["offset"] + (value - lo)
         for i in range(0, size - 3, 4):
             word = struct.unpack_from("<I", blob, off + i)[0]
-            target = branch_target(word, value + i)
-            if target is None:
-                continue
-            checked += 1
-            if not lo <= target < hi:
-                bad.append((value + i, target, word))
-    print(f".setup.map size=0x{sec['size']:x}; function_symbols={len(funcs)}; direct_branches_checked={checked}")
+            pc = value + i
+            target = branch_target(word, pc)
+            if target is not None:
+                checked += 1
+                if not lo <= target < hi:
+                    bad.append((pc, target, word))
+            ref = pc_relative_reference(word, pc)
+            if ref is not None:
+                kind, target = ref
+                refs_checked += 1
+                if kind == "ADRP":
+                    # ADRP names a page base; the actual ADD/load offset is
+                    # checked by requiring that page to overlap .setup.map.
+                    valid = target < hi and target + 0x1000 > lo
+                else:
+                    valid = lo <= target < hi
+                if not valid:
+                    bad_refs.append((pc, target, word, kind))
+    print(f".setup.map size=0x{sec['size']:x}; function_symbols={len(funcs)}; "
+          f"direct_branches_checked={checked}; pc_relative_refs_checked={refs_checked}")
     if bad:
         for pc, target, word in bad[:20]:
             print(f"external branch: pc=0x{pc:x} insn=0x{word:08x} target=0x{target:x}")
         raise ValueError(f"{len(bad)} direct branch(es) leave copied .setup.map")
-    print("[PASS] all direct control-flow branches in copied .setup.map stay inside the copied section")
+    if bad_refs:
+        for pc, target, word, kind in bad_refs[:20]:
+            print(f"external {kind}: pc=0x{pc:x} insn=0x{word:08x} target=0x{target:x}")
+        raise ValueError(f"{len(bad_refs)} PC-relative reference(s) leave copied .setup.map")
+    print("[PASS] copied .setup.map direct branches and PC-relative references stay inside the copied section")
 
 
 if __name__ == "__main__":
