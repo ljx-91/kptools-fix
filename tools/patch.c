@@ -1041,11 +1041,11 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     int paging_init_offset = get_symbol_offset_exit(&kallsym, kallsym_kimg, "paging_init");
     setup->paging_init_offset = relo_branch_func(kallsym_kimg, paging_init_offset);
     if (kpimg_len <= SZ_4K || align_kimg_len > 0x7fffffff - SZ_4K)
-        tools_loge_exit("KPIMG start image offset is invalid\\n");
+        tools_loge_exit("KPIMG start image offset is invalid\n");
     int text_offset = align_kimg_len + SZ_4K;
     if (b((uint32_t *)(out_kernel_file.kimg + kinfo->b_stext_insn_offset),
           kinfo->b_stext_insn_offset, (uint64_t)text_offset) != 4)
-        tools_loge_exit("kernel entry branch is out of range or unaligned\\n");
+        tools_loge_exit("kernel entry branch is out of range or unaligned\n");
 
     // additional [len key=value] set
     char *addition_pos = setup->additional;
