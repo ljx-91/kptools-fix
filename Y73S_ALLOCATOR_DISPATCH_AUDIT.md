@@ -297,3 +297,70 @@ This establishes a successful reproducible CI build and matching compiler-frame
 handoff check. It does **not** establish that the patched Vivo Y73s will boot:
 the binary has not been tested on the phone, and no real-device boot result is
 available. Keep the artifact classified as CI-validated, not device-validated.
+
+
+## Expanded copied-map relocation audit and static patch validation (2026-11-08)
+
+The previous validation gates above are superseded by the completed runs below.
+
+### Copied `.setup.map` control-flow audit
+
+The map code is copied byte-for-byte from KPIMG into the kernel's selected map hole.
+A new ELF verifier now checks every defined function in `.setup.map` for direct
+AArch64 control-flow branches (B/BL, conditional branches, CBZ/CBNZ, TBZ/TBNZ)
+that would escape the copied section. It also checks ADR, ADRP page references,
+and literal-load targets so PC-relative references do not silently keep pointing
+back into the original KPIMG location.
+
+For the GCC 14.2 Y73S build at commit
+`041708aa25dd51a53373e3d002f72a3164d5f3eb`, CI reported:
+
+- `.setup.map` size: `0x840` (below the `0x1000` map-hole limit);
+- 7 function symbols audited;
+- 74 direct control-flow branches checked;
+- 1 PC-relative reference checked;
+- no branch or checked PC-relative reference escaped the copied section;
+- the stack handoff verifier passed with frame `0x130` and SP restore `0x130`.
+
+The original Y73S patch-test log selected `tcp_init_sock` at offset
+`0x019352c4`, aligned the map start to `0x019352d0`, and reported a
+`0x1000` map hole. The compiled map section therefore fits with
+`0x7c0` bytes remaining.
+
+### Reproducible CI result
+
+Both workflows completed successfully for commit
+`041708aa25dd51a53373e3d002f72a3164d5f3eb`:
+
+- [GCC 14.2 Y73S ELF audit](https://github.com/ljx-91/kptools-fix/actions/runs/42455462817)
+- [Windows kptools and artifact build](https://github.com/ljx-91/kptools-fix/actions/runs/42455462854)
+
+The GCC audit artifact includes the raw KPIMG, ELF, preset header, version,
+and checksums. The Windows workflow uploaded `kpimg-and-headers` and
+`KernelPatch-Windows-Y73S`.
+
+### Read-only/static patch test against the supplied original kernel
+
+Using the supplied 47,517,708-byte Y73S `kernel-b` and the GCC 14.2 KPIMG:
+
+- host `kptools` completed a patch operation on a temporary output file;
+- the log selected `memblock_find_in_range` + `memblock_reserve` for
+  physical allocation;
+- the log selected `memblock_virt_alloc_try_nid_nopanic` for the linear
+  mapping probe;
+- `kptools -l` reported `patched=true`, KPIMG version `0xd0a`, ARM64;
+- the embedded KPIMG length in the patch log was `0x48570`, matching the
+  standalone 296,304-byte KPIMG.
+
+This is evidence that the target kernel's symbol resolver and static patch
+pipeline select the intended interfaces. It is not a runtime test.
+
+### Current release status
+
+The source, GCC 14.2 KPIMG build, ELF stack check, copied-map relocation check,
+Windows kptools build, and offline static patch operation have passed.
+
+**The Vivo Y73s device boot remains unverified.** No patched image has been
+certified boot-safe, and no real-device boot test is claimed. The previous
+automatic reboot loop remains unresolved until a controlled device test can
+confirm the patched kernel passes early boot.
