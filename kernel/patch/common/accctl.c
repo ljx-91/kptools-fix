@@ -37,7 +37,34 @@ uint32_t all_allow_sid = SECSID_NULL;
 static bool cred_field_valid(int offset, size_t size)
 {
     return offset >= 0 && size <= CRED_LAYOUT_SIZE &&
-           (size_t)offset <= CRED_LAYOUT_SIZE - size;
+           (size_t)offset <= CRED_LAYOUT_SIZE - size &&
+           ((size_t)offset % sizeof(uint32_t)) == 0;
+}
+
+static bool cred_fields_disjoint(void)
+{
+    const int offsets[] = {
+        cred_offset.cap_inheritable_offset, cred_offset.cap_permitted_offset,
+        cred_offset.cap_effective_offset, cred_offset.cap_bset_offset,
+        cred_offset.cap_ambient_offset, cred_offset.uid_offset,
+        cred_offset.euid_offset, cred_offset.fsuid_offset, cred_offset.suid_offset,
+        cred_offset.gid_offset, cred_offset.egid_offset,
+        cred_offset.fsgid_offset, cred_offset.sgid_offset,
+    };
+    const size_t sizes[] = {
+        sizeof(kernel_cap_t), sizeof(kernel_cap_t), sizeof(kernel_cap_t),
+        sizeof(kernel_cap_t), sizeof(kernel_cap_t), sizeof(uid_t),
+        sizeof(uid_t), sizeof(uid_t), sizeof(uid_t), sizeof(gid_t),
+        sizeof(gid_t), sizeof(gid_t), sizeof(gid_t),
+    };
+    for (size_t i = 0; i < sizeof(offsets) / sizeof(offsets[0]); i++) {
+        for (size_t j = i + 1; j < sizeof(offsets) / sizeof(offsets[0]); j++) {
+            size_t a = (size_t)offsets[i];
+            size_t b = (size_t)offsets[j];
+            if (a < b + sizes[j] && b < a + sizes[i]) return false;
+        }
+    }
+    return true;
 }
 
 static bool cred_layout_valid(void)
@@ -54,7 +81,8 @@ static bool cred_layout_valid(void)
            cred_field_valid(cred_offset.gid_offset, sizeof(gid_t)) &&
            cred_field_valid(cred_offset.egid_offset, sizeof(gid_t)) &&
            cred_field_valid(cred_offset.fsgid_offset, sizeof(gid_t)) &&
-           cred_field_valid(cred_offset.sgid_offset, sizeof(gid_t));
+           cred_field_valid(cred_offset.sgid_offset, sizeof(gid_t)) &&
+           cred_fields_disjoint();
 }
 
 static bool task_range_valid(int offset, size_t size)
