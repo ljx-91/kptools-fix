@@ -649,6 +649,11 @@ static int setup_load_info(struct kp_load_info *info)
 	}
 	info->info.base = get_sh_base(info, ".kpm.info");
 	info->info.size = get_sh_size(info, ".kpm.info");
+	if (!info->info.base || !info->info.size ||
+	    info->info.base[info->info.size - 1] != '\0') {
+		set_load_error(info, "invalid .kpm.info string table");
+		return -ENOEXEC;
+	}
 
 	const char *name = get_modinfo(info, "name");
 	if (!name) {
