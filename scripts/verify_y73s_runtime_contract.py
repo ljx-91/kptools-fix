@@ -107,22 +107,22 @@ def main():
         if forbidden in callback:
             raise AssertionError(f"hotpatch callback must not depend on {forbidden}")
     hotpatch_fn = function_body(hotpatch_c, "int hotpatch(void *addrs[], uint32_t values[], int cnt)")
-    require(r"stop_machine\\(hotpatch_cb,\\s*&patch,\\s*NULL\\)", hotpatch_fn,
+    require(r"stop_machine\(hotpatch_cb,\s*&patch,\s*NULL\)", hotpatch_fn,
             "Y73S hotpatch must coordinate CPUs with stop_machine(..., NULL)")
-    require(r"!kfunc\\(stop_machine\\).*?is_interrupt_masked\\(\\).*?return -EOPNOTSUPP;",
+    require(r"!kfunc\(stop_machine\).*?is_interrupt_masked\(\).*?return -EOPNOTSUPP;",
             hotpatch_fn, "missing stop_machine/interrupt state must fail closed")
     if "hotpatch_cb(&patch)" in hotpatch_fn:
         raise AssertionError("uncoordinated direct hotpatch callback fallback reintroduced")
 
     install = function_body(hook_c, "int hook_install(hook_t *hook)")
-    require(r"return hotpatch\\(", install, "hook_install must propagate hotpatch status")
+    require(r"return hotpatch\(", install, "hook_install must propagate hotpatch status")
     hook_fn = function_body(hook_c, "hook_err_t hook(void *func, void *replace, void **backup)")
-    require(r"int patch_rc = hook_install\\(hook\\)", hook_fn,
+    require(r"int patch_rc = hook_install\(hook\)", hook_fn,
             "hook() must inspect hook_install result")
     require(r"patch_rc == -EUCLEAN", hook_fn,
             "uncertain rollback must retain trampoline storage")
     unhook_fn = function_body(hook_c, "void unhook(void *func)")
-    require(r"if \\(rc\\).*?return;", unhook_fn,
+    require(r"if \(rc\).*?return;", unhook_fn,
             "unhook must retain trampoline memory when restore fails")
 
     print("[PASS] Y73S allocator dispatch excludes virtual-return fallback")
