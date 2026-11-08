@@ -9,8 +9,11 @@ acc = (root / "kernel/patch/common/accctl.c").read_text()
 hmem = (root / "kernel/base/hmem.c").read_text()
 hook = (root / "kernel/base/hook.c").read_text()
 rcu = (root / "kernel/linux/include/linux/rcupdate.h").read_text()
+start = (root / "kernel/base/start.c").read_text()
 
 checks = {
+    "CFI resolver accepts .cfi implementation": "suffix_is_cfi_jump_table(name + i + 1)" in start and "suffix_contains_cfi" not in start,
+    "CFI resolver rejects .cfi_jt jump-table stub": "suffix[3] == '_' && suffix[4] == 'j' && suffix[5] == 't'" in start,
     "synchronize_rcu wrapper calls synchronize_rcu target": "static inline void synchronize_rcu(void)" in rcu and "kfunc_call(synchronize_rcu);" in rcu,
     "synchronize_rcu wrapper no longer maps to tasks rude barrier": "kfunc_call(rcu_barrier_tasks_rude)" not in rcu[rcu.index("static inline void synchronize_rcu(void)"):rcu.index("static inline unsigned long get_completed_synchronize_rcu")],
     "fp_hook returns hotpatch status": "return hotpatch((void **)addrs, values, 2);" in src,
