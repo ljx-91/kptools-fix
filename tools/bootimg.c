@@ -735,7 +735,10 @@ int extract_kernel(const char *bootimg_path) {
     }
     
     struct boot_img_hdr hdr;
-    fread(&hdr, sizeof(hdr), 1, fp);
+    if (fread(&hdr, sizeof(hdr), 1, fp) != 1) {
+        fclose(fp);
+        return -2;
+    }
 
     if (memcmp(hdr.magic, "ANDROID!", 8) != 0) {
         tools_logi("Error: Invalid boot image magic.\n");
@@ -1324,15 +1327,26 @@ int repack_bootimg(const char *orig_boot_path,
         tools_loge("Cannot open new kernel %s\n", new_kernel_path);
         return -3;
     }
-    fseek(f_new_k, 0, SEEK_END);
+    if (fseek(f_new_k, 0, SEEK_END) != 0) {
+        fclose(f_new_k);
+        return -3;
+    }
     long raw_k_size = ftell(f_new_k);
-    fseek(f_new_k, 0, SEEK_SET);
-    uint8_t *raw_k_buf = malloc(raw_k_size);
+    if (raw_k_size <= 0 || (uint64_t)raw_k_size > 0xffffffffULL ||
+        fseek(f_new_k, 0, SEEK_SET) != 0) {
+        fclose(f_new_k);
+        return -3;
+    }
+    uint8_t *raw_k_buf = malloc((size_t)raw_k_size);
     if (!raw_k_buf) {
         fclose(f_new_k);
         return -3;
     }
-    fread(raw_k_buf, 1, raw_k_size, f_new_k);
+    if (fread(raw_k_buf, 1, (size_t)raw_k_size, f_new_k) != (size_t)raw_k_size) {
+        free(raw_k_buf);
+        fclose(f_new_k);
+        return -3;
+    }
     fclose(f_new_k);
 
     int rc = repack_bootimg_mem(orig_boot_path, raw_k_buf, (uint32_t)raw_k_size, out_boot_path);
@@ -1388,13 +1402,28 @@ int patch_bootimg(const char *bootimg_path, const char *kpimg_path, const char *
 
     tools_logi("Kernel size: %u, Header Version: %u, Offset: %u\n", hdr.kernel_size, hdr.unused[0], kernel_offset);
 
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return -2;
+    }
+    long boot_size = ftell(fp);
+    if (boot_size < 0 || page_size < sizeof(hdr) || (page_size & (page_size - 1)) ||
+        !hdr.kernel_size || kernel_offset > (uint64_t)boot_size ||
+        hdr.kernel_size > (uint64_t)boot_size - kernel_offset) {
+        fclose(fp);
+        return -2;
+    }
     uint8_t *compressed = malloc(hdr.kernel_size);
     if (!compressed) {
         fclose(fp);
         return -3;
     }
-    fseek(fp, kernel_offset, SEEK_SET);
-    fread(compressed, 1, hdr.kernel_size, fp);
+    if (fseek(fp, kernel_offset, SEEK_SET) != 0 ||
+        fread(compressed, 1, hdr.kernel_size, fp) != hdr.kernel_size) {
+        free(compressed);
+        fclose(fp);
+        return -2;
+    }
     fclose(fp);
 
     // decompress the kernel into memory
@@ -1410,6 +1439,10 @@ int patch_bootimg(const char *bootimg_path, const char *kpimg_path, const char *
     // patch the kernel in memory (patch_update_img_buf owns nothing of the input)
     char *patched = NULL;
     int patched_len = 0;
+    if (raw_size > 0x7fffffffU) {
+        free(raw);
+        return -5;
+    }
     rc = patch_update_img_buf((const char *)raw, (int)raw_size, kpimg_path, superkey, root_key,
                               additional, extra_configs, extra_config_num, &patched, &patched_len);
     free(raw);
