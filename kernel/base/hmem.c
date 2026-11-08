@@ -64,13 +64,21 @@ void hook_mem_free(void *hook_mem)
     warp->using = 0;
 }
 
+/* Retired chains may still be referenced by CPUs that entered the old
+ * trampoline before text restoration. Never recycle their storage. */
+void hook_mem_retire(void *hook_mem)
+{
+    hook_mem_warp_t *warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
+    warp->using = 2;
+}
+
 void *hook_get_mem_from_origin(uint64_t origin_addr)
 {
     uint64_t start = mem_region_start;
 
     for (uint64_t addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
         hook_mem_warp_t *wrap = (hook_mem_warp_t *)addr;
-        if (wrap->using && wrap->addr == origin_addr) {
+        if (wrap->using == 1 && wrap->addr == origin_addr) {
             return &wrap->chain;
         }
     }
