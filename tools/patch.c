@@ -445,11 +445,14 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
     while (remaining >= sizeof(patch_extra_item_t)) {
         patch_extra_item_t *item = (patch_extra_item_t *)item_pos;
         if (memcmp(item->magic, EXTRA_HDR_MAGIC, sizeof(item->magic))) return -ENOEXEC;
-        if (item->type == EXTRA_TYPE_NONE) break;
+        if (item->type == EXTRA_TYPE_NONE) {
+            remaining = 0;
+            break;
+        }
         if (item->args_size < 0 || item->con_size < 0 ||
             (size_t)item->args_size > remaining - sizeof(*item) ||
             (size_t)item->con_size > remaining - sizeof(*item) - (size_t)item->args_size ||
-            !memchr(item->name, '\\0', sizeof(item->name)))
+            !memchr(item->name, '\0', sizeof(item->name)))
             return -ENOEXEC;
 
         size_t record_size = sizeof(*item) + (size_t)item->args_size + (size_t)item->con_size;
@@ -463,11 +466,9 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
         item_pos += record_size;
         remaining -= record_size;
     }
-    if (remaining && !memchr(item_pos, 1, remaining)) {
-        /* Zero-filled alignment padding is permitted after the last record. */
-        for (size_t i = 0; i < remaining; i++)
-            if (item_pos[i]) return -ENOEXEC;
-    }
+    /* Only zero-filled alignment padding may remain after the last record. */
+    for (size_t i = 0; i < remaining; i++)
+        if (item_pos[i]) return -ENOEXEC;
 
     return 0;
 }
