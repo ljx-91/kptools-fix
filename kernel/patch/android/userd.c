@@ -337,7 +337,9 @@ static int apk_has_v1_signature(struct file *fp, loff_t cd_start, loff_t cd_end)
         loff_t entry_start = pos;
         loff_t name_pos;
 
-        if (read_le32_bounded(fp, &pos, cd_end, &sig) || sig != 0x02014b50u) {
+        if (entry_start < 0 || entry_start > cd_end ||
+            cd_end - entry_start < 46 ||
+            read_le32_bounded(fp, &pos, cd_end, &sig) || sig != 0x02014b50u) {
             break;
         }
 
@@ -347,7 +349,11 @@ static int apk_has_v1_signature(struct file *fp, loff_t cd_start, loff_t cd_end)
             read_le16_bounded(fp, &pos, cd_end, &comment_len)) {
             break;
         }
-        if (entry_start + 46 + name_len + extra_len + comment_len > cd_end) {
+        loff_t entry_data_start = entry_start + 46;
+        if (entry_data_start > cd_end ||
+            (loff_t)name_len > cd_end - entry_data_start ||
+            (loff_t)extra_len > cd_end - entry_data_start - name_len ||
+            (loff_t)comment_len > cd_end - entry_data_start - name_len - extra_len) {
             break;
         }
 
