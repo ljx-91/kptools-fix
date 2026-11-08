@@ -255,13 +255,37 @@ static char *next_string(char *string, unsigned long *secsize)
 	return string;
 }
 
-/* Update size with this section: return offset. */
-static long get_offset(struct kp_module *mod, unsigned int *size, Elf_Shdr *sechdr,
-		       unsigned int section)
+/* Reserve a section extent without allowing alignment/addition overflow. */
+static int get_offset(unsigned int *size, Elf_Shdr *sechdr, unsigned int *offset)
 {
-	long ret = ALIGN(*size, sechdr->sh_addralign ?: 1);
-	*size = ret + sechdr->sh_size;
-	return ret;
+	unsigned long align = sechdr->sh_addralign ?: 1;
+	unsigned long start;
+
+	if (!size || !sechdr || !offset || align > UINT_MAX ||
+	    (align > 1 && (align & (align - 1))))
+		return -ENOEXEC;
+	if (*size > UINT_MAX - (align - 1))
+		return -EOVERFLOW;
+	start = (*size + align - 1) & ~(align - 1);
+	if (sechdr->sh_size > UINT_MAX - start)
+		return -EOVERFLOW;
+	*offset = start;
+	*size = start + sechdr->sh_size;
+	return 0;
+}
+
+static int kp_align_module_size(unsigned int *size, unsigned int align)
+{
+	unsigned long aligned;
+
+	if (!size || !align || (align & (align - 1)) ||
+	    *size > UINT_MAX - (align - 1))
+		return -EOVERFLOW;
+	aligned = (*size + align - 1) & ~(align - 1);
+	if (aligned > UINT_MAX)
+		return -EOVERFLOW;
+	*size = aligned;
+	return 0;
 }
 
 static char *get_next_modinfo(const struct kp_load_info *info, const char *tag, char *prev)
@@ -316,7 +340,7 @@ static unsigned long get_sh_size(struct kp_load_info *info, const char *secname)
 	return infosec->sh_size;
 }
 
-static void layout_sections(struct kp_module *mod, struct kp_load_info *info)
+static int layout_sections(struct kp_module *mod, struct kp_load_info *info)
 {
 	static unsigned long const masks[][2] = {
 		/* executable code must be first; text_size finder relies on it */
@@ -335,24 +359,29 @@ static void layout_sections(struct kp_module *mod, struct kp_load_info *info)
 			if ((s->sh_flags & masks[m][0]) != masks[m][0] || (s->sh_flags & masks[m][1]) ||
 			    s->sh_entsize != ~0UL)
 				continue;
-			s->sh_entsize = get_offset(mod, &mod->size, s, i);
+			if (get_offset(&mod->size, s, (unsigned int *)&s->sh_entsize))
+				return -EOVERFLOW;
 		}
 		switch (m) {
 		case 0: /* executable */
-			mod->size = ALIGN(mod->size, PAGE_SIZE);
+			if (kp_align_module_size(&mod->size, PAGE_SIZE))
+				return -EOVERFLOW;
 			mod->text_size = mod->size;
 			break;
 		case 1: /* RO: text and ro-data */
-			mod->size = ALIGN(mod->size, PAGE_SIZE);
+			if (kp_align_module_size(&mod->size, PAGE_SIZE))
+				return -EOVERFLOW;
 			mod->ro_size = mod->size;
 			break;
 		case 2:
 			break;
 		case 3: /* whole */
-			mod->size = ALIGN(mod->size, PAGE_SIZE);
+			if (kp_align_module_size(&mod->size, PAGE_SIZE))
+				return -EOVERFLOW;
 			break;
 		}
 	}
+	return 0;
 }
 
 static bool is_core_symbol(const Elf_Sym *src, const Elf_Shdr *sechdrs, unsigned int shnum)
@@ -432,7 +461,7 @@ static int apply_relocations(struct kp_module *mod, const struct kp_load_info *i
 	return rc;
 }
 
-static void layout_symtab(struct kp_module *mod, struct kp_load_info *info)
+static int layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 {
 	Elf_Shdr *symsect = info->sechdrs + info->index.sym;
 	Elf_Shdr *strsect = info->sechdrs + info->index.str;
@@ -441,7 +470,8 @@ static void layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 
 	/* Put symbol section at end of module. */
 	symsect->sh_flags |= SHF_ALLOC;
-	symsect->sh_entsize = get_offset(mod, &mod->size, symsect, info->index.sym);
+	if (get_offset(&mod->size, symsect, (unsigned int *)&symsect->sh_entsize))
+		return -EOVERFLOW;
 
 	src = (void *)info->hdr + symsect->sh_offset;
 	nsrc = symsect->sh_size / sizeof(*src);
@@ -456,13 +486,21 @@ static void layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 	}
 
 	/* Append room for core symbols at end. */
+	if (mod->size > UINT_MAX - (symsect->sh_addralign ?: 1) + 1)
+		return -EOVERFLOW;
 	info->symoffs = ALIGN(mod->size, symsect->sh_addralign ?: 1);
-	info->stroffs = mod->size = info->symoffs + ndst * sizeof(Elf_Sym);
-	mod->size += strtab_size;
+	if (ndst > (UINT_MAX - info->symoffs) / sizeof(Elf_Sym))
+		return -EOVERFLOW;
+	info->stroffs = info->symoffs + ndst * sizeof(Elf_Sym);
+	if (strtab_size > UINT_MAX - info->stroffs)
+		return -EOVERFLOW;
+	mod->size = info->stroffs + strtab_size;
 
 	/* Put string table section at end of module. */
 	strsect->sh_flags |= SHF_ALLOC;
-	strsect->sh_entsize = get_offset(mod, &mod->size, strsect, info->index.str);
+	if (get_offset(&mod->size, strsect, (unsigned int *)&strsect->sh_entsize))
+		return -EOVERFLOW;
+	return 0;
 }
 
 static bool kp_elf_range_valid(unsigned long total, unsigned long offset,
@@ -866,8 +904,10 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		}
 	}
 
-	layout_sections(mod, info);
-	layout_symtab(mod, info);
+	if ((rc = layout_sections(mod, info)) || (rc = layout_symtab(mod, info))) {
+		set_load_error(info, "module section layout overflow");
+		goto free;
+	}
 	logkfe("KPM [%s] layout done size=0x%x\n", info->info.name, mod->size);
 
 	if ((rc = move_module(mod, info))) {
