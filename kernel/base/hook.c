@@ -101,7 +101,7 @@ static int is_page_in_tramp(hook_t *hook, uint64_t page_addr)
 {
     uint64_t tramp_start = hook->origin_addr;
     uint64_t tramp_end = tramp_start + hook->tramp_insts_num * 4;
-    if (tramp_end < tramp_start || page_addr > UINT64_MAX - 0xfffULL) return 1;
+    if (tramp_end < tramp_start || page_addr > (~0ULL) - 0xfffULL) return 1;
     return page_addr < tramp_end && page_addr + 0x1000ULL > tramp_start;
 }
 
