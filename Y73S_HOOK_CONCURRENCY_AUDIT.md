@@ -900,8 +900,10 @@ explicit module states.
   same lock; ordinary list writers are no longer paired with RCU read-side
   traversal in this LKM manager.
 - The callback owner lookup permits nested kallsyms calls from a module already
-  in UNLOADING only while that module remains registered due to active calls;
-  EXITING remains registered for its synchronous exit callback.
+  in UNLOADING only while that module remains registered due to active calls.
+  EXITING remains visible to the CFI range predicate for the synchronous exit
+  path, but the safe kallsyms wrapper refuses to acquire a new callback
+  reference in EXITING and fails closed with -EBUSY.
 
 ### Source/CI evidence
 
