@@ -233,9 +233,9 @@ int read_kstorage(int gid, long did, void *data, int offset, int len, bool data_
     if (data_is_user) {
         int cplen = compat_copy_to_user(data, snapshot, min_len);
         kvfree(snapshot);
-        if (cplen <= 0) {
+        if (cplen != min_len) {
             logkfe("compat_copy_to_user error: %d", cplen);
-            return cplen ? cplen : -EFAULT;
+            return -EFAULT;
         }
     }
     return 0;
@@ -267,7 +267,7 @@ out:
     int rc = 0;
     if (data_is_user) {
         int cplen = compat_copy_to_user(ids, snapshot, cnt * sizeof(long));
-        if (cplen <= 0 && cnt) rc = cplen ? cplen : -EFAULT;
+        if (cnt && cplen != cnt * sizeof(long)) rc = -EFAULT;
     } else if (cnt) {
         memcpy(ids, snapshot, cnt * sizeof(long));
     }
