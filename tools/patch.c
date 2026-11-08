@@ -457,7 +457,8 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
         if (item->args_size < 0 || item->con_size < 0 ||
             (size_t)item->args_size > remaining - sizeof(*item) ||
             (size_t)item->con_size > remaining - sizeof(*item) - (size_t)item->args_size ||
-            !memchr(item->name, '\0', sizeof(item->name)))
+            !memchr(item->name, '\0', sizeof(item->name)) ||
+            !memchr(item->event, '\0', sizeof(item->event)))
             return -ENOEXEC;
 
         size_t record_size = sizeof(*item) + (size_t)item->args_size + (size_t)item->con_size;
@@ -517,7 +518,8 @@ int print_image_patch_info(patched_kimg_t *pimg)
             fprintf(stdout, "event=%s\n", item->event);
             fprintf(stdout, "priority=%d\n", item->priority);
             fprintf(stdout, "args_size=0x%x\n", item->args_size);
-            fprintf(stdout, "args=%s\n", item->args_size > 0 ? (char *)item + sizeof(*item) : "");
+            fprintf(stdout, "args=%.*s\n", item->args_size,
+                    item->args_size > 0 ? (char *)item + sizeof(*item) : "");
             fprintf(stdout, "con_size=0x%x\n", item->con_size);
             fprintf(stdout, "flags=0x%x\n", item->flags);
 
@@ -527,9 +529,9 @@ int print_image_patch_info(patched_kimg_t *pimg)
                 rc = get_kpm_info(kpm, item->con_size, &kpm_info);
                 if (rc) tools_loge_exit("get kpm infomation error: %d\n", rc);
                 fprintf(stdout, "version=%s\n", kpm_info.version);
-                fprintf(stdout, "license=%s\n", kpm_info.license);
-                fprintf(stdout, "author=%s\n", kpm_info.author);
-                fprintf(stdout, "description=%s\n", kpm_info.description);
+                fprintf(stdout, "license=%s\n", kpm_info.license ? kpm_info.license : "");
+                fprintf(stdout, "author=%s\n", kpm_info.author ? kpm_info.author : "");
+                fprintf(stdout, "description=%s\n", kpm_info.description ? kpm_info.description : "");
             }
         }
     }
