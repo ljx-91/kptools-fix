@@ -284,6 +284,13 @@ int fillin_map_symbol(kallsym_t *kallsym, char *img_buf, map_symbol_t *symbol, i
     if (!symbol->memblock_virt_alloc_relo) {
         tools_loge_exit("no verified five-argument memblock virtual allocator\\n");
     }
+    if (symbol->memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_FIND_IN_RANGE) {
+        tools_logi("use memblock_find_in_range + memblock_reserve as map phys allocator\\n");
+    }
+    if (get_symbol_offset_zero(kallsym, img_buf, "memblock_virt_alloc_try_nid_nopanic") ==
+        symbol->memblock_virt_alloc_relo) {
+        tools_logi("use memblock_virt_alloc_try_nid_nopanic for map linear probe\\n");
+    }
 
     if ((is_be() ^ target_is_be)) {
         for (int64_t *pos = (int64_t *)symbol; pos < (int64_t *)((char *)symbol + sizeof(*symbol)); pos++) {
