@@ -1074,12 +1074,35 @@ int repack_bootimg_mem(const char *orig_boot_path,
         }
     }
     tools_logi("Final kernel size after compression (if applied): %u bytes\n", final_k_size);
-    uint32_t old_k_aligned = ALIGN(hdr.kernel_size, page_size);
-    uint32_t rest_data_offset = page_size + old_k_aligned;
-    uint32_t rest_data_size = (total_size > rest_data_offset) ? (total_size - rest_data_offset) : 0;
+    uint64_t old_k_aligned64 = align_ceil((uint64_t)hdr.kernel_size, (uint64_t)page_size);
+    uint64_t rest_data_offset64 = (uint64_t)page_size + old_k_aligned64;
+    if (old_k_aligned64 > 0xffffffffULL || rest_data_offset64 > (uint64_t)total_size ||
+        (uint64_t)total_size - rest_data_offset64 > 0xffffffffULL) {
+        free(extracted_dtb);
+        free(compressed_buf);
+        fclose(f_orig);
+        return -2;
+    }
+    uint32_t old_k_aligned = (uint32_t)old_k_aligned64;
+    uint32_t rest_data_offset = (uint32_t)rest_data_offset64;
+    uint32_t rest_data_size = (uint32_t)((uint64_t)total_size - rest_data_offset64);
+    if (final_k_size > 0xffffffffU - dtb_size) {
+        free(extracted_dtb);
+        free(compressed_buf);
+        fclose(f_orig);
+        return -EFBIG;
+    }
     hdr.kernel_size = final_k_size + dtb_size;
-    uint32_t new_k_total_aligned = ALIGN(hdr.kernel_size, page_size);
-    uint32_t checksum_aligned = ALIGN(fmt_size , page_size);
+    uint64_t new_k_total_aligned64 = align_ceil((uint64_t)hdr.kernel_size, (uint64_t)page_size);
+    uint64_t checksum_aligned64 = align_ceil((uint64_t)fmt_size, (uint64_t)page_size);
+    if (new_k_total_aligned64 > 0xffffffffULL || checksum_aligned64 > 0xffffffffULL) {
+        free(extracted_dtb);
+        free(compressed_buf);
+        fclose(f_orig);
+        return -EFBIG;
+    }
+    uint32_t new_k_total_aligned = (uint32_t)new_k_total_aligned64;
+    uint32_t checksum_aligned = (uint32_t)checksum_aligned64;
     uint8_t *rest_buf_tmp = NULL;
     uint8_t *rest_buf = NULL;
     uint32_t rest_buf_offset  = 0;
@@ -1128,7 +1151,9 @@ int repack_bootimg_mem(const char *orig_boot_path,
 
     // The tail is written verbatim, so the output keeps the original image size
     // unless a bigger kernel pushes it past the old end of the image.
-    if (rest_buf && page_size + (long)new_k_total_aligned + rest_data_size > total_size) {
+    uint64_t new_image_extent = (uint64_t)page_size + new_k_total_aligned64 + rest_data_size;
+    if (new_image_extent > 0x7fffffffffffffffULL ||
+        (rest_buf && new_image_extent > (uint64_t)total_size)) {
         total_size = ALIGN(page_size + (long)new_k_total_aligned + rest_data_size, (long)page_size);
         tools_logi("Tail no longer fits, growing image to %ld bytes\n", total_size);
     }
