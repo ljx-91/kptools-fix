@@ -66,9 +66,12 @@ struct task_ext *kf_get_task_ext(const struct task_struct *task)
     pid_t pid = __task_pid_nr_ns((struct task_struct *)task, PIDTYPE_PID, 0);
     for (int i = 0; i < TASK_EXT_SLOT_NUM; i++) {
         struct task_struct *slot_task = READ_ONCE(task_ext_slots[i].task);
+        if (slot_task != task) continue;
+        /* Pair the publisher's pre-key barrier with an ordered read of the
+         * extension identity after observing the published task pointer. */
+        dsb(ish);
         pid_t slot_pid = READ_ONCE(task_ext_slots[i].ext.pid);
-        if (slot_task == task && slot_pid == pid)
-            return &task_ext_slots[i].ext;
+        if (slot_pid == pid) return &task_ext_slots[i].ext;
     }
     return &task_ext_invalid;
 }
