@@ -367,22 +367,28 @@ static int slow_avc_audit_replace(struct selinux_state *_state, void *_ssid, voi
 
 int bypass_selinux()
 {
+    hook_err_t primary_rc = HOOK_BAD_ADDRESS;
     unsigned long avc_denied_addr = patch_config->avc_denied;
     if (avc_denied_addr) {
-        hook_err_t err = hook((void *)avc_denied_addr, (void *)avc_denied_replace, (void **)&avc_denied_backup);
-        if (err != HOOK_NO_ERR) {
-            log_boot("hook avc_denied_addr: %llx, error: %d\n", avc_denied_addr, err);
+        primary_rc = hook((void *)avc_denied_addr, (void *)avc_denied_replace, (void **)&avc_denied_backup);
+        if (primary_rc == HOOK_NO_ERR) {
+            log_boot("hook avc_denied: %llx installed\\n", avc_denied_addr);
+            return 0;
         }
+        log_boot("hook avc_denied: %llx, error: %d\\n", avc_denied_addr, primary_rc);
     }
 
     unsigned long slow_avc_audit_addr = patch_config->slow_avc_audit;
     if (slow_avc_audit_addr) {
-        hook_err_t err =
+        hook_err_t fallback_rc =
             hook((void *)slow_avc_audit_addr, (void *)slow_avc_audit_replace, (void **)&slow_avc_audit_backup);
-        if (err != HOOK_NO_ERR) {
-            log_boot("hook slow_avc_audit: %llx, error: %d\n", slow_avc_audit_addr, err);
+        if (fallback_rc == HOOK_NO_ERR) {
+            log_boot("hook slow_avc_audit: %llx installed\\n", slow_avc_audit_addr);
+            return 0;
         }
+        log_boot("hook slow_avc_audit: %llx, error: %d\\n", slow_avc_audit_addr, fallback_rc);
+        return fallback_rc;
     }
 
-    return 0;
+    return primary_rc;
 }
