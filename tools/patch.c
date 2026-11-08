@@ -305,16 +305,20 @@ void print_preset_info(preset_t *preset)
     if (ver_num <= 0xa04) {
         addition -= (ROOT_SUPER_KEY_HASH_LEN + SETUP_PRESERVE_LEN);
     }
+    size_t remaining = ADDITIONAL_LEN;
     char *pos = addition;
-    while (pos < addition + ADDITIONAL_LEN) {
-        int len = *pos;
+    while (remaining) {
+        unsigned int len = (unsigned char)*pos;
         if (!len) break;
+        if (len > remaining - 1) {
+            tools_logw("invalid preset additional entry length, stopping display\\n");
+            break;
+        }
         pos++;
-        char backup = *(pos + len);
-        *(pos + len) = 0;
-        fprintf(stdout, "%s\n", pos);
-        *(pos + len) = backup;
+        remaining--;
+        fprintf(stdout, "%.*s\\n", (int)len, pos);
         pos += len;
+        remaining -= len;
     }
 }
 
@@ -367,6 +371,8 @@ static void restore_header_image_size(char *kimg, int kimg_len, const preset_t *
 
 int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
 {
+    if (!kimg || !pimg || kimg_len <= 0) return -EINVAL;
+    memset(pimg, 0, sizeof(*pimg));
     pimg->kimg = kimg;
     pimg->kimg_len = kimg_len;
 
@@ -418,32 +424,49 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
 
     memcpy((char *)kimg, preset_header_backup(old_preset), HDR_BACKUP_SIZE);
 
-    // extra
-    int extra_offset = align_kimg_len + old_preset->setup.kpimg_size;
-    if (extra_offset > kimg_len) tools_loge_exit("kpimg length mismatch\n");
-    if (extra_offset == kimg_len) return 0;
+    // extra: decode the stored 64-bit sizes and validate each record before access.
+    int64_t kpimg_size = old_preset->setup.kpimg_size;
+    int64_t extra_size = old_preset->setup.extra_size;
+    if (is_be() ^ kinfo->is_be) {
+        kpimg_size = i64swp(kpimg_size);
+        extra_size = i64swp(extra_size);
+    }
+    if (kpimg_size < 0 || align_kimg_len < 0 ||
+        (uint64_t)kpimg_size > (uint64_t)kimg_len - (uint64_t)align_kimg_len)
+        return -ENOEXEC;
+    size_t extra_offset = (size_t)align_kimg_len + (size_t)kpimg_size;
+    if (extra_offset > (size_t)kimg_len || extra_size < 0 ||
+        (uint64_t)extra_size > (uint64_t)kimg_len - extra_offset)
+        return -ENOEXEC;
+    if (extra_offset == (size_t)kimg_len || !extra_size) return 0;
 
-    int32_t extra_size = old_preset->setup.extra_size;
-    if (is_be() ^ kinfo->is_be) extra_size = i32swp(extra_size);
     const char *item_pos = kimg + extra_offset;
-
-    while (item_pos < kimg + extra_offset + extra_size) {
+    size_t remaining = (size_t)extra_size;
+    while (remaining >= sizeof(patch_extra_item_t)) {
         patch_extra_item_t *item = (patch_extra_item_t *)item_pos;
-        if (strcmp(EXTRA_HDR_MAGIC, item->magic)) break;
+        if (memcmp(item->magic, EXTRA_HDR_MAGIC, sizeof(item->magic))) return -ENOEXEC;
         if (item->type == EXTRA_TYPE_NONE) break;
+        if (item->args_size < 0 || item->con_size < 0 ||
+            (size_t)item->args_size > remaining - sizeof(*item) ||
+            (size_t)item->con_size > remaining - sizeof(*item) - (size_t)item->args_size ||
+            !memchr(item->name, '\\0', sizeof(item->name)))
+            return -ENOEXEC;
+
+        size_t record_size = sizeof(*item) + (size_t)item->args_size + (size_t)item->con_size;
         sanitize_legacy_extra_item(item);
         if (is_legacy_kconfig_extra(item)) {
-            tools_logw("skip legacy embedded kconfig extra item during upgrade compatibility scan\n");
-            item_pos += sizeof(patch_extra_item_t);
-            item_pos += item->args_size;
-            item_pos += item->con_size;
-            continue;
+            tools_logw("skip legacy embedded kconfig extra item during upgrade compatibility scan\\n");
+        } else {
+            if (pimg->embed_item_num >= EXTRA_ITEM_MAX_NUM) return -E2BIG;
+            pimg->embed_item[pimg->embed_item_num++] = item;
         }
-        if (pimg->embed_item_num >= EXTRA_ITEM_MAX_NUM) tools_loge_exit("too many embedded extra items\n");
-        pimg->embed_item[pimg->embed_item_num++] = item;
-        item_pos += sizeof(patch_extra_item_t);
-        item_pos += item->args_size;
-        item_pos += item->con_size;
+        item_pos += record_size;
+        remaining -= record_size;
+    }
+    if (remaining && !memchr(item_pos, 1, remaining)) {
+        /* Zero-filled alignment padding is permitted after the last record. */
+        for (size_t i = 0; i < remaining; i++)
+            if (item_pos[i]) return -ENOEXEC;
     }
 
     return 0;
