@@ -143,6 +143,12 @@ def main():
     if "rcu_read_lock" in module:
         raise AssertionError("LKM module registry must not mix plain list writers with RCU readers")
 
+    owner_lookup = body(module, "static struct kp_module *kp_module_get_by_addr(")
+    for token in ("KP_MODULE_LOADING", "KP_MODULE_LIVE", "KP_MODULE_UNLOADING"):
+        need(re.escape(token), owner_lookup, f"kallsyms owner lookup must allow {token}")
+    if "KP_MODULE_EXITING" in owner_lookup:
+        raise AssertionError("new callback pins must be rejected during EXITING")
+
     safe_iter = body(module, "int kp_kpm_safe_kallsyms_on_each_symbol(")
     need(r"kp_module_get_by_addr", safe_iter, "kallsyms callback owner acquisition")
     need(r"kp_module_put\(owner\)", safe_iter, "kallsyms callback owner release")
