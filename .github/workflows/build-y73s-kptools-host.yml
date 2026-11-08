@@ -25,7 +25,6 @@ jobs:
           set -eux
           test -s tools/preset.h
           test -s version
-          make -C tools clean
           make -C tools -j"$(nproc)"
           test -s tools/kptools
           tools/kptools --version
