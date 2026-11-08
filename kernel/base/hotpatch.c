@@ -18,6 +18,13 @@ static uintptr_t table_pa_mask = 0;
 static void *alias_page = 0;
 static uintptr_t *alias_entry = 0;
 static uintptr_t alias_pte = 0;
+static bool hotpatch_early_boot = false;
+
+void hotpatch_set_early_boot(int enabled)
+{
+    hotpatch_early_boot = enabled != 0;
+}
+KP_EXPORT_SYMBOL(hotpatch_set_early_boot);
 
 int kfunc_def(aarch64_insn_patch_text_nosync)(void *addr, uint32_t insn) = 0;
 int kfunc_def(aarch64_insn_patch_text)(void *addrs[], uint32_t insns[], int cnt) = 0;
@@ -166,7 +173,8 @@ int hotpatch(void *addrs[], uint32_t values[], int cnt)
      * old callback's num_online_cpus() dereferenced unresolved mask state.
      * A NULL cpumask asks stop_machine() to coordinate all online CPUs.
      */
-    if (!kfunc(stop_machine) || is_interrupt_masked()) return -EOPNOTSUPP;
+    if (!kfunc(stop_machine) || (is_interrupt_masked() && !hotpatch_early_boot))
+        return -EOPNOTSUPP;
     return stop_machine(hotpatch_cb, &patch, NULL);
 }
 KP_EXPORT_SYMBOL(hotpatch);
