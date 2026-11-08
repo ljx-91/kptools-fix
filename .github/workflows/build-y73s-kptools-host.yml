@@ -1,0 +1,44 @@
+name: Build Linux kptools for Y73S offline audit
+
+on:
+  push:
+    branches:
+      - y73s-dcache-coherency-20261108
+
+permissions:
+  contents: read
+
+jobs:
+  build-kptools:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential zlib1g-dev
+      - name: Build host kptools
+        run: |
+          set -eux
+          test -s tools/preset.h
+          test -s version
+          make -C tools clean
+          make -C tools -j"$(nproc)"
+          test -s tools/kptools
+          tools/kptools --version
+      - name: Package
+        run: |
+          set -eux
+          mkdir -p artifacts
+          cp tools/kptools artifacts/kptools-linux-x86_64
+          sha256sum artifacts/kptools-linux-x86_64 > artifacts/SHA256SUMS
+          file artifacts/kptools-linux-x86_64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: y73s-kptools-linux-x86_64
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 7
