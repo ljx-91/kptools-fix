@@ -35,6 +35,7 @@ jobs:
           test -s tools/kptools
           tools/kptools --version
           python3 scripts/verify_kpm_loader_contract.py
+          python3 scripts/verify_bootimg_io_contract.py
       - name: Package
         run: |
           set -eux
