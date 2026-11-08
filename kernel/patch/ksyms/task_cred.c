@@ -707,6 +707,14 @@ int resolve_current()
         log_boot("    task_in_thread_info_offset: %x\n", task_in_thread_info_offset);
     }
 
+    /* All later layout scans dereference init_task. If neither SP_EL0 nor
+     * thread_info yielded a verified task pointer, stop instead of scanning
+     * from address zero or accepting an unverified fallback. */
+    if (!init_task || !is_kimg_range((uintptr_t)init_task)) {
+        log_boot("    unable to resolve a valid init_task pointer\\n");
+        return -EINVAL;
+    }
+
     if (task_struct_offset.comm_offset <= 0) {
         task_struct_offset.comm_offset = find_swapper_comm_offset((uint64_t)init_task, TASK_STRUCT_MAX_SIZE);
         log_boot("    comm_offset of task: %x\n", task_struct_offset.comm_offset);
