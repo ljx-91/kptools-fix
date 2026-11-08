@@ -801,10 +801,9 @@ static spinlock_t module_lock;
 static struct kp_module *kp_loading_mod;
 
 /* One PAGE_SIZE module_alloc'd RWX page. The safe kallsyms_on_each_symbol()
- * stand-in bounces KPM callbacks through an 8-byte bti-c trampoline at
- * page+8 so the kernel's BLR lands on a guarded landing pad instead of the
- * bare-metal (non-BTI) KPM code. Bytes page+0..+7 are kept zeroed so the
- * KCFI inline check's [target-4] read stays inside the mapped page. */
+ * stand-in assigns a distinct 16-byte slot to each active KPM callback:
+ * two zero words satisfy the KCFI [target-4] read, followed by bti c and a
+ * direct branch into the bare-metal (non-BTI) KPM callback. */
 static void *kp_callback_tramp;
 static unsigned long kp_callback_tramp_size;
 #define KP_CALLBACK_TRAMP_SLOT_SIZE 16
