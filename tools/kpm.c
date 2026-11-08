@@ -18,7 +18,7 @@ static bool elf_range_valid(uint64_t offset, uint64_t size, uint64_t total)
 
 static bool elf_string_valid(const char *table, uint64_t table_size, uint32_t offset)
 {
-    return offset < table_size && memchr(table + offset, '\\0', table_size - offset) != NULL;
+    return offset < table_size && memchr(table + offset, '\0', table_size - offset) != NULL;
 }
 
 static char *get_next_modinfo(const struct load_info *info, const char *tag, char *prev)
@@ -32,7 +32,7 @@ static char *get_next_modinfo(const struct load_info *info, const char *tag, cha
         if (prev < cursor || (uint64_t)(prev - cursor) >= remaining) return NULL;
         remaining -= (uint64_t)(prev - cursor);
         cursor = prev;
-        char *end = memchr(cursor, '\\0', remaining);
+        char *end = memchr(cursor, '\0', remaining);
         if (!end) return NULL;
         uint64_t consumed = (uint64_t)(end - cursor) + 1;
         cursor = end + 1;
@@ -45,7 +45,7 @@ static char *get_next_modinfo(const struct load_info *info, const char *tag, cha
             remaining--;
         }
         if (!remaining) break;
-        char *end = memchr(cursor, '\\0', remaining);
+        char *end = memchr(cursor, '\0', remaining);
         if (!end) return NULL;
         size_t entry_len = (size_t)(end - cursor);
         if (entry_len > taglen && !memcmp(cursor, tag, taglen) && cursor[taglen] == '=')
