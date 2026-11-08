@@ -9,8 +9,6 @@
 #include <ksyms.h>
 #include <symbol.h>
 #include <pgtable.h>
-#include <asm/atomic.h>
-#include <linux/cpumask.h>
 #include <linux/vmalloc.h>
 #include <linux/stop_machine.h>
 #include <uapi/asm-generic/errno.h>
