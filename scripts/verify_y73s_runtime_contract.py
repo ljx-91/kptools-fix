@@ -136,6 +136,22 @@ def main():
     require(r"if \(rc\).*?return;", unhook_fn,
             "unhook must retain trampoline memory when restore fails")
 
+    # Worst case: six instruction slots * eight emitted words, plus jump-back.
+    hook_h = source("kernel/include/hook.h")
+    require(r"#define RELOCATE_INST_NUM \\(TRAMPOLINE_MAX_NUM \\* 8 \\+ 4\\)", hook_h,
+            "relocation buffer is smaller than the conservative worst-case bound")
+    branch_range = function_body(hook_c, "static uint32_t can_b_rel(")
+    require(r"src_addr \\& 0x3", branch_range,
+            "relative branch source must be instruction-aligned")
+    require(r"dst_addr \\& 0x3", branch_range,
+            "relative branch target must be instruction-aligned")
+    require(r"0x07fffffcULL", branch_range,
+            "positive A64 B range must exclude +128 MiB")
+    require(r"-0x08000000LL", branch_range,
+            "negative A64 B range must include -128 MiB")
+    if "B_REL_RANGE" in branch_range:
+        raise AssertionError("symmetric A64 branch range check reintroduced")
+
     print("[PASS] Y73S allocator dispatch excludes virtual-return fallback")
     print("[PASS] physical ranges are reserved before use")
     print("[PASS] linear-map probe ordering and reservation checks")
@@ -143,6 +159,7 @@ def main():
     print("[PASS] hotpatch avoids unresolved CPU-mask symbols and fails closed")
     print("[PASS] early-boot stop_machine window is explicitly scoped")
     print("[PASS] hook install/uninstall propagate patch failures safely")
+    print("[PASS] relocation buffer bound and A64 branch range/alignment")
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
 
