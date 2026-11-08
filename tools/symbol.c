@@ -238,14 +238,24 @@ void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *m
 int fillin_map_symbol(kallsym_t *kallsym, char *img_buf, map_symbol_t *symbol, int32_t target_is_be)
 {
     memset(symbol, 0, sizeof(*symbol));
-    symbol->memblock_reserve_relo = try_get_symbol_offset_zero(kallsym, img_buf, "memblock_reserve");
-    if (!symbol->memblock_reserve_relo) {
-        symbol->memblock_reserve_relo = get_symbol_offset_exit(kallsym, img_buf, "__memblock_reserve");
-    }
-    
-    symbol->memblock_free_relo = get_symbol_offset_exit(kallsym, img_buf, "memblock_free");
-
+    /*
+     * These three interfaces are required by the Y73S relocation path and
+     * have verified two-argument ABIs. Do not substitute an internal
+     * __memblock_reserve helper whose prototype may differ across kernels.
+     */
+    symbol->memblock_reserve_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_reserve");
+    symbol->memblock_free_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_free");
     symbol->memblock_mark_nomap_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_mark_nomap");
+
+    if (!symbol->memblock_reserve_relo) {
+        tools_loge_exit("no verified two-argument memblock_reserve symbol\\n");
+    }
+    if (!symbol->memblock_free_relo) {
+        tools_loge_exit("no verified two-argument memblock_free symbol\\n");
+    }
+    if (!symbol->memblock_mark_nomap_relo) {
+        tools_loge_exit("no verified two-argument memblock_mark_nomap symbol\\n");
+    }
 
     /*
      * Prefer the range finder when available. Unlike memblock_alloc_try_nid,
