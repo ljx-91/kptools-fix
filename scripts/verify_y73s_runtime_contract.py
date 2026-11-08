@@ -299,6 +299,8 @@ def main():
     write_store = function_body(kstorage_c, "int write_kstorage(")
     require(r"offset\s*<\s*0.*?len\s*<\s*0", write_store,
             "kstorage writes must reject negative offsets and lengths")
+    before(write_store, "kp_private_spin_lock(lock)", "hlist_for_each_entry_rcu",
+           "kstorage update lookup must be serialized with remove/replace writers")
     read_store = function_body(kstorage_c, "int read_kstorage(")
     require(r"offset\s*<\s*0.*?len\s*<\s*0", read_store,
             "kstorage reads must reject negative offsets and lengths")
