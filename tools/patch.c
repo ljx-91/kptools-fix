@@ -735,7 +735,10 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
 
     // kimg base info
     kernel_info_t *kinfo = &pimg.kinfo;
-    int align_kernel_size = align_ceil(kinfo->kernel_size, SZ_4K);
+    if (!kinfo->kernel_size || kinfo->kernel_size > 0x7fffffffULL) return -EFBIG;
+    uint64_t align_kernel_size64 = align_ceil(kinfo->kernel_size, SZ_4K);
+    if (align_kernel_size64 > 0x7fffffffULL) return -EFBIG;
+    int align_kernel_size = (int)align_kernel_size64;
 
     // kimg kallsym
     if (pimg.ori_kimg_len <= 0 || pimg.ori_kimg_len > pimg.kimg_len) return -ENOEXEC;
@@ -782,8 +785,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     }
 
     // extra
-    int extra_size = 0;
-    int extra_num = 0;
+    uint64_t extra_size64 = sizeof(patch_extra_item_t); // terminating empty item
 
     for (int i = 0; i < extra_config_num; i++) {
         extra_config_t *config = extra_configs + i;
@@ -872,27 +874,37 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
 
     qsort(extra_configs, extra_config_num, sizeof(extra_config_t), extra_compare);
 
-    extra_size += sizeof(patch_extra_item_t); // ending with empty item
-
     for (int i = 0; i < extra_config_num; i++) {
         extra_config_t *config = extra_configs + i;
-        extra_num++;
-        extra_size += sizeof(patch_extra_item_t);
-        extra_size += config->item->args_size;
-        extra_size += config->item->con_size;
+        if (!config->item || config->item->args_size < 0 || config->item->con_size < 0 ||
+            (config->item->con_size && !config->data)) tools_loge_exit("invalid extra item sizes/data\\n");
+        extra_size64 += sizeof(patch_extra_item_t);
+        extra_size64 += (uint64_t)config->item->args_size;
+        extra_size64 += (uint64_t)config->item->con_size;
+        if (extra_size64 > 0x7fffffffULL) tools_loge_exit("extra payload is too large\\n");
     }
 
-    // copy to out image
+    // copy to out image; all offsets stay within the signed-size API contract.
+    int extra_size = (int)extra_size64;
     int ori_kimg_len = pimg.ori_kimg_len;
-    int align_kimg_len = align_ceil(ori_kimg_len, SZ_4K);
-    int out_img_len = align_kimg_len + kpimg_len;
-    int out_all_len = out_img_len + extra_size;
+    if (ori_kimg_len <= 0 || ori_kimg_len > kimg_len) return -ENOEXEC;
+    uint64_t align_kimg_len64 = align_ceil((uint64_t)ori_kimg_len, SZ_4K);
+    if (align_kimg_len64 > 0x7fffffffULL) return -EFBIG;
+    int align_kimg_len = (int)align_kimg_len64;
+    uint64_t out_img_len64 = align_kimg_len64 + (uint64_t)kpimg_len;
+    uint64_t out_all_len64 = out_img_len64 + extra_size64;
+    if (out_img_len64 > 0x7fffffffULL || out_all_len64 > 0x7fffffffULL) return -EFBIG;
+    int out_img_len = (int)out_img_len64;
+    int out_all_len = (int)out_all_len64;
 
-    int start_offset = align_kernel_size;
-    if (out_all_len > start_offset) {
-        start_offset = align_ceil(out_all_len, SZ_4K);
-        tools_logi("patch overlap, move start from 0x%x to 0x%x\n", align_kernel_size, start_offset);
+    uint64_t start_offset64 = align_kernel_size64;
+    if (out_all_len64 > start_offset64) {
+        start_offset64 = align_ceil(out_all_len64, SZ_4K);
+        if (start_offset64 > 0x7fffffffULL) return -EFBIG;
+        tools_logi("patch overlap, move start from 0x%x to 0x%llx\\n",
+                   align_kernel_size, (unsigned long long)start_offset64);
     }
+    int start_offset = (int)start_offset64;
     tools_logi("layout kimg: 0x0,0x%x, kpimg: 0x%x,0x%x, extra: 0x%x,0x%x, end: 0x%x, start: 0x%x\n", ori_kimg_len,
                align_kimg_len, kpimg_len, out_img_len, extra_size, out_all_len, start_offset);
 
@@ -907,8 +919,10 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     // image_size bytes free, so a bootloader may put the DTB or initramfs exactly
     // there and the copy would overwrite it. Declare the copy as part of the image.
     // kpimg_len covers the start image, which is kpimg minus its setup prefix.
-    int image_size = align_ceil(start_offset + kpimg_len + extra_size, SZ_4K);
-    tools_logi("image_size: 0x%x -> 0x%x\n", kinfo->kernel_size, image_size);
+    uint64_t image_size64 = align_ceil((uint64_t)start_offset + (uint64_t)kpimg_len + extra_size64, SZ_4K);
+    if (image_size64 > 0x7fffffffULL) return -EFBIG;
+    int image_size = (int)image_size64;
+    tools_logi("image_size: 0x%llx -> 0x%x\\n", (unsigned long long)kinfo->kernel_size, image_size);
     kernel_resize(kinfo, out_kernel_file.kimg, image_size);
 
     // set preset
