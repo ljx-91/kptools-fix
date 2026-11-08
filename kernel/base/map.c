@@ -243,6 +243,7 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
     return pxd_entry_va;
 }
 
+#ifndef KP_TARGET_Y73S
 // todo: bti
 // 6.15+ keeps kernel text read-only and creates the linear map inside
 // paging_init(), so while the hook runs there is no usable linear map and
@@ -500,6 +501,8 @@ static uint64_t install_kp_linear(map_data_t *data, scratch_t *sc)
     return 0;
 }
 
+#endif // KP_TARGET_Y73S
+
 void __noinline _paging_init()
 {
 	map_data_t buf;
@@ -533,6 +536,10 @@ void __noinline _paging_init()
 
     // paging_init
     uint64_t paging_init_va = data->paging_init_relo;
+#ifdef KP_TARGET_Y73S
+    // Y73S runs Linux 4.14 and uses the legacy paging_init path.
+    *(uint32_t *)(paging_init_va) = data->paging_init_backup;
+#else
     scratch_t sc;
     // The scratch/scan/identity-window paths are needed on 6.x kernels only:
     // 6.15+ builds the linear map inside paging_init() (so there is no usable
@@ -563,10 +570,12 @@ void __noinline _paging_init()
     } else {
         *(uint32_t *)(paging_init_va) = data->paging_init_backup;
     }
+#endif // KP_TARGET_Y73S
     flush_icache_all();
     ((paging_init_f)(paging_init_va))();
     // can't write data below
 
+#ifndef KP_TARGET_Y73S
     if (have_scratch) {
         // re-prep on the post-paging_init tables (TTBR1 may have changed)
         have_scratch = scratch_prep(data, &sc) == 0;
@@ -583,6 +592,7 @@ void __noinline _paging_init()
         }
         if (lv) data->linear_voffset = lv;
     }
+#endif // KP_TARGET_Y73S
     // can't write data below
 
     // AttrIndx[2:0] encoding
