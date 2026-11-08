@@ -68,7 +68,7 @@ jobs:
           cp ../tools/preset.h ../dist-y73s/preset.h
           cp ../user/version ../dist-y73s/version
           cd ..
-          sha256sum dist-y73s/* > dist-y73s/SHA256SUMS.txt
+          (cd dist-y73s && sha256sum kpimg-android kpimg-android.elf preset.h version > SHA256SUMS.txt)
 
       - uses: actions/upload-artifact@v4
         with:
