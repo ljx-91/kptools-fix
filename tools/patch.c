@@ -313,12 +313,12 @@ void print_preset_info(preset_t *preset)
         unsigned int len = (unsigned char)*pos;
         if (!len) break;
         if (len > remaining - 1) {
-            tools_logw("invalid preset additional entry length, stopping display\\n");
+            tools_logw("invalid preset additional entry length, stopping display\n");
             break;
         }
         pos++;
         remaining--;
-        fprintf(stdout, "%.*s\\n", (int)len, pos);
+        fprintf(stdout, "%.*s\n", (int)len, pos);
         pos += len;
         remaining -= len;
     }
@@ -470,7 +470,7 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
         size_t record_size = sizeof(*item) + (size_t)item->args_size + (size_t)item->con_size;
         sanitize_legacy_extra_item(item);
         if (is_legacy_kconfig_extra(item)) {
-            tools_logw("skip legacy embedded kconfig extra item during upgrade compatibility scan\\n");
+            tools_logw("skip legacy embedded kconfig extra item during upgrade compatibility scan\n");
         } else {
             if (pimg->embed_item_num >= EXTRA_ITEM_MAX_NUM) return -E2BIG;
             pimg->embed_item[pimg->embed_item_num++] = item;
