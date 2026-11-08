@@ -257,25 +257,26 @@ int fillin_map_symbol(kallsym_t *kallsym, char *img_buf, map_symbol_t *symbol, i
         symbol->memblock_virt_alloc_type = MAP_SYM_MEMBLOCK_VIRT_ALLOC_TRY_NID;
     }
 
+    /*
+     * Do not substitute memblock_alloc_try_nid for either allocator.
+     * On the audited Y73S 4.14.141 kernel this symbol has a 3-argument
+     * entry but returns a kernel virtual pointer, not a physical address.
+     * Its ABI also does not match the 5-argument virtual allocator call.
+     * Treat missing typed allocators as unsupported instead of emitting a
+     * KPIMG with a semantically invalid function pointer.
+     */
     uint64_t memblock_alloc_try_nid = get_symbol_offset_zero(kallsym, img_buf, "memblock_alloc_try_nid");
-    if (!symbol->memblock_phys_alloc_relo && memblock_alloc_try_nid) {
-        symbol->memblock_phys_alloc_relo = memblock_alloc_try_nid;
-        symbol->memblock_phys_alloc_type = MAP_SYM_MEMBLOCK_ALLOC_TRY_NID;
-    }
-    if (!symbol->memblock_virt_alloc_relo && memblock_alloc_try_nid) {
-        symbol->memblock_virt_alloc_relo = memblock_alloc_try_nid;
-        symbol->memblock_virt_alloc_type = MAP_SYM_MEMBLOCK_VIRT_ALLOC_FROM_ALLOC_TRY_NID;
-    }
-
     if (!symbol->memblock_phys_alloc_relo) {
-        tools_loge_exit("no symbol memblock_phys_alloc_try_nid or memblock_alloc_try_nid\n");
+        if (memblock_alloc_try_nid) {
+            tools_loge_exit("unsafe: memblock_alloc_try_nid is not a physical allocator; refusing map patch\n");
+        }
+        tools_loge_exit("no verified physical allocator: memblock_phys_alloc_try_nid\n");
     }
     if (!symbol->memblock_virt_alloc_relo) {
-        tools_loge_exit("no symbol memblock_virt_alloc_try_nid or memblock_alloc_try_nid\n");
-    }
-
-    if (symbol->memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_ALLOC_TRY_NID) {
-        tools_logi("use memblock_alloc_try_nid as map phys alloc\n");
+        if (memblock_alloc_try_nid) {
+            tools_loge_exit("unsafe: memblock_alloc_try_nid does not match the 5-argument virtual allocator ABI\n");
+        }
+        tools_loge_exit("no verified 5-argument virtual allocator: memblock_virt_alloc_try_nid\n");
     }
 
     if ((is_be() ^ target_is_be)) {
