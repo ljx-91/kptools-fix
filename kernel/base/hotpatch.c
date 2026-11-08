@@ -90,29 +90,51 @@ int hotpatch_nosync(void *addr, uint32_t value)
 }
 KP_EXPORT_SYMBOL(hotpatch_nosync);
 
+#define HOTPATCH_MAX_INSN 64
+
 struct hotpatch_t
 {
     void **addrs;
     u32 *values;
     int cnt;
-    atomic_t index;
+    u32 original[HOTPATCH_MAX_INSN];
 };
 
 static int hotpatch_cb(void *arg)
 {
-    int i, ret = 0;
     struct hotpatch_t *pp = arg;
-    int index = atomic_inc_return(&pp->index);
-    if (!index || index == num_online_cpus()) {
-        for (i = 0; ret == 0 && i < pp->cnt; ++i)
-            ret = hotpatch_nosync(pp->addrs[i], pp->values[i]);
+    int ret = 0;
+    int applied = 0;
 
-        atomic_inc(&pp->index);
-    } else {
-        while (atomic_read(&pp->index) <= num_online_cpus())
-            asm volatile("yield" ::: "memory");
+    if (!pp || !pp->addrs || !pp->values || pp->cnt <= 0 ||
+        pp->cnt > HOTPATCH_MAX_INSN) return -EINVAL;
 
-        isb();
+    /*
+     * Preflight every target before changing any instruction. stop_machine()
+     * keeps the page-table view stable while this callback runs.
+     */
+    for (int i = 0; i < pp->cnt; ++i) {
+        uintptr_t addr = (uintptr_t)pp->addrs[i];
+        if ((addr & 0x3) || !pgtable_entry_kernel(addr)) return -EFAULT;
+        pp->original[i] = *(volatile u32 *)addr;
+    }
+
+    for (int i = 0; i < pp->cnt; ++i) {
+        ret = hotpatch_nosync(pp->addrs[i], pp->values[i]);
+        if (ret) break;
+        applied++;
+    }
+
+    if (!ret) return 0;
+
+    /*
+     * Roll back the prefix in reverse order. If rollback itself fails,
+     * report -EUCLEAN so the hook owner retains trampoline storage.
+     */
+    while (applied > 0) {
+        --applied;
+        if (hotpatch_nosync(pp->addrs[applied], pp->original[applied]))
+            return -EUCLEAN;
     }
     return ret;
 }
@@ -121,7 +143,6 @@ static inline int is_interrupt_masked()
 {
     unsigned long daif;
     asm volatile("mrs %0, daif" : "=r"(daif));
-    // https://developer.arm.com/documentation/ddi0601/latest/AArch64-Registers/DAIF--Interrupt-Mask-Bits
     return daif & 0xC0;
 }
 
@@ -131,27 +152,24 @@ int hotpatch(void *addrs[], uint32_t values[], int cnt)
         .addrs = addrs,
         .values = values,
         .cnt = cnt,
-        .index = ATOMIC_INIT(0),
     };
-    if (cnt <= 0) return -EINVAL;
+
+    if (!addrs || !values || cnt <= 0 || cnt > HOTPATCH_MAX_INSN) return -EINVAL;
+
     if (kver < VERSION(4, 6, 0)) {
-        /* Legacy: use the kernel's own aarch64_insn_patch_text() when available —
-         * this is the path fp_hook/hook_install used before the hotpatch
-         * migration and the one that boots 4.x.  fall back to a direct write
-         * only if it cannot be resolved. */
-        if (kfunc(aarch64_insn_patch_text)) return kfunc(aarch64_insn_patch_text)(addrs, values, cnt);
-        for (int i = 0; i < cnt; ++i) {
-            int rc = hotpatch_nosync(addrs[i], values[i]);
-            if (rc) return rc;
-        }
-        return 0;
+        if (kfunc(aarch64_insn_patch_text))
+            return kfunc(aarch64_insn_patch_text)(addrs, values, cnt);
+        return -EOPNOTSUPP;
     }
-    if (!kfunc(stop_machine) || is_interrupt_masked() || !cpu_online_mask || !kvar(nr_cpu_ids) ||
-        num_online_cpus() == 1) {
-        atomic_dec_return(&patch.index);
-        return hotpatch_cb(&patch);
-    }
-    return stop_machine(hotpatch_cb, &patch, cpu_online_mask);
+
+    /*
+     * Do not fall back to an uncoordinated per-CPU callback. In particular,
+     * the Y73S 4.14 symbol table lacks cpu_online_mask/nr_cpu_ids, so the
+     * old callback's num_online_cpus() dereferenced unresolved mask state.
+     * A NULL cpumask asks stop_machine() to coordinate all online CPUs.
+     */
+    if (!kfunc(stop_machine) || is_interrupt_masked()) return -EOPNOTSUPP;
+    return stop_machine(hotpatch_cb, &patch, NULL);
 }
 KP_EXPORT_SYMBOL(hotpatch);
 
