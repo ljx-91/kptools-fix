@@ -112,10 +112,10 @@ def main():
             "Y73S hotpatch must coordinate CPUs with stop_machine(..., NULL)")
     require(r"!kfunc\(stop_machine\).*?is_interrupt_masked\(\).*?return -EOPNOTSUPP;",
             hotpatch_fn, "missing stop_machine/interrupt state must fail closed")
-    require(r"is_interrupt_masked\\(\\)\\s*&&\\s*!hotpatch_early_boot", hotpatch_fn,
+    require(r"is_interrupt_masked\(\)\s*&&\s*!hotpatch_early_boot", hotpatch_fn,
             "IRQ-masked patching may only use the explicit early-boot window")
     patch_fn = function_body(patch_c, "int patch()")
-    require(r"hotpatch_set_early_boot\\(1\\)", patch_fn,
+    require(r"hotpatch_set_early_boot\(1\)", patch_fn,
             "initial pre-rest_init hooks must enable the early-boot window")
     before(patch_fn, "hotpatch_set_early_boot(1)", "hook_wrap4",
            "early-boot mode must be active before rest_init hook installation")
