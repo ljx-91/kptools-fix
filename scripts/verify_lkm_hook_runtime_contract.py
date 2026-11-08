@@ -20,9 +20,8 @@ checks = {
     "retire unlinks metadata without freeing executable region":
         "list_del(&mem->list);" in runtime and
         "void hook_mem_retire(void *payload)" in runtime and
-        "kp_hook_exec_free(mem->region);" not in runtime[
-            runtime.index("void hook_mem_retire(void *payload)"):
-            runtime.index("int hotpatch(")],
+        "kp_hook_exec_free(mem->region);" not in runtime.split(
+            "void hook_mem_retire(void *payload)", 1)[1].split("\\n}", 1)[0],
     "duplicate origin is rejected atomically":
         "pos->origin == origin" in runtime and
         runtime.index("pos->origin == origin") < runtime.index("list_add_tail(&mem->list"),
@@ -32,7 +31,7 @@ checks = {
         "void hook_mem_publish(void *payload)" in runtime and "mem->ready = true;" in runtime,
     "common hook allocator exposes publication API":
         "void hook_mem_publish(void *hook_mem);" in hmem_h and
-        "void hook_get_mem_from_origin_type(uint64_t origin_addr, enum hook_type type);" in hmem_h,
+        "void *hook_get_mem_from_origin_type(uint64_t origin_addr, enum hook_type type);" in hmem_h,
     "KPIMG backend has a constructing state and publication":
         "wrap->using = 3;" in hmem and "if (warp->using == 3)" in hmem,
     "typed KPIMG lookup rejects unpublished or wrong-type records":
