@@ -155,7 +155,7 @@ def main(path):
     # by start's tail-return assembly. A frame-size-only check is insufficient.
     observed = {}
     first_call = next((i for i, w in enumerate(pw) if is_call(w)), len(pw))
-    for i, word in enumerate(pw):
+    for i, word in enumerate(pw[:first_call]):
         decoded = decode_stp_x(word)
         if not decoded:
             continue
