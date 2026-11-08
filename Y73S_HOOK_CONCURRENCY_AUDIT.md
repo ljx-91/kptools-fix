@@ -278,3 +278,29 @@ The CFI suffix resolver and KPIMG build checks passed on commit
 source audit only. The KPM unload ordering, RCU mapping, Hook callback owner
 tracking, and in-flight callback quiescence remain unresolved. The branch is
 still **not release-ready and not suitable for device boot testing**.
+
+
+### 5. Additional module-manager defects in the same lifecycle path
+
+The module-manager scan also confirmed:
+
+- `module_lock` is initialized in `module_init()`, but the only two
+  occurrences in `kernel/patch/module/module.c` are its declaration and
+  initialization. It does not serialize module-list insertion, removal,
+  lookup, or unload. `load_module_ex()` appends to the list without taking
+  it, while `unload_module()` removes from the list without taking it.
+- `notify_modules_event()`, `module_control0()`, and `module_control1()`
+  invoke arbitrary KPM code while inside `rcu_read_lock()`. A callback that
+  tries to wait for an RCU grace period can self-deadlock if the read-side
+  operation is effective. If the Y73S `__rcu_read_lock` mapping is ineffective,
+  those callbacks instead run without the intended lifetime protection.
+- `get_module_info()` enters `rcu_read_lock()` and returns `-ENOENT`
+  immediately when `find_module()` fails, without the matching
+  `rcu_read_unlock()`.
+- `find_module()` itself performs an ordinary list traversal and relies on
+  callers to establish protection; it does not acquire the module lock.
+
+These findings make the existing module manager an unsafe foundation for
+Hook-owner reference tracking until its list serialization, callback-entry
+references, and teardown sequencing are redesigned together. They are not
+fixed by changing only the Hook chain spinlock.
