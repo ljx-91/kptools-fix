@@ -20,6 +20,8 @@ typedef enum
     HOOK_BAD_RELO = 4092,
     HOOK_TRANSIT_NO_MEM = 4091,
     HOOK_CHAIN_FULL = 4090,
+    HOOK_PATCH_FAILED = 4089,
+    HOOK_PATCH_UNCERTAIN = 4088,
 } hook_err_t;
 
 enum hook_type
@@ -246,8 +248,8 @@ int32_t branch_absolute(uint32_t *buf, uint64_t addr);
 int32_t ret_absolute(uint32_t *buf, uint64_t addr);
 
 hook_err_t hook_prepare(hook_t *hook);
-void hook_install(hook_t *hook);
-void hook_uninstall(hook_t *hook);
+int hook_install(hook_t *hook);
+int hook_uninstall(hook_t *hook);
 
 /**
  * @brief Inline-hook function which address is @param func with function @param replace, 
