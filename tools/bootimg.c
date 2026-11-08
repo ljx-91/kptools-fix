@@ -1146,6 +1146,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
             tools_logi("Rest data size: %u bytes, Actual used size: %u bytes\n", rest_data_size, rest_buf_offset);
             rest_data_size = rest_buf_offset;
             free(rest_buf_tmp);
+            rest_buf_tmp = NULL;
         }
 
     }
@@ -1154,7 +1155,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
     // unless a bigger kernel pushes it past the old end of the image.
     uint64_t new_image_extent = (uint64_t)page_size + new_k_total_aligned64 + rest_data_size;
     if (new_image_extent > 0x7fffffffffffffffULL ||
-        (rest_buf && new_image_extent > (uint64_t)total_size)) {
+        (has_avb && new_image_extent > (uint64_t)total_size)) {
         total_size = ALIGN(page_size + (long)new_k_total_aligned + rest_data_size, (long)page_size);
         tools_logi("Tail no longer fits, growing image to %ld bytes\n", total_size);
     }
@@ -1234,29 +1235,54 @@ int repack_bootimg_mem(const char *orig_boot_path,
     uint64_t tail_pos = checksum_aligned64;
     if ((uint64_t)fmt_size > rest_data_size ||
         tail_pos > rest_data_size ||
-        (uint64_t)hdr.second_size > (uint64_t)rest_data_size - tail_pos)
+        (uint64_t)hdr.second_size > (uint64_t)rest_data_size - tail_pos) {
+        free(rest_buf);
+        if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+        free(compressed_buf);
+        free(extracted_dtb);
         return -ENOEXEC;
+    }
     tail_pos += align_ceil((uint64_t)hdr.second_size, (uint64_t)page_size);
     if (extracted_size) {
-        if (tail_pos > rest_data_size || page_size > (uint64_t)rest_data_size - tail_pos)
+        if (tail_pos > rest_data_size || page_size > (uint64_t)rest_data_size - tail_pos) {
+            free(rest_buf);
+            if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+            free(compressed_buf);
+            free(extracted_dtb);
             return -ENOEXEC;
+        }
         tail_pos += page_size;
     }
     if (header_ver == 1 || header_ver == 2) {
         if (tail_pos > rest_data_size ||
-            (uint64_t)hdr.recovery_dtbo_size > (uint64_t)rest_data_size - tail_pos)
+            (uint64_t)hdr.recovery_dtbo_size > (uint64_t)rest_data_size - tail_pos) {
+            free(rest_buf);
+            if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+            free(compressed_buf);
+            free(extracted_dtb);
             return -ENOEXEC;
+        }
         tail_pos += align_ceil((uint64_t)hdr.recovery_dtbo_size, (uint64_t)page_size);
     }
     if (header_ver == 2 &&
         (tail_pos > rest_data_size ||
-         (uint64_t)hdr.dtb_size > (uint64_t)rest_data_size - tail_pos))
+         (uint64_t)hdr.dtb_size > (uint64_t)rest_data_size - tail_pos)) {
+        free(rest_buf);
+        if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+        free(compressed_buf);
+        free(extracted_dtb);
         return -ENOEXEC;
+    }
 
     /* Avoid null-pointer arithmetic for a legitimate image with an empty tail. */
     if (!rest_buf) {
         rest_buf = calloc(1, 1);
-        if (!rest_buf) return -ENOMEM;
+        if (!rest_buf) {
+            if (rest_buf_tmp) free(rest_buf_tmp);
+            free(compressed_buf);
+            free(extracted_dtb);
+            return -ENOMEM;
+        }
     }
 
     uint32_t use_sha256 = is_sha256(hdr.id);
@@ -1314,7 +1340,8 @@ int repack_bootimg_mem(const char *orig_boot_path,
             sha1_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.second_size);
             sha1_update(&ctx, (const BYTE *)&hdr.second_size, 4);
             if (hdr.second_size > 0){
-                checksum_aligned += ALIGN(hdr.second_size , page_size);
+                checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
+                    align_ceil((uint64_t)hdr.second_size, (uint64_t)page_size));
             }
             tools_logi("second_size=%d,offset=%d\n",hdr.second_size, checksum_aligned+rest_data_offset);
             //to do extra data
@@ -1322,14 +1349,16 @@ int repack_bootimg_mem(const char *orig_boot_path,
                 tools_logi("extracted_size=%d,offset=%d\n",extracted_size, checksum_aligned+rest_data_offset);
                 sha1_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, page_size);
                 sha1_update(&ctx, (const BYTE *)&extracted_size, 4);
-                checksum_aligned += ALIGN(extracted_size , page_size);
+                checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
+                    align_ceil((uint64_t)extracted_size, (uint64_t)page_size));
             }
 
             if (header_ver == 1 || header_ver == 2){
                 tools_logi("recovery_dtbo_size=%d,offset=%d\n",hdr.recovery_dtbo_size, checksum_aligned+rest_data_offset);
                 sha1_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.recovery_dtbo_size);
                 sha1_update(&ctx, (const BYTE *)&hdr.recovery_dtbo_size, 4);
-                checksum_aligned += ALIGN(hdr.recovery_dtbo_size , page_size);
+                checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
+                    align_ceil((uint64_t)hdr.recovery_dtbo_size, (uint64_t)page_size));
             }
 
             if (header_ver == 2){
@@ -1343,56 +1372,72 @@ int repack_bootimg_mem(const char *orig_boot_path,
         }
     }
     FILE *f_out = fopen(out_boot_path, "wb");
-    if (!f_out) { return -4; }
-
-
-    fwrite(&hdr, sizeof(hdr), 1, f_out);
-    fseek(f_out, page_size, SEEK_SET);
-
-
-    fwrite(final_k_buf, 1, final_k_size, f_out);
-    if (extracted_dtb) {
-        fwrite(extracted_dtb, 1, dtb_size, f_out);
+    if (!f_out) {
+        free(compressed_buf);
+        free(extracted_dtb);
+        free(rest_buf);
+        if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+        return -4;
     }
-    tools_logi("dtb_size=%d\n",dtb_size);
 
-    // A seek alone does not extend the file when nothing follows the kernel.
+    if (fwrite(&hdr, sizeof(hdr), 1, f_out) != 1 ||
+        fseek(f_out, page_size, SEEK_SET) != 0 ||
+        fwrite(final_k_buf, 1, final_k_size, f_out) != final_k_size)
+        goto write_fail;
+    if (extracted_dtb && fwrite(extracted_dtb, 1, dtb_size, f_out) != dtb_size)
+        goto write_fail;
+    tools_logi("dtb_size=%d\\n", dtb_size);
+
     if (new_k_total_aligned > hdr.kernel_size) {
-        fseek(f_out, page_size + new_k_total_aligned - 1, SEEK_SET);
-        fputc(0, f_out);
+        if (fseek(f_out, (long)page_size + new_k_total_aligned - 1, SEEK_SET) != 0 ||
+            fputc(0, f_out) == EOF)
+            goto write_fail;
     }
 
-    if (rest_buf) {
-        // write exactly the rest data; any slack up to total_size is zero-padded below
-        fwrite(rest_buf, 1, rest_data_size, f_out);
-    }
+    if (rest_buf && fwrite(rest_buf, 1, rest_data_size, f_out) != rest_data_size)
+        goto write_fail;
 
     long current_pos = ftell(f_out);
+    if (current_pos < 0) goto write_fail;
 
-    //  Padding
-    //tools_logi("current_post=%d,total_size=%d\n",current_pos,total_size);
-    long footer_pos = total_size - (long)sizeof(avb);
+    long footer_pos = has_avb ? total_size - (long)sizeof(avb) : total_size;
     int footer_written = 0;
-    if (current_pos <= footer_pos) {
-        long padding = footer_pos - current_pos;
-        if (padding > 0) {
-            uint8_t *zero_pad = calloc(1, padding);
-            fwrite(zero_pad, 1, padding, f_out);
-            free(zero_pad);
-        }
-        // Footer of the original image, copied byte for byte.  Its pointers are
-        // rewritten below, once the metadata is confirmed to be intact at its
-        // new offset.
-        fwrite(&avb, 1, sizeof(avb), f_out);
-        footer_written = 1;
+    if (has_avb && current_pos > footer_pos) {
+        tools_loge("Repacked image ends at %ld, no room for the AVB footer at %ld\\n",
+                   current_pos, footer_pos);
     } else {
-        tools_loge("Repacked image ends at %ld, no room for the AVB footer at %ld\n", current_pos, footer_pos);
+        long padding = current_pos < footer_pos ? footer_pos - current_pos : 0;
+        uint8_t zero_pad[4096] = { 0 };
+        while (padding > 0) {
+            size_t chunk = padding > (long)sizeof(zero_pad) ? sizeof(zero_pad) : (size_t)padding;
+            if (fwrite(zero_pad, 1, chunk, f_out) != chunk) goto write_fail;
+            padding -= (long)chunk;
+        }
+        if (has_avb) {
+            if (fwrite(&avb, 1, sizeof(avb), f_out) != sizeof(avb)) goto write_fail;
+            footer_written = 1;
+        }
     }
 
-    fclose(f_out);
+    if (fclose(f_out) != 0) {
+        free(compressed_buf);
+        free(extracted_dtb);
+        free(rest_buf);
+        if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+        return -EIO;
+    }
     if (compressed_buf) free(compressed_buf);
     if (extracted_dtb) free(extracted_dtb);
     if (rest_buf) free(rest_buf);
+    if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+
+write_fail:
+    fclose(f_out);
+    free(compressed_buf);
+    free(extracted_dtb);
+    free(rest_buf);
+    if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+    return -EIO;
 
     if (has_avb) {
         if (!footer_written) return -6;
