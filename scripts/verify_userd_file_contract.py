@@ -57,7 +57,16 @@ def main():
 
     print("[PASS] userd file reads enforce size and exact-read bounds")
     print("[PASS] package lookup validates pointers and frees buffers")
+    apk = body(src, "static bool apk_has_v1_signature(")
+    need(r"cd_end\s*-\s*entry_start\s*<\s*46", apk,
+         "APK central-directory entry header must be bounded")
+    need(r"name_len\s*>\s*cd_end\s*-\s*entry_data_start", apk,
+         "APK entry name length must use subtraction-based bounds")
+    need(r"comment_len\s*>\s*cd_end\s*-\s*entry_data_start\s*-\s*name_len\s*-\s*extra_len", apk,
+         "APK entry comment range must be bounded without addition overflow")
+
     print("[PASS] trusted manager table and directory names are bounded")
+    print("[PASS] APK central directory entry arithmetic is overflow-safe")
 
 
 if __name__ == "__main__":
