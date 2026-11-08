@@ -56,6 +56,7 @@ typedef struct
 
 int32_t get_kernel_info(kernel_info_t *kinfo, const char *img, int32_t imglen)
 {
+    if (!kinfo || !img || imglen < (int32_t)sizeof(arm64_hdr_t)) return -EINVAL;
     kinfo->is_be = 0;
 
     arm64_hdr_t *khdr = (arm64_hdr_t *)img;
@@ -81,6 +82,7 @@ int32_t get_kernel_info(kernel_info_t *kinfo, const char *img, int32_t imglen)
         tools_loge_exit("kernel primary entry: %x\n", b_primary_entry_insn);
     } else {
         uint32_t imm = (b_primary_entry_insn & 0x03ffffff) << 2;
+        if (imm > (uint32_t)imglen - b_stext_insn_offset) return -ENOEXEC;
         kinfo->primary_entry_offset = imm + b_stext_insn_offset;
     }
 
@@ -115,6 +117,7 @@ int32_t get_kernel_info(kernel_info_t *kinfo, const char *img, int32_t imglen)
 
 int32_t kernel_resize(kernel_info_t *kinfo, char *img, int32_t size)
 {
+    if (!kinfo || !img || size <= 0) return -EINVAL;
     arm64_hdr_t *khdr = (arm64_hdr_t *)img;
     uint64_t ksize = size;
     if (is_be() ^ kinfo->is_be) ksize = u64swp(size);
