@@ -243,7 +243,7 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
 {
     hook_err_t err = HOOK_NO_ERR;
     if (is_bad_address((void *)fp_addr)) return -HOOK_BAD_ADDRESS;
-    fp_hook_chain_t *chain = hook_get_mem_from_origin(fp_addr);
+    fp_hook_chain_t *chain = hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN);
     if (!chain) {
         chain = (fp_hook_chain_t *)hook_mem_zalloc(fp_addr, FUNCTION_POINTER_CHAIN);
         if (!chain) return -HOOK_NO_MEM;
@@ -295,7 +295,7 @@ KP_EXPORT_SYMBOL(fp_hook_wrap);
 void fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after)
 {
     if (is_bad_address((void *)fp_addr)) return;
-    fp_hook_chain_t *chain = (fp_hook_chain_t *)hook_get_mem_from_origin(fp_addr);
+    fp_hook_chain_t *chain = (fp_hook_chain_t *)hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN);
     if (!chain) return;
     for (int i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
         if (chain->states[i] == CHAIN_ITEM_STATE_READY)
