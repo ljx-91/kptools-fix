@@ -951,3 +951,74 @@ It does not compile lkm/kpm/module.c against the target kernel headers.
 
 This pass is a meaningful registry/callback-lifetime improvement, not a
 release sign-off.
+
+## 12. LKM hook-runtime registry and retirement follow-up (2026-11-09)
+
+A further audit of the shared hook engine and its LKM backend found that
+kernel/base/hook.c calls hook_mem_retire(), but lkm/hook/hook_runtime.c did
+not define that backend symbol. The LKM Kbuild includes hook_runtime.o and
+hook_engine.o, but does not include kernel/base/hmem.c; the KPIMG-side
+implementation therefore could not satisfy the LKM link. The LKM backend now
+defines hook_mem_retire().
+
+### Implemented changes
+
+- LKM hook_mem_retire() removes the lookup metadata but deliberately retains
+  the executable trampoline/chain region. This matches the existing KPIMG
+  retirement policy: successful text restoration does not prove that every
+  CPU which entered the old trampoline has returned, so retired code storage
+  is not immediately recycled.
+- Added hook_mem_publish() to both the LKM runtime and KPIMG hmem backend.
+  New allocations remain unpublished until the patch is installed and the
+  first callback slot is ready. Typed lookup ignores unpublished entries.
+- The KPIMG allocator uses a distinct constructing state (using=3), publishes
+  as live (using=1), and continues to reserve retired entries (using=2).
+- The LKM allocator rechecks origin uniqueness under its registry mutex before
+  inserting a new record. This closes the duplicate first-allocation race
+  where two callers both miss an earlier lookup.
+- Added hook_get_mem_from_origin_type() to both backends and changed inline,
+  inline-chain, and function-pointer-chain call sites to request the expected
+  allocation type. This prevents a same-origin lookup from returning a
+  different chain layout and being cast to the wrong structure.
+- Direct inline hooks and both chain variants publish only after successful
+  patch setup. The generic origin lookup remains available for the branch
+  resolver's trampoline detection.
+
+### Validation evidence
+
+The new scripts/verify_lkm_hook_runtime_contract.py checks the LKM retirement
+backend, duplicate-origin serialization, type-safe lookup, publication order,
+and matching KPIMG allocator semantics. It is included in both the LKM source
+audit workflow and the KPIMG build workflow.
+
+Latest source commit tested:
+- Head 2b68fa80863d0b2900690f2f72c37d093e2a504c
+- LKM/host workflow run 42505764381: success
+  - LKM loader and hook-runtime source contracts: success
+  - host kptools build/package: success
+- KPIMG GCC workflow run 42505764343: success
+  - Arm GNU GCC 14.2 KPIMG build and audit: success
+
+The KPIMG build validates the shared kernel/base hook and hmem changes. It
+does not compile the independent LKM runtime objects against a target KDIR.
+
+### Remaining hook-lifetime blockers
+
+1. The LKM hook runtime's retired executable regions are intentionally leaked.
+   This is safer than premature reuse but needs a future quiescence mechanism
+   before memory can be reclaimed.
+2. Chain slot add/remove and transit dispatch are still not protected by a
+   complete concurrent snapshot/reference protocol. A CPU may already have
+   loaded a callback and udata when another thread removes the slot.
+3. Hook callbacks are not yet tied to the owning KPM's active-call references.
+   The module manager changes in section 11 therefore do not make arbitrary
+   registered Hook callbacks safe to unload. A KPM must not be considered
+   unload-safe merely because the ordinary control/event references have
+   drained.
+4. The new publication and typed-lookup guards prevent incomplete-chain
+   exposure and cross-type casts, but they do not close every lookup-versus-
+   retire race or provide callback quiescence.
+5. A target-KDIR LKM build and runtime stress tests are still required.
+
+This is a backend/linkage and registry improvement, not a completed Hook
+callback-lifetime solution.
