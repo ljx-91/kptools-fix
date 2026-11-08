@@ -469,7 +469,8 @@ static int layout_symtab(struct kp_module *mod, struct kp_load_info *info)
 	Elf_Shdr *strsect = info->sechdrs + info->index.str;
 	const Elf_Sym *src;
 	unsigned int i, nsrc, ndst;
-	unsigned long strtab_size = 0, sym_offset;
+	unsigned long strtab_size = 0;
+	unsigned int sym_offset;
 
 	/* Put symbol section at end of module. */
 	symsect->sh_flags |= SHF_ALLOC;
