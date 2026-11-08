@@ -122,3 +122,32 @@ serializing hook ownership and callback-chain lifetime.
 success only establishes compilation and the configured static checks. It
 does not establish concurrent hook correctness, callback unload safety, or
 device boot/runtime success. No code changes are made by this audit report.
+
+
+## Follow-up: RCU wrapper correction and target symbol evidence (2026-11-08)
+
+The wrapper defect identified in H6 has now been corrected in
+`kernel/linux/include/linux/rcupdate.h`: `synchronize_rcu()` dispatches to
+`kfunc_call(synchronize_rcu)`, not `rcu_barrier_tasks_rude`. Regression
+assertions were added to `scripts/verify_y73s_fphook_contract.py`.
+
+The updated GCC 14.2 workflow passed on commit
+`cf69972748c8b0ce7395c769d6f54c55b90a45e4` (run
+`42494604969`). This confirms compilation and the source regression checks
+only.
+
+A previously recovered Y73S Linux 4.14.141 kallsyms listing contains
+`synchronize_rcu.cfi` at image offset `0x001dc35c` and
+`__rcu_read_unlock` at `0x01940484`. Exact-name searches in that listing did
+not find `__rcu_read_lock` or `rcu_barrier_tasks_rude`. The listing is a
+static extraction, not a live runtime symbol-resolution trace. The KP shim
+uses suffix-based kallsyms lookup, so the exact alias resolution behavior
+must be verified before relying on these symbols. In particular, do not
+assume the RCU read-side wrapper is operational merely because the header
+compiles.
+
+**Updated RCU decision:** the wrong synchronize wrapper is fixed, but RCU
+is still not approved as the hook callback lifetime mechanism. Verify actual
+lookup results and read-side semantics against the target kernel first; if
+any required function is absent or ambiguously resolved, fail closed and use
+another proven lifetime protocol.
