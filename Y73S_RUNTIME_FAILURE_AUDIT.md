@@ -125,3 +125,19 @@ The first fail-closed implementation still rejected the initial hook if DAIF sho
 The branch now exposes `hotpatch_set_early_boot()`. `patch()` enables this narrowly scoped mode before installing the first boot hooks; `before_rest_init()` clears it on every exit, and error/no-hook paths clear it in `patch()`. While this flag is set, `hotpatch()` may call the kernel's own `stop_machine()` despite masked IRQ/FIQ. Linux v4.14's `stop_machine_cpuslocked()` has a pre-initialization path that checks the single-online-CPU condition and runs the callback locally with IRQs saved/disabled; once initialized, normal stop-machine coordination is used. The KP callback itself still never dereferences unresolved CPU-mask symbols.
 
 This early-mode lifecycle is now part of `verify_y73s_runtime_contract.py`. The exact vendor v4.14.141 implementation and the device's actual call context must still be checked against the original Y73S kernel image; the upstream v4.14 reference is not a substitute for that binary evidence.
+
+
+### Final early-boot build verification
+
+After adding the missing public declarations for `hotpatch()` and `hotpatch_set_early_boot()`, the source commit `6cbb6b7f0b122056deedb1d3bbef49e3ce62fb31` passed the full GCC 14.2 workflow:
+
+- Workflow: https://github.com/ljx-91/kptools-fix/actions/runs/42475073570
+- All six static checks passed, including the new early-boot window check.
+- KPIMG SHA-256: `d1ea5a0c7b13df2d30369d4111bd62515c44e3a0ca3f134d11665887285dcaed`
+- ELF SHA-256: `90fd5357adee35d53e35fe77f49a819edc652005f75c036851bc9b648db3ade5`
+- Artifact ZIP SHA-256: `dee21b99c536d0244a97993d6fac4396542fd909f6f190d8abd76094555b26c4`
+- Artifact ID: `13615117233`
+
+The generated ELF disassembly confirms that `hotpatch_cb` calls the page-table preflight and `hotpatch_nosync`, and contains no call to `num_online_cpus()` / `__bitmap_weight()`. The `hotpatch()` disassembly passes a NULL third argument to the resolved `stop_machine` function and gates IRQ-masked execution on the explicit early-boot flag.
+
+Reference source for the upstream early-stop path: https://github.com/torvalds/linux/blob/v4.14/kernel/stop_machine.c. Vendor-kernel equivalence is not yet proven.
