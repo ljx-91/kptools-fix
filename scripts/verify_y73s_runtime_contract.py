@@ -160,6 +160,24 @@ def main():
     print("[PASS] early-boot stop_machine window is explicitly scoped")
     print("[PASS] hook install/uninstall propagate patch failures safely")
     print("[PASS] relocation buffer bound and A64 branch range/alignment")
+    print("[PASS] ARM64 entry thunk resolver is bounded and fail-closed")
+    branch_resolver = function_body(hook_c, "uint64_t branch_func_addr(uint64_t addr)")
+    require(r"uint64_t visited\\[8\\]", branch_resolver,
+            "entry thunk resolution must have a finite hop budget")
+    require(r"visited\\[j\\] == addr", branch_resolver,
+            "entry thunk resolver must detect cycles")
+    require(r"is_bad_address\\(\\(void \\*\\)addr\\)", branch_resolver,
+            "entry thunk resolver must validate each address before dereference")
+    require(r"return 0;", branch_resolver,
+            "malformed or cyclic thunk chains must fail closed")
+    require(r"is_bad_address\\(\\(void \\*\\)origin_addr\\)", hook_fn,
+            "hook() must reject failed entry resolution")
+    wrap_fn = function_body(hook_c, "hook_err_t hook_wrap(")
+    require(r"is_bad_address\\(\\(void \\*\\)origin\\)", wrap_fn,
+            "hook_wrap() must reject failed entry resolution")
+    unwrap_fn = function_body(hook_c, "void hook_unwrap_remove(")
+    require(r"is_bad_address\\(\\(void \\*\\)origin\\)", unwrap_fn,
+            "hook_unwrap_remove() must reject failed entry resolution")
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
 
