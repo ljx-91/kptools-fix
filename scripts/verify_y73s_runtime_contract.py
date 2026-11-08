@@ -292,6 +292,31 @@ def main():
     print("[PASS] credential commit gates SELinux state; cross-task SU stays disabled")
     print("[PASS] seccomp state is preserved without raw task_struct probing")
 
+    # Kstorage user buffers must be validated, and faultable user copies must
+    # happen after leaving the RCU read-side critical section.
+    kstorage_c = source("kernel/patch/common/kstorage.c")
+    sucompat_c = source("kernel/patch/common/sucompat.c")
+    write_store = function_body(kstorage_c, "int write_kstorage(")
+    require(r"offset\s*<\s*0.*?len\s*<\s*0", write_store,
+            "kstorage writes must reject negative offsets and lengths")
+    read_store = function_body(kstorage_c, "int read_kstorage(")
+    require(r"offset\s*<\s*0.*?len\s*<\s*0", read_store,
+            "kstorage reads must reject negative offsets and lengths")
+    if read_store.rfind("rcu_read_unlock();") > read_store.find("compat_copy_to_user"):
+        raise AssertionError("kstorage user copy must happen after RCU unlock")
+    list_store = function_body(kstorage_c, "int list_kstorage_ids(")
+    if list_store.rfind("rcu_read_unlock();") > list_store.find("compat_copy_to_user"):
+        raise AssertionError("kstorage ID user copy must happen after RCU unlock")
+    uid_cb = function_body(sucompat_c, "static int allow_uids_cb(")
+    if "compat_copy_to_user" in uid_cb:
+        raise AssertionError("SU UID callback must not fault user pages under RCU")
+    uid_list = function_body(sucompat_c, "int su_allow_uids(")
+    before(uid_list, "on_each_kstorage_elem", "compat_copy_to_user",
+           "SU UID list must snapshot under RCU and copy to user afterwards")
+
+    print("[PASS] kstorage range checks and RCU-safe user-copy ordering")
+    print("[PASS] SU UID enumeration no longer copies to user inside RCU")
+
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
 
