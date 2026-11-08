@@ -1216,6 +1216,35 @@ int repack_bootimg_mem(const char *orig_boot_path,
     }
     fclose(f_orig);
 
+    /* Validate every tail component before checksum code forms pointers into it. */
+    uint64_t tail_pos = checksum_aligned64;
+    if ((uint64_t)fmt_size > rest_data_size ||
+        tail_pos > rest_data_size ||
+        (uint64_t)hdr.second_size > (uint64_t)rest_data_size - tail_pos)
+        return -ENOEXEC;
+    tail_pos += align_ceil((uint64_t)hdr.second_size, (uint64_t)page_size);
+    if (extracted_size) {
+        if (tail_pos > rest_data_size || page_size > (uint64_t)rest_data_size - tail_pos)
+            return -ENOEXEC;
+        tail_pos += page_size;
+    }
+    if (header_ver == 1 || header_ver == 2) {
+        if (tail_pos > rest_data_size ||
+            (uint64_t)hdr.recovery_dtbo_size > (uint64_t)rest_data_size - tail_pos)
+            return -ENOEXEC;
+        tail_pos += align_ceil((uint64_t)hdr.recovery_dtbo_size, (uint64_t)page_size);
+    }
+    if (header_ver == 2 &&
+        (tail_pos > rest_data_size ||
+         (uint64_t)hdr.dtb_size > (uint64_t)rest_data_size - tail_pos))
+        return -ENOEXEC;
+
+    /* Avoid null-pointer arithmetic for a legitimate image with an empty tail. */
+    if (!rest_buf) {
+        rest_buf = calloc(1, 1);
+        if (!rest_buf) return -ENOMEM;
+    }
+
     uint32_t use_sha256 = is_sha256(hdr.id);
     int len = use_sha256 ? SHA256_BLOCK_SIZE : SHA1_BLOCK_SIZE;
     BYTE buf[len];
