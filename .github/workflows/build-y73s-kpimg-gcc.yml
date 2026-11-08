@@ -67,6 +67,7 @@ jobs:
           python3 ../scripts/verify_kpimg_map_relocation.py kpimg.elf
           python3 ../scripts/verify_y73s_fphook_contract.py
           python3 ../scripts/verify_kpm_loader_contract.py
+          python3 ../scripts/verify_userd_file_contract.py
           mkdir -p ../dist-y73s
           cp kpimg ../dist-y73s/kpimg-android
           cp kpimg.elf ../dist-y73s/kpimg-android.elf
