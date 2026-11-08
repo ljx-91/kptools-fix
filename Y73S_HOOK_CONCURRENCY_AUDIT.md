@@ -684,3 +684,92 @@ the separate LKM loader is either hardened or explicitly excluded from the
 deliverable, and malformed-input dynamic tests are run. All work in this
 pass was repository/CI work only; no Fastboot, 9008, partition write, or
 device-side modification was performed.
+
+
+## 8. Re-audit of the independent LKM KPM loader (2026-11-09)
+
+The current branch HEAD was re-fetched from GitHub as
+`f75a404e87ace1c6ddad71c666ac27fff609a88b`. The recursive Git tree
+contains 448 entries (the previous 379-file inventory is stale). The LKM
+loader is not covered by the Y73S KPIMG loader contract checks, and direct
+inspection of `lkm/kpm/module.c`, `lkm/kpm/relo.c`, and
+`lkm/kpm/module.h` confirms that it is materially behind the hardened
+KPIMG implementation.
+
+### L1 — LKM ELF header and section metadata are insufficiently validated (Critical)
+
+`lkm/kpm/module.c:elf_header_check()` checks only a subset of ELF identity
+fields and section-header bounds. It does not validate ELF class, data
+encoding, ELF version, `e_ehsize`, `e_shstrndx` against `e_shnum`, or the
+section-name string table type/range before `setup_load_info()` dereferences
+the section headers and string table. `setup_load_info()` then trusts
+`sh_name`, `sh_link`, symbol entry size, and symbol-name offsets. A malformed
+KPM can therefore cause out-of-bounds reads before allocation.
+
+### L2 — LKM section layout and copy lack overflow/range checks (Critical)
+
+The LKM `get_offset()` uses `ALIGN(*size, sh_addralign)` and adds
+`sh_size` without validating power-of-two alignment or overflow.
+`layout_sections()` and `layout_symtab()` do not propagate checked errors.
+`move_module()` copies each allocatable section to
+`mod->start + sh_entsize` without verifying the destination extent. The
+KPIMG-side checked layout must not be assumed to protect this independent
+implementation.
+
+### L3 — LKM symbol simplification trusts symbol indices and names (Critical)
+
+`simplify_symbols()` forms `info->strtab + st_name` and indexes
+`sechdrs[st_shndx]` without validating the symbol name offset/termination or
+the section index. The LKM setup path also accepts a symbol table without
+checking its `sh_link` target type, `sh_entsize`, or size divisibility.
+
+### L4 — LKM relocation dispatch and RELA application are not bounded (Critical)
+
+`apply_relocations()` silently skips a relocation section with an invalid
+`sh_info`, does not validate `sh_link`, and dispatches SHT_REL to
+`kp_apply_relocate()`, which currently returns success without applying
+anything. `kp_apply_relocate_add()` directly indexes the target section and
+symbol table, uses `r_offset` to form a write pointer without checking the
+target extent, and does not validate relocation entry size/divisibility,
+symbol index, or write width.
+
+### L5 — LKM relocation mask still has undefined behavior (Critical)
+
+`lkm/kpm/relo.c:reloc_data()` uses `(1 << len) - 1`; 64-bit ABS/PREL
+relocations can shift a 32-bit signed integer by 64. This is undefined
+behavior and was fixed only in the KPIMG-side relocation implementation.
+
+### L6 — LKM module registry and unload lifetime remain unsafe (Critical)
+
+The LKM path also uses ordinary `list_add_tail`/`list_del` while readers
+such as `kp_kpm_cfi_allowed_addr()` traverse under RCU. The writer operations
+are not an RCU list protocol. `kp_load_module()` performs duplicate lookup
+before initialization and publishes later without a lock, allowing concurrent
+duplicate loads. `kp_unload_module()` removes the module and invokes its exit
+callback while inside an RCU read-side critical section, then frees executable
+text before leaving that section. This does not protect callbacks already
+holding function pointers and can deadlock if an exit callback waits for an
+RCU grace period.
+
+### L7 — LKM lifecycle implementation is duplicated, not shared (High)
+
+The LKM loader has its own `kp_module` structure, relocation helpers,
+registry, and callback dispatch. Fixes in `kernel/patch/module/module.c` or
+`kernel/patch/module/relo.c` do not automatically apply to
+`lkm/kpm/module.c` or `lkm/kpm/relo.c`. The two implementations need
+either a shared validated parser/relocator abstraction or independent,
+equivalent test coverage before both can be considered supported.
+
+### Verification and release status
+
+This section records source-confirmed blockers only. No LKM production source
+was modified in this pass. The existing
+`scripts/verify_kpm_loader_contract.py` reads the KPIMG-side files and
+`tools/kpm.c`; it does not inspect `lkm/kpm/module.c` or
+`lkm/kpm/relo.c`. Therefore its PASS output cannot be interpreted as an LKM
+loader pass. The current LKM loader must remain explicitly unsupported for
+untrusted KPM input until L1-L7 are fixed and independently tested.
+
+The previous inventory count and older commit/run references in this report
+are historical snapshots, not claims about the current HEAD. The current
+branch ref and file-tree count above were re-fetched on 2026-11-09.
