@@ -612,18 +612,60 @@ static int setup_load_info(struct kp_load_info *info)
 	info->info.description = get_modinfo(info, "description");
 
 	for (int i = 1; i < info->hdr->e_shnum; i++) {
-		if (info->sechdrs[i].sh_type == SHT_SYMTAB) {
-			info->index.sym = i;
-			info->index.str = info->sechdrs[i].sh_link;
-			info->strtab = (char *)info->hdr + info->sechdrs[info->index.str].sh_offset;
-			break;
+		Elf_Shdr *symsec = &info->sechdrs[i];
+		Elf_Shdr *strsec;
+
+		if (symsec->sh_type != SHT_SYMTAB)
+			continue;
+		if (info->index.sym) {
+			set_load_error(info, "multiple symbol tables are unsupported");
+			return -ENOEXEC;
 		}
+		if (symsec->sh_entsize != sizeof(Elf_Sym) ||
+		    symsec->sh_size % sizeof(Elf_Sym) ||
+		    symsec->sh_link >= info->hdr->e_shnum) {
+			set_load_error(info, "invalid ELF symbol table metadata");
+			return -ENOEXEC;
+		}
+		strsec = &info->sechdrs[symsec->sh_link];
+		if (strsec->sh_type != SHT_STRTAB ||
+		    !kp_elf_range_valid(info->len, strsec->sh_offset, strsec->sh_size) ||
+		    !strsec->sh_size || *((const char *)info->hdr + strsec->sh_offset) != '\\0') {
+			set_load_error(info, "invalid ELF symbol string table");
+			return -ENOEXEC;
+		}
+		info->index.sym = i;
+		info->index.str = symsec->sh_link;
+		info->strtab = (char *)info->hdr + strsec->sh_offset;
 	}
 
-	if (info->index.sym == 0) {
+	if (!info->index.sym) {
 		logkd("module has no symbols (stripped?)\n");
 		set_load_error(info, "module has no symbols (stripped?)");
 		return -ENOEXEC;
+	}
+	{
+		Elf_Shdr *symsec = &info->sechdrs[info->index.sym];
+		Elf_Shdr *strsec = &info->sechdrs[info->index.str];
+		Elf_Sym *syms = (Elf_Sym *)((char *)info->hdr + symsec->sh_offset);
+		unsigned int nsyms = symsec->sh_size / sizeof(*syms);
+		unsigned int n;
+
+		for (n = 0; n < nsyms; n++) {
+			if (!kp_elf_string_valid(info->strtab, strsec->sh_size, syms[n].st_name)) {
+				set_load_error(info, "ELF symbol name is outside its string table");
+				return -ENOEXEC;
+			}
+			if (syms[n].st_shndx < SHN_LORESERVE &&
+			    syms[n].st_shndx >= info->hdr->e_shnum) {
+				set_load_error(info, "ELF symbol section index is invalid");
+				return -ENOEXEC;
+			}
+			if (syms[n].st_shndx == SHN_XINDEX) {
+				set_load_error(info, "extended ELF symbol section indexes are unsupported");
+				return -ENOEXEC;
+			}
+		}
 	}
 	return 0;
 }
