@@ -158,7 +158,9 @@ int commit_kernel_su()
         abort_creds(new);
         return rc;
     }
-    return commit_creds(new);
+    rc = commit_creds(new);
+    if (rc) abort_creds(new);
+    return rc;
 }
 
 int commit_common_su(uid_t to_uid, const char *sctx)
@@ -206,7 +208,12 @@ int commit_common_su(uid_t to_uid, const char *sctx)
      */
 
     if (sctx && sctx[0]) {
-        sel_allow_after_commit = !!set_security_override_from_ctx(new, sctx);
+        rc = set_security_override_from_ctx(new, sctx);
+        if (rc) {
+            abort_creds(new);
+            goto out;
+        }
+        sel_allow_after_commit = 1;
     }
     rc = commit_creds(new);
     if (rc) {
