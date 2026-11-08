@@ -162,6 +162,11 @@ def main():
     adr_relocator = function_body(hook_c, "static __noinline hook_err_t relo_adr(")
     require(r"if\s*\(is_in_tramp\(hook,\s*addr\)\)\s*return -HOOK_BAD_RELO;", adr_relocator,
             "ADR references into overwritten prologue must fail closed")
+    require(r"if\s*\(is_page_in_tramp\(hook,\s*addr\)\)\s*return -HOOK_BAD_RELO;", adr_relocator,
+            "ADRP pages overlapping overwritten prologue must fail closed")
+    page_guard = function_body(hook_c, "static int is_page_in_tramp(")
+    require(r"page_addr < tramp_end && page_addr \+ 0x1000ULL > tramp_start", page_guard,
+            "ADRP overlap guard must cover the complete architectural 4-KiB page")
 
     # Branch thunk chains can be cyclic or malformed; callers must reject failure.
     branch_resolver = function_body(hook_c, "uint64_t branch_func_addr(uint64_t addr)")
@@ -202,7 +207,7 @@ def main():
 
     print("[PASS] relocation buffer bound and A64 branch range/alignment")
     print("[PASS] hook-chain install/restore failures are propagated safely")
-    print("[PASS] ADR references into overwritten prologue fail closed")
+    print("[PASS] ADR and overlapping ADRP references into overwritten prologue fail closed")
     print("[PASS] ARM64 entry thunk resolver is bounded and fail-closed")
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
