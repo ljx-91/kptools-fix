@@ -71,9 +71,9 @@ def main():
     print("[PASS] legacy/current preset display validates layout size")
 
     append = body(src, "static int extra_append(")
-    need(r"\\*offset\s*>\s*capacity", append,
+    need(r"\*offset\s*>\s*capacity", append,
          "extra append must validate the current output offset")
-    need(r"len\s*>\s*capacity\s*-\s*\\*offset", append,
+    need(r"len\s*>\s*capacity\s*-\s*\*offset", append,
          "extra append must bound each write")
     update = body(src, "int patch_update_img_buf(")
     need(r"extra_config_num\s*<\s*0.*?extra_config_num\s*>\s*EXTRA_ITEM_MAX_NUM", update,
@@ -110,7 +110,7 @@ def main():
     need(r"hex_nibble\(", hex_patch, "hex patcher must reject invalid hex digits")
 
     parse = body(src, "int parse_image_patch_info(")
-    need(r"memchr\(item_pos\s*\+\s*sizeof\(\\*item\)", parse,
+    need(r"memchr\(item_pos\s*\+\s*sizeof\(\*item\)", parse,
          "embedded argument strings must be NUL-terminated within args_size")
     print("[PASS] patch output arithmetic, extra serialization and host file bounds")
     print("[PASS] ARM64 branch range and hex patch input validation")
