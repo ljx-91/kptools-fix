@@ -45,7 +45,7 @@ static bool elf_range_valid(unsigned long offset, unsigned long size, unsigned l
 
 static bool elf_string_valid(const char *table, unsigned long table_size, unsigned int offset)
 {
-    return offset < table_size && memchr(table + offset, '\\0', table_size - offset) != NULL;
+    return offset < table_size && memchr(table + offset, '\0', table_size - offset) != NULL;
 }
 
 static void set_load_error(struct load_info *info, const char *message)
@@ -145,7 +145,7 @@ static char *get_next_modinfo(const struct load_info *info, const char *tag, cha
         if (prev < cursor || (unsigned long)(prev - cursor) >= remaining) return NULL;
         remaining -= (unsigned long)(prev - cursor);
         cursor = prev;
-        char *end = memchr(cursor, '\\0', remaining);
+        char *end = memchr(cursor, '\0', remaining);
         if (!end) return NULL;
         unsigned long consumed = (unsigned long)(end - cursor) + 1;
         cursor = end + 1;
@@ -158,7 +158,7 @@ static char *get_next_modinfo(const struct load_info *info, const char *tag, cha
             remaining--;
         }
         if (!remaining) break;
-        char *end = memchr(cursor, '\\0', remaining);
+        char *end = memchr(cursor, '\0', remaining);
         if (!end) return NULL;
         unsigned long entry_len = (unsigned long)(end - cursor);
         if (entry_len > taglen && !memcmp(cursor, tag, taglen) && cursor[taglen] == '=')
@@ -383,8 +383,9 @@ static int rewrite_section_headers(struct load_info *info)
             !elf_range_valid(shdr->sh_offset, shdr->sh_size, info->len)) {
             return -ENOEXEC;
         }
-        /* Mark all sections sh_addr with their address in the temporary image. */
-        shdr->sh_addr = (size_t)info->hdr + shdr->sh_offset;
+        /* SHT_NOBITS has no file-backed address. */
+        shdr->sh_addr = shdr->sh_type == SHT_NOBITS ? 0 :
+                        (unsigned long)info->hdr + shdr->sh_offset;
     }
     return 0;
 }
@@ -530,7 +531,28 @@ static int setup_load_info(struct load_info *info)
             }
             info->index.sym = i;
             info->index.str = symsec->sh_link;
-            info->strtab = (char *)info->hdr + info->sechdrs[info->index.str].sh_offset;
+            Elf_Shdr *strsec = &info->sechdrs[info->index.str];
+            if (!strsec->sh_size) {
+                set_load_error(info, "empty ELF symbol string table");
+                return -ENOEXEC;
+            }
+            info->strtab = (char *)info->hdr + strsec->sh_offset;
+            Elf_Sym *symbols = (void *)symsec->sh_addr;
+            for (unsigned int n = 0; n < symsec->sh_size / sizeof(Elf_Sym); n++) {
+                if (symbols[n].st_name >= strsec->sh_size ||
+                    !memchr(info->strtab + symbols[n].st_name, '\\0',
+                            strsec->sh_size - symbols[n].st_name)) {
+                    set_load_error(info, "invalid ELF symbol name");
+                    return -ENOEXEC;
+                }
+                if (symbols[n].st_shndx != SHN_UNDEF &&
+                    symbols[n].st_shndx != SHN_ABS &&
+                    symbols[n].st_shndx != SHN_COMMON &&
+                    symbols[n].st_shndx >= info->hdr->e_shnum) {
+                    set_load_error(info, "invalid ELF symbol section index");
+                    return -ENOEXEC;
+                }
+            }
             break;
         }
     }
