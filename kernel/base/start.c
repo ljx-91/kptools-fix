@@ -168,7 +168,8 @@ static bool suffix_is_cfi_jump_table(const char *suffix)
     /* Keep the instrumented implementation (.cfi); reject only its jump-table stub. */
     return suffix[0] == 'c' && suffix[1] == 'f' && suffix[2] == 'i' &&
            suffix[3] == '_' && suffix[4] == 'j' && suffix[5] == 't' &&
-           (!suffix[6] || suffix[6] == '.' || suffix[6] == '
+           (!suffix[6] || suffix[6] == 46 || suffix[6] == 36);
+}
 
 static bool symbol_has_compiler_suffix(const char *name, const char *base)
 {
@@ -178,10 +179,9 @@ static bool symbol_has_compiler_suffix(const char *name, const char *base)
         if (name[i] != base[i]) return false;
     }
     if (!(name[i] == '.' || name[i] == '$') || !name[i + 1]) return false;
-    if (suffix_is_cfi_jump_table(name + i + 1)) return false; /* skip .cfi_jt stubs */
+    if (suffix_is_cfi_jump_table(name + i + 1)) return false;
     return true;
 }
-
 static int lookup_suffix_cb(void *data, const char *name, struct module *module, unsigned long addr)
 {
     struct suffix_lookup *lookup = data;
