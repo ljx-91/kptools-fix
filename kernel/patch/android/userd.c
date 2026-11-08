@@ -172,24 +172,43 @@ static int expand_rc_template(char *dst, size_t dst_size, const char *template, 
 
 static const void *kernel_read_file(const char *path, loff_t *len)
 {
-    set_priv_sel_allow(current, true);
-    void *data = 0;
+    const loff_t max_file_size = 10 * 1024 * 1024;
+    struct file *filp;
+    void *data = NULL;
+    loff_t file_size;
+    loff_t pos = 0;
 
-    struct file *filp = filp_open(path, O_RDONLY, 0);
-    if (!filp || IS_ERR(filp)) {
-        log_boot("open file: %s error: %d\n", path, PTR_ERR(filp));
+    if (!path || !len) return NULL;
+    *len = 0;
+    set_priv_sel_allow(current, true);
+
+    filp = filp_open(path, O_RDONLY, 0);
+    if (IS_ERR_OR_NULL(filp)) {
+        log_boot("open file: %s error: %ld\n", path, filp ? PTR_ERR(filp) : -ENOENT);
         goto out;
     }
-    *len = vfs_llseek(filp, 0, SEEK_END);
-    vfs_llseek(filp, 0, SEEK_SET);
-    data = vmalloc(*len + 1);
+
+    file_size = vfs_llseek(filp, 0, SEEK_END);
+    if (file_size < 0 || file_size > max_file_size ||
+        vfs_llseek(filp, 0, SEEK_SET) < 0) {
+        log_boot("file size/seek invalid: %s size=%lld\n", path, file_size);
+        filp_close(filp, 0);
+        goto out;
+    }
+
+    data = vmalloc((size_t)file_size + 1);
     if (!data) {
         filp_close(filp, 0);
         goto out;
     }
-    loff_t pos = 0;
-    kernel_read(filp, data, *len, &pos);
-    ((char *)data)[*len] = '\0';
+    if (kernel_read(filp, data, (size_t)file_size, &pos) != file_size) {
+        kvfree(data);
+        data = NULL;
+        filp_close(filp, 0);
+        goto out;
+    }
+    ((char *)data)[file_size] = '\0';
+    *len = file_size;
     filp_close(filp, 0);
 
 out:
@@ -534,12 +553,14 @@ static int lookup_package_list_uid(const char *package_name, uid_t *trusted_uid_
 {
     loff_t len = 0;
     const char *path = use_tmp ? ANDROID_PACKAGES_LIST_TMP_PATH : ANDROID_PACKAGES_LIST_PATH;
-    char *content = (char *)kernel_read_file(path, &len);
+    char *content;
     char *cursor;
     char *end;
 
-    if (!trusted_uid_out) return -EINVAL;
+    if (!package_name || !trusted_uid_out) return -EINVAL;
+    content = (char *)kernel_read_file(path, &len);
     if (!content || len <= 0) {
+        kvfree(content);
         log_boot("trusted manager: failed to read %s\n", path);
         return -ENOENT;
     }
@@ -662,7 +683,7 @@ static bool apk_inner_actor(struct dir_context *dctx,
     pkg = ctx->package;
 
 
-    if (!pkg || !pkg[0])
+    if (!pkg || !pkg[0] || namelen <= 0 || namelen > NAME_MAX)
         return true;
 
     len = strnlen(pkg, 128);
@@ -712,7 +733,7 @@ static int apk_inner_actor_int(struct dir_context_int *dctx,
     pkg = ctx->package;
 
 
-    if (!pkg || !pkg[0])
+    if (!pkg || !pkg[0] || namelen <= 0 || namelen > NAME_MAX)
         return 0;
 
     len = strnlen(pkg, 128);
@@ -897,7 +918,7 @@ static int find_trusted_manager_apk_path(char *apk_path,
     if (!apk_path || apk_path_len == 0)
         return -EINVAL;
 
-    if (index < 0)
+    if (index < 0 || index >= ARRAY_SIZE(trusted_managers))
         return -EINVAL;
 
     if (trusted_managers[index].package[0] == '\0')
@@ -1170,6 +1191,7 @@ static char *parse_csv_field(char **line_ptr)
     char *start = *line_ptr;
     char *end = start;
 
+    if (!line_ptr || !*line_ptr) return NULL;
     if (!start || *start == '\0') return NULL;
 
     // Skip leading whitespace
