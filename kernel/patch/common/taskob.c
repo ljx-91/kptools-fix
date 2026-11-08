@@ -71,7 +71,7 @@ struct task_ext *kf_get_task_ext(const struct task_struct *task)
     return &task_ext_invalid;
 }
 
-static struct task_ext *task_ext_create(struct task_struct *task)
+static struct task_ext *task_ext_create(struct task_struct *task, bool sel_allow, bool priv_sel_allow)
 {
     if (unlikely(!task)) return NULL;
     struct task_ext *ret = NULL;
@@ -90,6 +90,8 @@ static struct task_ext *task_ext_create(struct task_struct *task)
                 task_ext_reset(ret);
                 ret->pid = __task_pid_nr_ns(task, PIDTYPE_PID, 0);
                 ret->tgid = __task_pid_nr_ns(task, PIDTYPE_TGID, 0);
+                WRITE_ONCE(ret->sel_allow, sel_allow);
+                WRITE_ONCE(ret->priv_sel_allow, priv_sel_allow);
                 dsb(ish);
                 task_ext_slots[i].task = task;
                 atomic_inc(&task_ext_active_count);
@@ -106,7 +108,7 @@ struct task_ext *kf_task_ext_ensure(struct task_struct *task)
     if (unlikely(!task)) return &task_ext_invalid;
     struct task_ext *ext = kf_get_task_ext(task);
     if (task_ext_valid(ext)) return ext;
-    return task_ext_create(task);
+    return task_ext_create(task, false, false);
 }
 
 
@@ -137,7 +139,7 @@ void kp_debug_write(const char *fmt, ...)
 static int prepare_init_ext(struct task_struct *task)
 {
     if (!task) return -EINVAL;
-    struct task_ext *ext = task_ext_create(task);
+    struct task_ext *ext = task_ext_create(task, false, false);
     if (!ext) {
         logkfe("task_ext_create(init) FAILED\\n");
         return -ENOMEM;
@@ -160,15 +162,11 @@ static void prepare_task_ext(struct task_struct *new, struct task_struct *old)
     bool sel_allow = READ_ONCE(old_ext->sel_allow);
     bool priv_sel_allow = READ_ONCE(old_ext->priv_sel_allow);
     if (!(sel_allow || priv_sel_allow)) return;
-    struct task_ext *new_ext = task_ext_create(new);
+    struct task_ext *new_ext = task_ext_create(new, sel_allow, priv_sel_allow);
     if (!new_ext) {
         logkfe("task_ext slot table full, skip\n");
         return;
     }
-    WRITE_ONCE(new_ext->sel_allow, sel_allow);
-    WRITE_ONCE(new_ext->priv_sel_allow, priv_sel_allow);
-
-    dsb(ish);
 }
 
 int task_ext_size = offsetof(struct task_ext, _magic);
