@@ -121,7 +121,10 @@ int write_kstorage(int gid, long did, void *data, int offset, int len, bool data
     new->dlen = len;
 
     rcu_read_lock();
+    unsigned long flags = kp_private_spin_lock(lock);
 
+    /* Serialize lookup with writers so an entry cannot be removed between
+     * discovering it and hlist_replace_rcu(). Allocation/copy already happened. */
     hlist_for_each_entry_rcu(pos, bucket, hnode)
     {
         if (pos->did == did) {
@@ -130,7 +133,6 @@ int write_kstorage(int gid, long did, void *data, int offset, int len, bool data
         }
     }
 
-    unsigned long flags = kp_private_spin_lock(lock);
     if (old) { // update
         hlist_replace_rcu(&old->hnode, &new->hnode);
     } else { // add new one
