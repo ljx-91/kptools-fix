@@ -49,6 +49,7 @@ def main():
     symbol_c = source("tools/symbol.c")
     hotpatch_c = source("kernel/base/hotpatch.c")
     hook_c = source("kernel/base/hook.c")
+    patch_c = source("kernel/patch/patch.c")
 
     # The known-bad memblock_alloc_try_nid fallback returns a kernel VA on
     # the supplied Y73S binary. It must never be selected as a PA allocator.
@@ -111,6 +112,16 @@ def main():
             "Y73S hotpatch must coordinate CPUs with stop_machine(..., NULL)")
     require(r"!kfunc\(stop_machine\).*?is_interrupt_masked\(\).*?return -EOPNOTSUPP;",
             hotpatch_fn, "missing stop_machine/interrupt state must fail closed")
+    require(r"is_interrupt_masked\\(\\)\\s*&&\\s*!hotpatch_early_boot", hotpatch_fn,
+            "IRQ-masked patching may only use the explicit early-boot window")
+    patch_fn = function_body(patch_c, "int patch()")
+    require(r"hotpatch_set_early_boot\\(1\\)", patch_fn,
+            "initial pre-rest_init hooks must enable the early-boot window")
+    before(patch_fn, "hotpatch_set_early_boot(1)", "hook_wrap4",
+           "early-boot mode must be active before rest_init hook installation")
+    before(function_body(patch_c, "static void before_rest_init("),
+           "android_user_init()", "hotpatch_set_early_boot(0)",
+           "early-boot mode must remain active through pre-rest_init hook setup")
     if "hotpatch_cb(&patch)" in hotpatch_fn:
         raise AssertionError("uncoordinated direct hotpatch callback fallback reintroduced")
 
@@ -130,6 +141,7 @@ def main():
     print("[PASS] linear-map probe ordering and reservation checks")
     print("[PASS] destination and intermediate page-table allocation guards")
     print("[PASS] hotpatch avoids unresolved CPU-mask symbols and fails closed")
+    print("[PASS] early-boot stop_machine window is explicitly scoped")
     print("[PASS] hook install/uninstall propagate patch failures safely")
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
