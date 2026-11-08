@@ -56,7 +56,7 @@ struct kp_module {
 		const char *base, *name, *version, *license, *author, *description;
 	} info;
 
-	char *args, *ctl_args;
+	char *args;
 
 	mod_initcall_t *init;
 	mod_ctl0call_t *ctl0;
