@@ -839,16 +839,15 @@ per-call trampoline slot acquisition/release, and branch reach. The verifier
 is wired into `.github/workflows/build-y73s-kptools-host.yml` and that
 workflow now watches `lkm/**`.
 
-Latest verified workflow before this report append:
-- Run `42503198058`, head `78e2022fc8694d26db0956060126eb9b8a6663e1`,
+Latest verified workflow:
+- Run `42503399769`, head `00104bf1f00fff39a09b8deac1bafd88b2db7c40`,
   conclusion `success`.
-- The `Audit LKM KPM ELF loader source` job passed.
+- The `Audit LKM KPM ELF loader source` job passed with the image-size and
+  per-call trampoline regression checks.
 - The Linux host kptools build/package job passed.
 
-The subsequent commits adding the image-size and trampoline checks and
-clarifying the trampoline comments are newer than that run and require their
-own CI result. This is source-level regression coverage only; no LKM kernel
-module build against a real target KDIR has been run.
+This is source-level regression coverage only; no LKM kernel module build
+against a real target KDIR has been run.
 
 ### Remaining high-severity blockers
 
