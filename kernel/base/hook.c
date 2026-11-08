@@ -785,7 +785,7 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
     if (is_bad_address(func)) return -HOOK_BAD_ADDRESS;
     uint64_t faddr = (uint64_t)func;
     uint64_t origin = branch_func_addr(faddr);
-    if (is_bad_address(func)) return -HOOK_BAD_ADDRESS;
+    if (is_bad_address((void *)origin)) return -HOOK_BAD_ADDRESS;
     hook_chain_t *chain = (hook_chain_t *)hook_get_mem_from_origin(origin);
     if (chain) return hook_chain_add(chain, before, after, udata);
     chain = (hook_chain_t *)hook_mem_zalloc(origin, INLINE_CHAIN);
@@ -819,7 +819,7 @@ void hook_unwrap_remove(void *func, void *before, void *after, int remove)
     if (is_bad_address(func)) return;
     uint64_t faddr = (uint64_t)func;
     uint64_t origin = branch_func_addr(faddr);
-    if (is_bad_address(func)) return;
+    if (is_bad_address((void *)origin)) return;
     hook_chain_t *chain = (hook_chain_t *)hook_get_mem_from_origin(origin);
     if (!chain) return;
     hook_chain_remove(chain, before, after);
