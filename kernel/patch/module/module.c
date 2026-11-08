@@ -740,9 +740,18 @@ long load_module_path_event(const char *path, const char *args, const char *even
     }
     loff_t len = vfs_llseek(filp, 0, SEEK_END);
     logkfd("module size: %llx\n", len);
-    vfs_llseek(filp, 0, SEEK_SET);
+    if (len <= 0 || len > 0x7fffffffLL) {
+        rc = -EFBIG;
+        set_kpm_load_result(reserved, rc, "module file size is invalid");
+        goto close;
+    }
+    if (vfs_llseek(filp, 0, SEEK_SET) < 0) {
+        rc = -EIO;
+        set_kpm_load_result(reserved, rc, "seek module file failed");
+        goto close;
+    }
 
-    void *data = vmalloc(len);
+    void *data = vmalloc((unsigned long)len);
     if (!data) {
         rc = -ENOMEM;
         set_kpm_load_result(reserved, rc, "allocate module file buffer failed");
@@ -869,6 +878,7 @@ KP_EXPORT_SYMBOL(notify_modules_event);
 
 struct module *find_module(const char *name)
 {
+    if (!name) return NULL;
     struct module *pos;
     list_for_each_entry(pos, &modules.list, list)
     {
@@ -906,9 +916,22 @@ int list_modules(char *out_names, int size)
     int off = 0;
     list_for_each_entry(pos, &modules.list, list)
     {
-        off += snprintf(out_names + off, size - 1 - off, "%s\n", pos->info.name);
+        int remaining = size - off;
+        int written;
+        if (remaining <= 1) break;
+        written = snprintf(out_names + off, remaining, "%s\n", pos->info.name);
+        if (written < 0) {
+            rcu_read_unlock();
+            return -EIO;
+        }
+        if (written >= remaining) {
+            off = size - 1;
+            break;
+        }
+        off += written;
     }
-    if (off > 0) out_names[off - 1] = '\0';
+    if (off > 0 && out_names[off - 1] == '\n') off--;
+    out_names[off] = '\0';
 
     rcu_read_unlock();
     return off;
@@ -916,11 +939,14 @@ int list_modules(char *out_names, int size)
 
 int get_module_info(const char *name, char *out_info, int size)
 {
-    if (size <= 0) return 0;
+    if (!name || !out_info || size <= 0) return -EINVAL;
     rcu_read_lock();
 
     struct module *mod = find_module(name);
-    if (!mod) return -ENOENT;
+    if (!mod) {
+        rcu_read_unlock();
+        return -ENOENT;
+    }
 
     int sz = snprintf(out_info, size,
                       "name=%s\n"
