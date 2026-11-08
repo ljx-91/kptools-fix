@@ -837,8 +837,9 @@ static void kp_module_put(struct kp_module *mod)
 }
 
 /* Hold the owning KPM alive for the complete kernel kallsyms iteration.
- * LOADING is permitted because init may itself iterate kallsyms; UNLOADING
- * is rejected so a new callback cannot race module teardown. */
+ * LOADING is permitted because init may itself iterate kallsyms. UNLOADING
+ * is permitted only while an existing active call keeps teardown pending;
+ * EXITING is rejected so no new callback can race the exit/free sequence. */
 static struct kp_module *kp_module_get_by_addr(unsigned long addr)
 {
 	struct kp_module *pos;
@@ -851,8 +852,7 @@ static struct kp_module *kp_module_get_by_addr(unsigned long addr)
 		 * prevents teardown; nested callbacks may safely pin it. */
 		if (pos->state != KP_MODULE_LOADING &&
 		    pos->state != KP_MODULE_LIVE &&
-		    pos->state != KP_MODULE_UNLOADING &&
-		    pos->state != KP_MODULE_EXITING)
+		    pos->state != KP_MODULE_UNLOADING)
 			continue;
 		start = (unsigned long)pos->start;
 		end = start + pos->size;
