@@ -95,8 +95,8 @@ def main():
 
     lookup = body(module, "static struct kp_module *kp_module_get(")
     need(r"spin_lock_irqsave", lookup, "module lookup lock")
-    need(r"state\\s*!=\\s*KP_MODULE_LIVE", lookup, "only LIVE modules may be acquired")
-    need(r"active_calls\\+\\+", lookup, "active callback reference acquisition")
+    need(r"state\s*!=\s*KP_MODULE_LIVE", lookup, "only LIVE modules may be acquired")
+    need(r"active_calls\+\+", lookup, "active callback reference acquisition")
 
     put = body(module, "static void kp_module_put(")
     need(r"spin_lock_irqsave", put, "module reference release lock")
@@ -106,7 +106,7 @@ def main():
     for pattern, message in [
         (r"KP_MODULE_UNLOADING", "unload state transition"),
         (r"active_calls", "unload active-call check"),
-        (r"return\\s+-EBUSY", "nonblocking unload retry"),
+        (r"return\s+-EBUSY", "nonblocking unload retry"),
         (r"KP_MODULE_EXITING", "serialized exit callback"),
         (r"list_del_init", "registry unlink"),
     ]:
@@ -117,24 +117,24 @@ def main():
     reserve = body(module, "long kp_load_module(")
     need(r"KP_MODULE_LOADING", reserve, "load-name reservation state")
     need(r"kp_find_module_locked", reserve, "duplicate-load serialization")
-    need(r"mod->state\\s*=\\s*KP_MODULE_LIVE", reserve, "publish only after successful init")
+    need(r"mod->state\s*=\s*KP_MODULE_LIVE", reserve, "publish only after successful init")
 
     ctl0 = body(module, "long kp_module_control0(")
-    need(r"kstrdup\\(ctl_args", ctl0, "call-local control argument copy")
-    need(r"kp_module_get\\(", ctl0, "control0 module reference")
-    need(r"kp_module_put\\(", ctl0, "control0 module reference release")
+    need(r"kstrdup\(ctl_args", ctl0, "call-local control argument copy")
+    need(r"kp_module_get\(", ctl0, "control0 module reference")
+    need(r"kp_module_put\(", ctl0, "control0 module reference release")
     if "mod->ctl_args" in ctl0:
         raise AssertionError("control0 must not share mutable module->ctl_args")
 
     ctl1 = body(module, "long kp_module_control1(")
-    need(r"kp_module_get\\(", ctl1, "control1 module reference")
-    need(r"kp_module_put\\(", ctl1, "control1 module reference release")
+    need(r"kp_module_get\(", ctl1, "control1 module reference")
+    need(r"kp_module_put\(", ctl1, "control1 module reference release")
 
     events = body(module, "long kp_notify_modules_event(")
     for pattern, message in [
         (r"kcalloc", "event snapshot allocation"),
-        (r"active_calls\\+\\+", "event snapshot reference acquisition"),
-        (r"kp_module_put\\(", "event callback reference release"),
+        (r"active_calls\+\+", "event snapshot reference acquisition"),
+        (r"kp_module_put\(", "event callback reference release"),
     ]:
         need(pattern, events, f"event fanout must provide {message}")
 
@@ -145,7 +145,7 @@ def main():
 
     safe_iter = body(module, "int kp_kpm_safe_kallsyms_on_each_symbol(")
     need(r"kp_module_get_by_addr", safe_iter, "kallsyms callback owner acquisition")
-    need(r"kp_module_put\\(owner\\)", safe_iter, "kallsyms callback owner release")
+    need(r"kp_module_put\(owner\)", safe_iter, "kallsyms callback owner release")
 
     data = body(relo, "static int reloc_data(")
     need(r"len\s*==\s*64", data, "explicit 64-bit relocation width")
