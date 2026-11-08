@@ -45,6 +45,11 @@ ifdef ANDROID
 	X86_CFLAGS += -DANDROID
 endif
 
+# Build a Y73S-only KPIMG without the unused 6.x scratch mapper.
+ifdef Y73S_TARGET
+	CFLAGS += -DKP_TARGET_Y73S=1
+endif
+
 INCLUDE := -I. -Iinclude -Ipatch/include -Ilinux -Ilinux/include -Ilinux/arch/arm64/include -Ilinux/tools/arch/arm64/include
 
 X86_INCLUDE := -I. -Iinclude -Ipatch/include -Ilinux/include -Ilinux/include/uapi/asm-generic -Ilinux/tools/arch/arm64/include
