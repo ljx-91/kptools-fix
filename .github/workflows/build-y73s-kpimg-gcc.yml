@@ -5,6 +5,7 @@ name: Build Y73S Android KPIMG (Arm GNU GCC 14.2)
   push:
     branches:
       - y73s-gcc-audit-20261108
+      - y73s-runtime-contract-hardening-20261108
     paths:
       - 'kernel/**'
       - 'scripts/**'
