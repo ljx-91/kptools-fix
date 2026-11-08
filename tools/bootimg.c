@@ -1407,8 +1407,9 @@ int patch_bootimg(const char *bootimg_path, const char *kpimg_path, const char *
         return -2;
     }
     long boot_size = ftell(fp);
-    if (boot_size < 0 || page_size < sizeof(hdr) || (page_size & (page_size - 1)) ||
-        !hdr.kernel_size || kernel_offset > (uint64_t)boot_size ||
+    if (boot_size < 0 || kernel_offset < sizeof(hdr) ||
+        (kernel_offset & (kernel_offset - 1)) || !hdr.kernel_size ||
+        kernel_offset > (uint64_t)boot_size ||
         hdr.kernel_size > (uint64_t)boot_size - kernel_offset) {
         fclose(fp);
         return -2;
