@@ -904,6 +904,11 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	struct kp_load_info *info = &load_info;
 	long rc = 0;
 
+	if (!data || len <= 0) {
+		set_load_error(info, "module image is empty or invalid");
+		rc = -EINVAL;
+		goto out;
+	}
 	if (!kp_module_alloc && !kp_execmem_alloc) {
 		set_load_error(info, "executable memory allocator unavailable");
 		rc = -ENOSYS;
@@ -1071,9 +1076,18 @@ long kp_load_module_path(const char *path, const char *args, void __user *reserv
 	}
 	loff_t len = vfs_llseek(filp, 0, SEEK_END);
 	logkfd("module size: %llx\n", len);
-	vfs_llseek(filp, 0, SEEK_SET);
+	if (len <= 0 || len > INT_MAX) {
+		rc = -EFBIG;
+		set_kpm_load_result(reserved, rc, "module file size is invalid");
+		goto close;
+	}
+	if (vfs_llseek(filp, 0, SEEK_SET) < 0) {
+		rc = -EIO;
+		set_kpm_load_result(reserved, rc, "seek module file failed");
+		goto close;
+	}
 
-	void *data = vmalloc(len);
+	void *data = vmalloc((unsigned long)len);
 	if (!data) {
 		rc = -ENOMEM;
 		set_kpm_load_result(reserved, rc, "allocate module file buffer failed");
