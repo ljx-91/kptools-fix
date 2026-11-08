@@ -206,3 +206,32 @@ The built KPIMG ELF contains symbols named `bypass_kcfi`, `replace_report_cfi_fa
 
 
 **Checksum label correction:** the workflow's `SHA256:` line is the ELF hash, not the raw KPIMG hash. For artifact `13615726175`, the raw `kpimg-android` SHA-256 is `28ed397a9e9bdb4489bbfbdd50333097baf68f6a2ce4517608c80a4f288d2863`; the ELF SHA-256 is `b7ceed6f78ff6f44a7326618cdf87affabce6dc5c1b5a561cce4d330b36d7252`. Both match the artifact's `SHA256SUMS.txt` entries when compared by filename.
+
+
+## Hook-chain failure propagation and ADR relocation guard (2026-11-08)
+
+A follow-up call-chain review found that the inline helpers `hook_chain_install()` and `hook_chain_uninstall()` discarded the return value from `hook_install()` / `hook_uninstall()`. Consequently, `hook_wrap()` could report success even when text patching failed, and `hook_unwrap_remove()` could free the chain/trampoline allocation even when restoring the original prologue failed.
+
+The active call sites now call the checked primitives directly:
+- `hook_wrap()` returns `-HOOK_PATCH_FAILED` for a normal patch failure;
+- on `-EUCLEAN`, it returns `-HOOK_PATCH_UNCERTAIN` and deliberately retains chain storage because the patched text may still reference it;
+- `hook_unwrap_remove()` retains chain/trampoline memory and returns if restoration fails; it frees only after a successful restore;
+- `unhook()` now rejects null/invalid function pointers and invalid resolved origins before looking up hook memory.
+
+The relocation audit also found that `relo_adr()` left an ADR target unchanged when it pointed into the prologue bytes that the hook would overwrite. The target could then refer to the newly installed branch sequence rather than the original bytes. The implementation now rejects such ADR relocations with `-HOOK_BAD_RELO` (fail-closed), matching the existing ADRP policy. It does not attempt to remap an arbitrary address into transformed trampoline instructions.
+
+### CI and artifact
+
+- CI: https://github.com/ljx-91/kptools-fix/actions/runs/42476609978
+- Source commit: `1f9699397d87163aa16fcb54f991487e525c8568`
+- GCC 14.2 build and all source/static checks: passed
+- Artifact ID: `13615676648`
+- Artifact ZIP SHA-256: `986a8a36db4bcae41d6440aa49bb6aaa2316fe3d697b5c49da0393262ad99252`
+- KPIMG SHA-256: `daa4efed10a9a0fb9354f4fa7daf0beb527c9f2cbda0dd67e458a465eeca137d`
+- ELF SHA-256: `a6757e80cf1c192d154edba87081eb3780ce68f49e3d4b1516ae16a5aa133701`
+
+The archive checksum and all four manifest payload checksums were independently matched. As in earlier builds, `SHA256SUMS.txt` contains `dist-y73s/...` paths while the artifact ZIP stores the files at its root; therefore running `sha256sum -c SHA256SUMS.txt` from the extracted root fails on path lookup. The file contents' hashes themselves match the manifest values exactly. This packaging-path mismatch remains a known CI artifact issue.
+
+### PAC/BTI scope
+
+The prologue path preserves PACIASP/PACIBSP in the relocated original instructions and prefixes the replacement trampoline with BTI_JC in that special case. This is not sufficient to claim general BTI compatibility: `branch_absolute()` uses `BR X17`, so the replacement target's landing-pad type and the target page's BTI enforcement must also be compatible. The Y73S Android 10 / Linux 4.14 target's actual BTI enablement and replacement entry encodings have not been established from the original vendor kernel. Leave PAC/BTI compatibility **unverified** until those facts are checked against the exact device image and CPU feature state.
