@@ -158,3 +158,19 @@ The old `can_b_rel()` used a symmetric absolute-distance check of `<= 0x08000000
 The source verifier now checks the relocation buffer expression, both alignment guards, and the exact positive/negative range endpoints. Workflow for the new source commit: https://github.com/ljx-91/kptools-fix/actions/runs/42475461806
 
 The prior compiled artifact's disassembly was inspected with LLVM objdump; it predates these latest two source changes and therefore is not evidence for the newly corrected code. Wait for the current workflow to complete before treating the new KPIMG as a verified build. No target device execution has been performed.
+
+
+### Hook relocation hardening build result
+
+The updated source commit `45138be7b961cc15fadc2f7172b9a7a1b3f278bf` passed GCC 14.2 CI:
+
+- Workflow: https://github.com/ljx-91/kptools-fix/actions/runs/42475461806
+- New relocation-buffer and A64 branch-boundary regression check: passed.
+- KPIMG SHA-256: `50054d4ee21bacc0313ff5e586a44ae1627e59a235e17bd994064179636b6eba`
+- ELF SHA-256: `369c0cf4229b0200bcfe251d5ab43e867679aaf4c1643761e11e396bfa966509`
+- Artifact ZIP SHA-256: `4a97729c666d5bc80f0fffa5fe6f5add8711e703c6a42cb840f1a5e6d785b2a3`
+- Artifact ID: `13615750289`
+
+The downloaded ELF was disassembled locally with LLVM objdump. `hook_prepare` initializes the relocation buffer through offset `0x128` from offset `0x58`, which is 52 32-bit words, matching the new array size. The emitted `branch_relative` checks alignment and uses the distinct positive limit `0x07fffffc` and negative limit `0x08000000`. This is binary confirmation of the two source changes.
+
+The ZIP still stores files at its root while `SHA256SUMS.txt` names them with a `dist-y73s/` prefix; therefore `sha256sum -c SHA256SUMS.txt` fails if run from the extracted root. Each file's SHA-256 was independently calculated and matches the manifest. Fix the artifact directory layout in a separate workflow cleanup.
