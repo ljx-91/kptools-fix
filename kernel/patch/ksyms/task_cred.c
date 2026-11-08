@@ -541,21 +541,10 @@ int resolve_task_offset()
     log_boot("    cred offset: %x\n", task_struct_offset.cred_offset);
     log_boot("    real_cred offset: %x\n", task_struct_offset.real_cred_offset);
 
-    // seccomp
-    if (kfunc(prctl_get_seccomp)) {
-        for (uintptr_t i = (uintptr_t)task; i < (uintptr_t)task + TASK_STRUCT_MAX_SIZE; i += sizeof(uint32_t)) {
-            int *modep = (int *)i;
-            int mode_back = *modep;
-            if (mode_back) continue;
-            *modep = 1158;
-            int mode = prctl_get_seccomp();
-            if (mode == 1158) {
-                task_struct_offset.seccomp_offset = i - (uintptr_t)task;
-            }
-            *modep = mode_back;
-        }
-    }
-    log_boot("    seccomp offset: %x\n", task_struct_offset.seccomp_offset);
+    /* Seccomp state is intentionally preserved; no raw task_struct offset
+     * is needed by the credential path. Avoid probing arbitrary scratch-task
+     * fields through prctl_get_seccomp(). */
+    task_struct_offset.seccomp_offset = -1;
 
     // active_mm
     init_mm = (struct mm_struct *)kallsyms_lookup_name("init_mm");
