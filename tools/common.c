@@ -10,9 +10,10 @@ bool log_enable = false;
 
 int can_b_imm(uint64_t from, uint64_t to)
 {
-    // B: 128M
-    uint32_t imm26 = 1 << 25 << 2;
-    return (to >= from && to - from <= imm26) || (from >= to && from - to <= imm26);
+    /* A64 B uses signed imm26<<2: [-128 MiB, +128 MiB-4], word aligned. */
+    if ((from & 3) || (to & 3)) return 0;
+    if (to >= from) return to - from <= 0x07fffffcULL;
+    return from - to <= 0x08000000ULL;
 }
 
 int b(uint32_t *buf, uint64_t from, uint64_t to)
@@ -39,19 +40,41 @@ int32_t relo_branch_func(const char *img, int32_t func_offset)
 
 void read_file_align(const char *path, char **con, int *out_len, int align)
 {
+    if (!path || !con || !out_len || align <= 0 || (align & (align - 1)))
+        tools_loge_exit("invalid read_file_align arguments\\n");
+
     FILE *fp = fopen(path, "rb");
-    if (!fp) tools_log_errno_exit("open file %s\n", path);
-    fseek(fp, 0, SEEK_END);
-    int len = (int)ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    int align_len = (int)align_ceil(len, align);
-    char *buf = (char *)malloc(align_len);
-    memset(buf + len, 0, align_len - len);
-    int readlen = fread(buf, 1, len, fp);
-    if (readlen != len) tools_log_errno_exit("read file %s\n", path);
+    if (!fp) tools_log_errno_exit("open file %s\\n", path);
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        tools_log_errno_exit("seek file %s\\n", path);
+    }
+    long file_size = ftell(fp);
+    if (file_size < 0 || file_size > 0x7fffffffL || fseek(fp, 0, SEEK_SET) != 0) {
+        fclose(fp);
+        tools_loge_exit("invalid or oversized file %s\\n", path);
+    }
+
+    uint64_t aligned = align_ceil((uint64_t)file_size, (uint64_t)align);
+    if (aligned > 0x7fffffffULL) {
+        fclose(fp);
+        tools_loge_exit("aligned file %s is too large\\n", path);
+    }
+    size_t allocation = aligned ? (size_t)aligned : 1;
+    char *buf = (char *)calloc(1, allocation);
+    if (!buf) {
+        fclose(fp);
+        tools_loge_exit("allocate file buffer for %s failed\\n", path);
+    }
+    size_t readlen = fread(buf, 1, (size_t)file_size, fp);
+    if (readlen != (size_t)file_size) {
+        free(buf);
+        fclose(fp);
+        tools_loge_exit("short read from file %s\\n", path);
+    }
     fclose(fp);
     *con = buf;
-    *out_len = align_len;
+    *out_len = (int)aligned;
 }
 
 void write_file(const char *path, const char *con, int len, bool append)
