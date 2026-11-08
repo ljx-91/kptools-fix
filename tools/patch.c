@@ -877,11 +877,11 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     for (int i = 0; i < extra_config_num; i++) {
         extra_config_t *config = extra_configs + i;
         if (!config->item || config->item->args_size < 0 || config->item->con_size < 0 ||
-            (config->item->con_size && !config->data)) tools_loge_exit("invalid extra item sizes/data\\n");
+            (config->item->con_size && !config->data)) tools_loge_exit("invalid extra item sizes/data\n");
         extra_size64 += sizeof(patch_extra_item_t);
         extra_size64 += (uint64_t)config->item->args_size;
         extra_size64 += (uint64_t)config->item->con_size;
-        if (extra_size64 > 0x7fffffffULL) tools_loge_exit("extra payload is too large\\n");
+        if (extra_size64 > 0x7fffffffULL) tools_loge_exit("extra payload is too large\n");
     }
 
     // copy to out image; all offsets stay within the signed-size API contract.
@@ -901,7 +901,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     if (out_all_len64 > start_offset64) {
         start_offset64 = align_ceil(out_all_len64, SZ_4K);
         if (start_offset64 > 0x7fffffffULL) return -EFBIG;
-        tools_logi("patch overlap, move start from 0x%x to 0x%llx\\n",
+        tools_logi("patch overlap, move start from 0x%x to 0x%llx\n",
                    align_kernel_size, (unsigned long long)start_offset64);
     }
     int start_offset = (int)start_offset64;
@@ -922,7 +922,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     uint64_t image_size64 = align_ceil((uint64_t)start_offset + (uint64_t)kpimg_len + extra_size64, SZ_4K);
     if (image_size64 > 0x7fffffffULL) return -EFBIG;
     int image_size = (int)image_size64;
-    tools_logi("image_size: 0x%llx -> 0x%x\\n", (unsigned long long)kinfo->kernel_size, image_size);
+    tools_logi("image_size: 0x%llx -> 0x%x\n", (unsigned long long)kinfo->kernel_size, image_size);
     kernel_resize(kinfo, out_kernel_file.kimg, image_size);
 
     // set preset
