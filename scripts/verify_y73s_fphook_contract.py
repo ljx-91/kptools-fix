@@ -34,7 +34,7 @@ checks = {
         "if (ssid == all_allow_sid)" not in acc and
         "if (all_allow_sid != SECSID_NULL)" not in acc,
     "retired hook slots are not reused": "warp->using = 2;" in hmem and
-        "if (wrap->using == 1 && wrap->addr == origin_addr)" in hmem,
+        "if ((wrap->using == 1 || wrap->using == 3) && wrap->addr == origin_addr)" in hmem,
     "inline hook retirement on successful restore": "hook_mem_retire(hook);" in hook and
         "hook_mem_retire(chain);" in hook,
     "function-pointer chain retirement on successful restore": "hook_mem_retire(chain);" in src,
