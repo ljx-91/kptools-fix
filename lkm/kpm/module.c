@@ -807,6 +807,9 @@ static struct kp_module *kp_loading_mod;
  * KCFI inline check's [target-4] read stays inside the mapped page. */
 static void *kp_callback_tramp;
 static unsigned long kp_callback_tramp_size;
+#define KP_CALLBACK_TRAMP_SLOT_SIZE 16
+#define KP_CALLBACK_TRAMP_SLOT_COUNT (PAGE_SIZE / KP_CALLBACK_TRAMP_SLOT_SIZE)
+static unsigned long kp_callback_tramp_slots[(KP_CALLBACK_TRAMP_SLOT_COUNT + BITS_PER_LONG - 1) / BITS_PER_LONG];
 
 typedef int (*kp_kallsyms_on_each_symbol_t)(kp_kallsyms_cb_t fn, void *data);
 static kp_kallsyms_on_each_symbol_t kp_real_kallsyms_on_each_symbol;
@@ -864,41 +867,81 @@ bool kp_kpm_cfi_allowed_addr(unsigned long addr)
  * iterator. find_check_fn() then validates the trampoline page (covered by
  * kp_kpm_cfi_allowed_addr, noop check fn) and the BLR lands on bti c, which
  * direct-branches into the non-BTI KPM callback with the call args intact. */
+static int kp_callback_tramp_slot_alloc(unsigned long *slot)
+{
+	unsigned long flags;
+	unsigned int i;
+
+	spin_lock_irqsave(&module_lock, flags);
+	for (i = 0; i < KP_CALLBACK_TRAMP_SLOT_COUNT; i++) {
+		unsigned long mask = 1UL << (i % BITS_PER_LONG);
+		unsigned int word = i / BITS_PER_LONG;
+		if (!(kp_callback_tramp_slots[word] & mask)) {
+			kp_callback_tramp_slots[word] |= mask;
+			*slot = i;
+			spin_unlock_irqrestore(&module_lock, flags);
+			return 0;
+		}
+	}
+	spin_unlock_irqrestore(&module_lock, flags);
+	return -EBUSY;
+}
+
+static void kp_callback_tramp_slot_free(unsigned long slot)
+{
+	unsigned long flags;
+	if (slot >= KP_CALLBACK_TRAMP_SLOT_COUNT)
+		return;
+	spin_lock_irqsave(&module_lock, flags);
+	kp_callback_tramp_slots[slot / BITS_PER_LONG] &=
+		~(1UL << (slot % BITS_PER_LONG));
+	spin_unlock_irqrestore(&module_lock, flags);
+}
+
+/* Concurrent KPM iterators use separate slots, so another CPU cannot
+ * overwrite a trampoline while the kernel is invoking its callback. */
 __attribute__((no_sanitize("cfi")))
 int kp_kpm_safe_kallsyms_on_each_symbol(kp_kallsyms_cb_t fn, void *data)
 {
+	unsigned long slot, offset;
+	long branch_off;
+	u32 *words;
+	int rc;
+
 	if (!kp_real_kallsyms_on_each_symbol)
 		return -EOPNOTSUPP;
-
-	if (!kp_callback_tramp || !kp_kpm_cfi_allowed_addr((unsigned long)fn))
+	if (!kp_kpm_cfi_allowed_addr((unsigned long)fn))
 		return kp_real_kallsyms_on_each_symbol(fn, data);
+	if (!kp_callback_tramp)
+		return -EOPNOTSUPP;
 
-	{
-		unsigned long flags;
-		u32 *slot = (u32 *)kp_callback_tramp + 2; /* page+8 */
-		u32 *pad = (u32 *)kp_callback_tramp;
-		long off = (long)((unsigned long)fn - ((unsigned long)slot + 4));
-
-		pr_emerg(KPLKM_TAG ": kallsyms safe: fn=%px tramp=%px off=%ld\n",
-			 (void *)fn, kp_callback_tramp, off);
-
-		spin_lock_irqsave(&module_lock, flags);
-		pad[0] = 0; /* keep [target-4] mapped + zeroed for the KCFI check */
-		pad[1] = 0;
-		slot[0] = 0xd503245f; /* bti c */
-		slot[1] = 0x14000000 | (((unsigned long)off >> 2) & 0x03ffffff); /* b <fn> */
-		dsb(ishst);
-		asm volatile("ic iallu");
-		dsb(ish);
-		isb();
-		spin_unlock_irqrestore(&module_lock, flags);
+	rc = kp_callback_tramp_slot_alloc(&slot);
+	if (rc)
+		return rc;
+	offset = slot * KP_CALLBACK_TRAMP_SLOT_SIZE;
+	words = (u32 *)((char *)kp_callback_tramp + offset);
+	branch_off = (long)((unsigned long)fn -
+			    ((unsigned long)kp_callback_tramp + offset + 12));
+	/* B imm26 is signed, word-scaled, and reaches +/-128 MiB. */
+	if ((branch_off & 3) || branch_off < -(1L << 27) ||
+	    branch_off >= (1L << 27)) {
+		kp_callback_tramp_slot_free(slot);
+		return -ERANGE;
 	}
 
-	{
-		int r = kp_real_kallsyms_on_each_symbol((kp_kallsyms_cb_t)((char *)kp_callback_tramp + 8), data);
-		pr_emerg(KPLKM_TAG ": kallsyms safe done rc=%d\n", r);
-		return r;
-	}
+	words[0] = 0;
+	words[1] = 0;
+	words[2] = 0xd503245f; /* bti c */
+	words[3] = 0x14000000 | (((unsigned long)branch_off >> 2) & 0x03ffffff);
+	dsb(ishst);
+	asm volatile("ic iallu");
+	dsb(ish);
+	isb();
+
+	rc = kp_real_kallsyms_on_each_symbol(
+		(kp_kallsyms_cb_t)((char *)kp_callback_tramp + offset + 8), data);
+	kp_callback_tramp_slot_free(slot);
+	return rc;
 }
 
 static struct kp_module *kp_find_module(const char *name)
