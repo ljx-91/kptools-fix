@@ -247,36 +247,42 @@ int fillin_map_symbol(kallsym_t *kallsym, char *img_buf, map_symbol_t *symbol, i
 
     symbol->memblock_mark_nomap_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_mark_nomap");
 
-    symbol->memblock_phys_alloc_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_phys_alloc_try_nid");
+    /*
+     * Prefer the range finder when available. Unlike memblock_alloc_try_nid,
+     * memblock_find_in_range returns a physical address; map.c reserves the
+     * selected range with memblock_reserve before using it.
+     */
+    symbol->memblock_phys_alloc_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_find_in_range");
     if (symbol->memblock_phys_alloc_relo) {
-        symbol->memblock_phys_alloc_type = MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID;
+        symbol->memblock_phys_alloc_type = MAP_SYM_MEMBLOCK_FIND_IN_RANGE;
+    } else {
+        symbol->memblock_phys_alloc_relo =
+            get_symbol_offset_zero(kallsym, img_buf, "memblock_phys_alloc_try_nid");
+        if (symbol->memblock_phys_alloc_relo) {
+            symbol->memblock_phys_alloc_type = MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID;
+        }
     }
 
-    symbol->memblock_virt_alloc_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_virt_alloc_try_nid");
+    /*
+     * The nopanic variant has the same five-argument ABI but lets the map
+     * probe handle an unavailable range without entering the kernel panic
+     * path. Fall back to the regular variant only on kernels lacking it.
+     */
+    symbol->memblock_virt_alloc_relo =
+        get_symbol_offset_zero(kallsym, img_buf, "memblock_virt_alloc_try_nid_nopanic");
+    if (!symbol->memblock_virt_alloc_relo) {
+        symbol->memblock_virt_alloc_relo =
+            get_symbol_offset_zero(kallsym, img_buf, "memblock_virt_alloc_try_nid");
+    }
     if (symbol->memblock_virt_alloc_relo) {
         symbol->memblock_virt_alloc_type = MAP_SYM_MEMBLOCK_VIRT_ALLOC_TRY_NID;
     }
 
-    /*
-     * Do not substitute memblock_alloc_try_nid for either allocator.
-     * On the audited Y73S 4.14.141 kernel this symbol has a 3-argument
-     * entry but returns a kernel virtual pointer, not a physical address.
-     * Its ABI also does not match the 5-argument virtual allocator call.
-     * Treat missing typed allocators as unsupported instead of emitting a
-     * KPIMG with a semantically invalid function pointer.
-     */
-    uint64_t memblock_alloc_try_nid = get_symbol_offset_zero(kallsym, img_buf, "memblock_alloc_try_nid");
     if (!symbol->memblock_phys_alloc_relo) {
-        if (memblock_alloc_try_nid) {
-            tools_loge_exit("unsafe: memblock_alloc_try_nid is not a physical allocator; refusing map patch\n");
-        }
-        tools_loge_exit("no verified physical allocator: memblock_phys_alloc_try_nid\n");
+        tools_loge_exit("no verified physical allocator or memblock_find_in_range\\n");
     }
     if (!symbol->memblock_virt_alloc_relo) {
-        if (memblock_alloc_try_nid) {
-            tools_loge_exit("unsafe: memblock_alloc_try_nid does not match the 5-argument virtual allocator ABI\n");
-        }
-        tools_loge_exit("no verified 5-argument virtual allocator: memblock_virt_alloc_try_nid\n");
+        tools_loge_exit("no verified five-argument memblock virtual allocator\\n");
     }
 
     if ((is_be() ^ target_is_be)) {
