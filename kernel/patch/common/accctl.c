@@ -222,14 +222,13 @@ int commit_common_su(uid_t to_uid, const char *sctx)
     }
 
     ext->sel_allow = sel_allow_after_commit;
-    struct thread_info *thi = current_thread_info();
-    if (thi) thi->flags &= ~(_TIF_SECCOMP);
-    if (task_range_valid(task_struct_offset.seccomp_offset, sizeof(struct seccomp))) {
-        struct seccomp *seccomp = (struct seccomp *)((uintptr_t)task + task_struct_offset.seccomp_offset);
-        seccomp->mode = SECCOMP_MODE_DISABLED;
-    } else {
-        logkfe("commit_common_su: unresolved seccomp offset; leaving seccomp unchanged\\n");
-    }
+    /*
+     * Do not clear _TIF_SECCOMP or overwrite seccomp->mode directly.
+     * The seccomp filter pointer and its reference-counted lifetime must stay
+     * consistent with the mode and thread flags. This KP shim has no safe
+     * kernel seccomp teardown primitive, so preserve the caller's seccomp
+     * policy across the credential transition.
+     */
 
 out:
     logkfi("pid: %d, tgid: %d, to_uid: %d, sctx: %s, via_hook: %d\n", ext ? ext->pid : -1, ext ? ext->tgid : -1,
