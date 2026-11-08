@@ -152,6 +152,15 @@ def main():
     if "B_REL_RANGE" in branch_range:
         raise AssertionError("symmetric A64 branch range check reintroduced")
 
+    patch_text = function_body(hotpatch_c, "int hotpatch_nosync(")
+    before(patch_text, "*(uint32_t *)tp = value;", "__flush_dcache_area",
+           "instruction writes must be cleaned from D-cache before I-cache invalidation")
+    before(patch_text, "__flush_dcache_area", "flush_icache_all",
+           "global I-cache invalidation must follow D-cache clean")
+    require(r"__flush_dcache_area\\(\\(void \\*\\)tp,\\s*sizeof\\(uint32_t\\)\\)",
+            patch_text, "instruction patch must clean the modified D-cache line")
+
+    print("[PASS] instruction patch cleans D-cache before global I-cache invalidation")
     print("[PASS] Y73S allocator dispatch excludes virtual-return fallback")
     print("[PASS] physical ranges are reserved before use")
     print("[PASS] linear-map probe ordering and reservation checks")
