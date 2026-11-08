@@ -794,11 +794,48 @@ static int elf_header_check(struct kp_load_info *info)
 struct kp_module modules = { 0 };
 static spinlock_t module_lock;
 
-/* Set while a KPM's init runs: during that window the module is not yet on
- * modules.list, but its image must already be shielded from the Qualcomm
- * find_check_fn() panic / BTI faults (the KPM may iterate kallsyms from init).
- * Cleared as soon as kp_call_init() returns. */
-static struct kp_module *kp_loading_mod;
+/* state and active_calls are protected by module_lock. */
+static struct kp_module *kp_find_module_locked(const char *name)
+{
+	struct kp_module *pos;
+	list_for_each_entry(pos, &modules.list, list) {
+		if (!strcmp(name, pos->info.name))
+			return pos;
+	}
+	return NULL;
+}
+
+static struct kp_module *kp_module_get(const char *name)
+{
+	struct kp_module *mod;
+	unsigned long flags;
+
+	if (!name || !READ_ONCE(kp_kpm_ready))
+		return NULL;
+	spin_lock_irqsave(&module_lock, flags);
+	mod = kp_find_module_locked(name);
+	if (!mod || mod->state != KP_MODULE_LIVE)
+		mod = NULL;
+	else
+		mod->active_calls++;
+	spin_unlock_irqrestore(&module_lock, flags);
+	return mod;
+}
+
+static void kp_module_put(struct kp_module *mod)
+{
+	unsigned long flags;
+
+	if (!mod)
+		return;
+	spin_lock_irqsave(&module_lock, flags);
+	if (WARN_ON_ONCE(!mod->active_calls)) {
+		spin_unlock_irqrestore(&module_lock, flags);
+		return;
+	}
+	mod->active_calls--;
+	spin_unlock_irqrestore(&module_lock, flags);
+}
 
 /* One PAGE_SIZE module_alloc'd RWX page. The safe kallsyms_on_each_symbol()
  * stand-in assigns a distinct 16-byte slot to each active KPM callback:
@@ -826,29 +863,22 @@ bool kp_kpm_cfi_allowed_addr(unsigned long addr)
 	if (!READ_ONCE(kp_kpm_ready))
 		return false;
 
-	rcu_read_lock();
-	list_for_each_entry(pos, &modules.list, list) {
-		start = (unsigned long)pos->start;
-		end = start + pos->size;
-		if (addr >= start && addr < end) {
-			ok = true;
-			break;
+	{
+		unsigned long flags;
+		/* No module pointer escapes this locked range check. */
+		spin_lock_irqsave(&module_lock, flags);
+		list_for_each_entry(pos, &modules.list, list) {
+			start = (unsigned long)pos->start;
+			end = start + pos->size;
+			if (addr >= start && addr < end) {
+				ok = true;
+				break;
+			}
 		}
+		spin_unlock_irqrestore(&module_lock, flags);
 	}
-	rcu_read_unlock();
 	if (ok)
 		return true;
-
-	/* The module being initialized is not linked yet. */
-	{
-		struct kp_module *loading = READ_ONCE(kp_loading_mod);
-		if (loading) {
-			start = (unsigned long)loading->start;
-			end = start + loading->size;
-			if (addr >= start && addr < end)
-				return true;
-		}
-	}
 
 	if (kp_callback_tramp) {
 		start = (unsigned long)kp_callback_tramp;
@@ -943,17 +973,6 @@ int kp_kpm_safe_kallsyms_on_each_symbol(kp_kallsyms_cb_t fn, void *data)
 	return rc;
 }
 
-static struct kp_module *kp_find_module(const char *name)
-{
-	struct kp_module *pos;
-	list_for_each_entry(pos, &modules.list, list)
-	{
-		if (!strcmp(name, pos->info.name))
-			return pos;
-	}
-	return 0;
-}
-
 long kp_load_module(const void *data, int len, const char *args, const char *event,
 		    void __user *reserved)
 {
@@ -976,13 +995,6 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		goto out;
 	if ((rc = setup_load_info(info)))
 		goto out;
-
-	if (kp_find_module(info->info.name)) {
-		logkfd("%s exist\n", info->info.name);
-		set_load_error(info, "module already exists");
-		rc = -EEXIST;
-		goto out;
-	}
 
 	struct kp_module *mod = (struct kp_module *)kzalloc(sizeof(struct kp_module), GFP_KERNEL);
 	if (!mod) {
@@ -1042,27 +1054,49 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	pr_emerg(KPLKM_TAG ": KPM [%s] entering init=%px image=%px size=%u\n",
 		 mod->info.name, mod->init, mod->start, mod->size);
 
-	WRITE_ONCE(kp_loading_mod, mod);
+	/* Reserve the name before init: concurrent loads cannot both enter
+	 * init. LOADING entries are visible to the CFI range check only. */
+	{
+		unsigned long flags;
+		spin_lock_irqsave(&module_lock, flags);
+		if (kp_find_module_locked(mod->info.name)) {
+			spin_unlock_irqrestore(&module_lock, flags);
+			set_load_error(info, "module already exists or is loading");
+			rc = -EEXIST;
+			goto free;
+		}
+		mod->state = KP_MODULE_LOADING;
+		list_add_tail(&mod->list, &modules.list);
+		spin_unlock_irqrestore(&module_lock, flags);
+	}
 	pr_emerg(KPLKM_TAG ": KPM [%s] call init fn=%px (*fn)=%px args=%px args0='%s' event='%s'\n",
 		 mod->info.name, mod->init,
 		 mod->init ? *(mod_initcall_t *)mod->init : 0,
 		 mod->args, mod->args ? mod->args : "(null)",
 		 event ? event : "(null)");
 	rc = kp_call_init(mod->init, mod->args, event, reserved);
-	WRITE_ONCE(kp_loading_mod, NULL);
 	pr_emerg(KPLKM_TAG ": KPM [%s] init returned %ld\n", mod->info.name, rc);
 
 	if (!rc) {
+		unsigned long flags;
+		spin_lock_irqsave(&module_lock, flags);
+		mod->state = KP_MODULE_LIVE;
+		spin_unlock_irqrestore(&module_lock, flags);
 		logkfi("[%s] succeed with [%s]\n", mod->info.name, args ? args : "");
-		list_add_tail(&mod->list, &modules.list);
 		goto out;
-	} else {
-		set_load_error(info, "module init failed");
-		logkfi("[%s] failed with [%s] error: %ld, try exit ...\n", mod->info.name,
-		       args ? args : "", rc);
-		if (mod->exit)
-			kp_call_exit(mod->exit, reserved);
 	}
+	{
+		unsigned long flags;
+		spin_lock_irqsave(&module_lock, flags);
+		list_del_init(&mod->list);
+		mod->state = KP_MODULE_DEAD;
+		spin_unlock_irqrestore(&module_lock, flags);
+	}
+	set_load_error(info, "module init failed");
+	logkfi("[%s] failed with [%s] error: %ld, try exit ...\n", mod->info.name,
+	       args ? args : "", rc);
+	if (mod->exit)
+		kp_call_exit(mod->exit, reserved);
 
 free:
 	if (mod->args)
@@ -1078,39 +1112,54 @@ out:
 
 long kp_unload_module(const char *name, void __user *reserved)
 {
+	struct kp_module *mod;
+	unsigned long flags;
+	long rc;
+
 	if (!name)
 		return -EINVAL;
 	logkfe("name: %s\n", name);
 
-	rcu_read_lock();
-	long rc = 0;
-
-	struct kp_module *mod = kp_find_module(name);
+	/* get() and the LIVE -> UNLOADING transition share module_lock. If a
+	 * callback is active, keep the module hidden and ask the caller to retry;
+	 * this also makes self-unload fail without waiting on its own reference. */
+	spin_lock_irqsave(&module_lock, flags);
+	mod = kp_find_module_locked(name);
 	if (!mod) {
-		rc = -ENOENT;
-		goto out;
+		spin_unlock_irqrestore(&module_lock, flags);
+		return -ENOENT;
 	}
-	list_del(&mod->list);
-	rc = kp_call_exit(mod->exit, reserved);
+	if (mod->state == KP_MODULE_LOADING) {
+		spin_unlock_irqrestore(&module_lock, flags);
+		return -EBUSY;
+	}
+	if (mod->state == KP_MODULE_LIVE)
+		mod->state = KP_MODULE_UNLOADING;
+	if (mod->state != KP_MODULE_UNLOADING) {
+		spin_unlock_irqrestore(&module_lock, flags);
+		return -ENOENT;
+	}
+	if (mod->active_calls) {
+		spin_unlock_irqrestore(&module_lock, flags);
+		return -EBUSY;
+	}
+	list_del_init(&mod->list);
+	mod->state = KP_MODULE_DEAD;
+	spin_unlock_irqrestore(&module_lock, flags);
 
+	rc = kp_call_exit(mod->exit, reserved);
 	if (mod->args)
 		kvfree(mod->args);
 	if (mod->ctl_args)
 		kvfree(mod->ctl_args);
-
 	if (kp_set_memory_nx && mod->start) {
 		int npages = (mod->size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 		kp_do_set_memory_nx((unsigned long)mod->start, npages);
 	}
-
-	if (kp_module_memfree && mod->start)
+	if (mod->start)
 		kp_free_exec(mod->start);
 	kfree(mod);
-
 	logkfi("name: %s, rc: %ld\n", name, rc);
-
-out:
-	rcu_read_unlock();
 	return rc;
 }
 
@@ -1176,69 +1225,47 @@ out:
 
 long kp_module_control0(const char *name, const char *ctl_args, char __user *out_msg, int outlen)
 {
-	if (!name || !ctl_args)
+	struct kp_module *mod;
+	char *args_copy;
+	long rc;
+
+	if (!name || !ctl_args || !*ctl_args)
 		return -EINVAL;
-	int args_len = strlen(ctl_args);
-	if (args_len <= 0)
-		return -EINVAL;
-
-	logkfi("name %s, args: %s\n", name, ctl_args);
-
-	long rc = 0;
-	rcu_read_lock();
-
-	struct kp_module *mod = kp_find_module(name);
+	args_copy = kstrdup(ctl_args, GFP_KERNEL);
+	if (!args_copy)
+		return -ENOMEM;
+	mod = kp_module_get(name);
 	if (!mod) {
-		rc = -ENOENT;
-		goto out;
+		kfree(args_copy);
+		return -ENOENT;
 	}
-
-	if (!mod->ctl0 || !*mod->ctl0) {
-		logkfe("no ctl0\n");
+	if (!mod->ctl0 || !*mod->ctl0)
 		rc = -ENOSYS;
-		goto out;
-	}
-
-	if (mod->ctl_args)
-		kvfree(mod->ctl_args);
-
-	mod->ctl_args = kstrdup(ctl_args, GFP_KERNEL);
-	if (!mod->ctl_args) {
-		rc = -ENOMEM;
-		goto out;
-	}
-
-	rc = kp_call_ctl0(mod->ctl0, mod->ctl_args, out_msg, outlen);
-
+	else
+		rc = kp_call_ctl0(mod->ctl0, args_copy, out_msg, outlen);
+	kfree(args_copy);
+	kp_module_put(mod);
 	logkfi("name: %s, rc: %ld\n", name, rc);
-out:
-	rcu_read_unlock();
 	return rc;
 }
 
 long kp_module_control1(const char *name, void *a1, void *a2, void *a3)
 {
+	struct kp_module *mod;
+	long rc;
+
+	if (!name)
+		return -EINVAL;
 	logkfi("name %s, a1: %px, a2: %px, a3: %px\n", name, a1, a2, a3);
-	long rc = 0;
-	rcu_read_lock();
-
-	struct kp_module *mod = kp_find_module(name);
-	if (!mod) {
-		rc = -ENOENT;
-		goto out;
-	}
-
-	if (!mod->ctl1 || !*mod->ctl1) {
-		logkfe("no ctl1\n");
+	mod = kp_module_get(name);
+	if (!mod)
+		return -ENOENT;
+	if (!mod->ctl1 || !*mod->ctl1)
 		rc = -ENOSYS;
-		goto out;
-	}
-
-	rc = kp_call_ctl1(mod->ctl1, a1, a2, a3);
-
+	else
+		rc = kp_call_ctl1(mod->ctl1, a1, a2, a3);
+	kp_module_put(mod);
 	logkfi("name: %s, rc: %ld\n", name, rc);
-out:
-	rcu_read_unlock();
 	return rc;
 }
 
