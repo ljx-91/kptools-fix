@@ -540,7 +540,7 @@ static int setup_load_info(struct load_info *info)
             Elf_Sym *symbols = (void *)symsec->sh_addr;
             for (unsigned int n = 0; n < symsec->sh_size / sizeof(Elf_Sym); n++) {
                 if (symbols[n].st_name >= strsec->sh_size ||
-                    !memchr(info->strtab + symbols[n].st_name, '\\0',
+                    !memchr(info->strtab + symbols[n].st_name, '\0',
                             strsec->sh_size - symbols[n].st_name)) {
                     set_load_error(info, "invalid ELF symbol name");
                     return -ENOEXEC;
