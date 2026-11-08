@@ -70,6 +70,51 @@ def main():
     print("[PASS] preset additional strings are bounded")
     print("[PASS] legacy/current preset display validates layout size")
 
+    append = body(src, "static int extra_append(")
+    need(r"\\*offset\s*>\s*capacity", append,
+         "extra append must validate the current output offset")
+    need(r"len\s*>\s*capacity\s*-\s*\\*offset", append,
+         "extra append must bound each write")
+    update = body(src, "int patch_update_img_buf(")
+    need(r"extra_config_num\s*<\s*0.*?extra_config_num\s*>\s*EXTRA_ITEM_MAX_NUM", update,
+         "patching must bound the number of extra items")
+    need(r"out_all_len64\s*>\s*0x7fffffffULL", update,
+         "patch output size arithmetic must be checked before narrowing")
+    need(r"current_offset\s*!=\s*\(size_t\)out_all_len", update,
+         "extra serialization must exactly fill its computed output extent")
+    need(r"strnlen\(config->set_args,\s*args_len\)", update,
+         "argument serialization must stay within the recorded args buffer")
+
+    common = (ROOT / "tools/common.c").read_text(encoding="utf-8")
+    read_file = body(common, "void read_file_align(")
+    need(r"file_size\s*<\s*0.*?file_size\s*>\s*0x7fffffffL", read_file,
+         "host file reader must reject invalid and oversized input")
+    need(r"aligned\s*>\s*0x7fffffffULL", read_file,
+         "host file alignment must reject integer overflow")
+    branch = body(common, "int can_b_imm(")
+    need(r"from\s*&\s*3.*?to\s*&\s*3", branch,
+         "ARM64 branch helper must reject unaligned endpoints")
+    need(r"0x07fffffcULL", branch, "ARM64 positive branch range must exclude +128 MiB")
+    need(r"0x08000000ULL", branch, "ARM64 negative branch range must include -128 MiB")
+
+    image = (ROOT / "tools/image.c").read_text(encoding="utf-8")
+    get_image = body(image, "int32_t get_kernel_info(")
+    need(r"imglen\s*<\s*\(int32_t\)sizeof\(arm64_hdr_t\)", get_image,
+         "ARM64 Image parser must validate its fixed header length")
+
+    hex_patch = body(src, "int hex_patch(")
+    need(r"patternlen\s*>\s*32.*?replacelen\s*>\s*32", hex_patch,
+         "hex patcher must bound both stack buffers")
+    need(r"patternlen\s*!=\s*replacelen", hex_patch,
+         "hex patcher must not overwrite beyond the matched pattern")
+    need(r"hex_nibble\(", hex_patch, "hex patcher must reject invalid hex digits")
+
+    parse = body(src, "int parse_image_patch_info(")
+    need(r"memchr\(item_pos\s*\+\s*sizeof\(\\*item\)", parse,
+         "embedded argument strings must be NUL-terminated within args_size")
+    print("[PASS] patch output arithmetic, extra serialization and host file bounds")
+    print("[PASS] ARM64 branch range and hex patch input validation")
+
 
 if __name__ == "__main__":
     try:
