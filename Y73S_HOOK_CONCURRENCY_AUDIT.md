@@ -544,3 +544,45 @@ third-party or malformed KPMs on the Y73S until preflight validation and
 relocation bounds checks are implemented and tested. This pass changes only
 this audit document; it does not modify production loader code, boot images,
 or device state.
+
+
+### E7 — 64-bit relocation mask uses an invalid shift expression (Critical)
+
+In `relo.c:reloc_data()`, the mask is formed as
+`u64 imm_mask = (1 << len) - 1;`. The literal `1` has type `int`, so
+`len == 64` invokes undefined behavior (and the shift is invalid even before
+the result is widened to `u64`). This path is reached by R_AARCH64_ABS64 and
+R_AARCH64_PREL64. Use width-safe construction, with a dedicated 64-bit case
+that does not shift by the type width, and add UBSan coverage for all supported
+relocation widths.
+
+### E8 — Invalid relocation section metadata is silently skipped (High)
+
+`apply_relocations()` currently continues when `sh_info >= e_shnum`, and
+also silently ignores relocation sections whose target section is not marked
+SHF_ALLOC. A malformed relocation section should not be treated as if it did
+not exist. First identify every SHT_REL/SHT_RELA section, validate its
+`sh_info`, `sh_link`, target section, symbol table, entry size and size
+divisibility, and reject malformed or unsupported records explicitly.
+
+### E9 — Section size helper returns sh_entsize instead of sh_size (Medium)
+
+`get_sh_size()` returns `infosec->sh_entsize`, while its name and caller
+(`info->info.size = get_sh_size(info, ".kpm.info")`) indicate that the
+section byte size is intended. The section's `sh_entsize` is an entry-size
+field and is commonly zero for this metadata section. Return the validated
+`sh_size` instead, or remove the unused field if no caller needs it. Add a
+test that checks the reported .kpm.info byte length against the ELF section
+header.
+
+### E10 — Relocation helpers mutate instructions/data before overflow is reported (Medium)
+
+The relocation helpers write the calculated value into the target before
+performing their overflow check. The current module load path normally frees
+the not-yet-published module after a relocation error, which limits exposure,
+but this ordering makes the helpers non-transactional and fragile if reused.
+Prefer calculate/validate first, then commit the write; ensure the caller never
+publishes a partially relocated image.
+
+These findings supplement E1-E6. They are source-level findings only; no
+production loader or relocation code was changed in this audit pass.
