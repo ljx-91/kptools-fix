@@ -178,7 +178,26 @@ def main():
     require(r"is_bad_address\(\(void \*\)origin\)", unwrap_fn,
             "hook_unwrap_remove() must reject failed entry resolution")
 
+    unhook_fn = function_body(hook_c, "void unhook(")
+    require(r"is_bad_address\(func\)", unhook_fn,
+            "unhook() must reject a null or invalid original function")
+    require(r"is_bad_address\(\(void \*\)origin\)", unhook_fn,
+            "unhook() must reject failed entry resolution")
+    require(r"hook_install\(&chain->hook\)", wrap_fn,
+            "hook_wrap() must call and check the underlying patch operation")
+    require(r"patch_rc == -EUCLEAN", wrap_fn,
+            "hook_wrap() must retain chain storage after uncertain rollback")
+    require(r"err = -HOOK_PATCH_FAILED", wrap_fn,
+            "hook_wrap() must report ordinary patch failure")
+    require(r"hook_uninstall\(&chain->hook\)", unwrap_fn,
+            "hook_unwrap_remove() must check the underlying restore operation")
+    require(r"if\s*\(rc\).*?return;", unwrap_fn,
+            "hook_unwrap_remove() must retain chain storage when restore fails")
+    if "hook_chain_install(chain)" in wrap_fn or "hook_chain_uninstall(chain)" in unwrap_fn:
+        raise AssertionError("unchecked hook-chain patch helper reintroduced")
+
     print("[PASS] relocation buffer bound and A64 branch range/alignment")
+    print("[PASS] hook-chain install/restore failures are propagated safely")
     print("[PASS] ARM64 entry thunk resolver is bounded and fail-closed")
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
