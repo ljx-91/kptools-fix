@@ -38,6 +38,16 @@
 
 #define ARCH_SHF_SMALL 0
 
+static bool elf_range_valid(unsigned long offset, unsigned long size, unsigned long total)
+{
+    return offset <= total && size <= total - offset;
+}
+
+static bool elf_string_valid(const char *table, unsigned long table_size, unsigned int offset)
+{
+    return offset < table_size && memchr(table + offset, '\\0', table_size - offset) != NULL;
+}
+
 static void set_load_error(struct load_info *info, const char *message)
 {
     if (!info || !message) return;
@@ -82,15 +92,19 @@ static inline bool strstarts(const char *str, const char *prefix)
 
 static char *next_string(char *string, unsigned long *secsize)
 {
-    while (string[0]) {
+    if (!string || !secsize || !*secsize) return NULL;
+    while (*secsize && *string) {
         string++;
-        if ((*secsize)-- <= 1) return 0;
+        (*secsize)--;
     }
-    while (!string[0]) {
+    if (!*secsize) return NULL;
+    string++;
+    (*secsize)--;
+    while (*secsize && !*string) {
         string++;
-        if ((*secsize)-- <= 1) return 0;
+        (*secsize)--;
     }
-    return string;
+    return *secsize ? string : NULL;
 }
 
 /* Update size with this section: return offset. */
@@ -103,19 +117,38 @@ static long get_offset(struct module *mod, unsigned int *size, Elf_Shdr *sechdr,
 
 static char *get_next_modinfo(const struct load_info *info, const char *tag, char *prev)
 {
-    char *p;
-    unsigned int taglen = strlen(tag);
     Elf_Shdr *infosec = &info->sechdrs[info->index.info];
-    unsigned long size = infosec->sh_size;
-    char *modinfo = (char *)info->hdr + infosec->sh_offset;
+    unsigned long remaining = infosec->sh_size;
+    char *cursor = (char *)info->hdr + infosec->sh_offset;
+    unsigned int taglen = strlen(tag);
+
     if (prev) {
-        size -= prev - modinfo;
-        modinfo = next_string(prev, &size);
+        if (prev < cursor || (unsigned long)(prev - cursor) >= remaining) return NULL;
+        remaining -= (unsigned long)(prev - cursor);
+        cursor = prev;
+        char *end = memchr(cursor, '\\0', remaining);
+        if (!end) return NULL;
+        unsigned long consumed = (unsigned long)(end - cursor) + 1;
+        cursor = end + 1;
+        remaining -= consumed;
     }
-    for (p = modinfo; p; p = next_string(p, &size)) {
-        if (strncmp(p, tag, taglen) == 0 && p[taglen] == '=') return p + taglen + 1;
+
+    while (remaining) {
+        while (remaining && !*cursor) {
+            cursor++;
+            remaining--;
+        }
+        if (!remaining) break;
+        char *end = memchr(cursor, '\\0', remaining);
+        if (!end) return NULL;
+        unsigned long entry_len = (unsigned long)(end - cursor);
+        if (entry_len > taglen && !memcmp(cursor, tag, taglen) && cursor[taglen] == '=')
+            return cursor + taglen + 1;
+        unsigned long consumed = entry_len + 1;
+        cursor = end + 1;
+        remaining -= consumed;
     }
-    return 0;
+    return NULL;
 }
 
 static char *get_modinfo(const struct load_info *info, const char *tag)
@@ -125,9 +158,13 @@ static char *get_modinfo(const struct load_info *info, const char *tag)
 
 static int find_sec(const struct load_info *info, const char *name)
 {
+    Elf_Shdr *shstr = &info->sechdrs[info->hdr->e_shstrndx];
     for (int i = 1; i < info->hdr->e_shnum; i++) {
         Elf_Shdr *shdr = &info->sechdrs[i];
-        if ((shdr->sh_flags & SHF_ALLOC) && strcmp(info->secstrings + shdr->sh_name, name) == 0) return i;
+        if (!(shdr->sh_flags & SHF_ALLOC) ||
+            !elf_string_valid(info->secstrings, shstr->sh_size, shdr->sh_name))
+            continue;
+        if (!strcmp(info->secstrings + shdr->sh_name, name)) return i;
     }
     return 0;
 }
@@ -306,7 +343,8 @@ static int rewrite_section_headers(struct load_info *info)
     info->sechdrs[0].sh_addr = 0;
     for (int i = 1; i < info->hdr->e_shnum; i++) {
         Elf_Shdr *shdr = &info->sechdrs[i];
-        if (shdr->sh_type != SHT_NOBITS && info->len < shdr->sh_offset + shdr->sh_size) {
+        if (shdr->sh_type != SHT_NOBITS &&
+            !elf_range_valid(shdr->sh_offset, shdr->sh_size, info->len)) {
             return -ENOEXEC;
         }
         /* Mark all sections sh_addr with their address in the temporary image. */
@@ -366,7 +404,32 @@ static int setup_load_info(struct load_info *info)
 {
     int rc = 0;
     info->sechdrs = (void *)info->hdr + info->hdr->e_shoff;
-    info->secstrings = (void *)info->hdr + info->sechdrs[info->hdr->e_shstrndx].sh_offset;
+    Elf_Shdr *shstr = &info->sechdrs[info->hdr->e_shstrndx];
+    if (shstr->sh_type != SHT_STRTAB ||
+        !elf_range_valid(shstr->sh_offset, shstr->sh_size, info->len) ||
+        !shstr->sh_size) {
+        set_load_error(info, "invalid ELF section-name string table");
+        return -ENOEXEC;
+    }
+    info->secstrings = (void *)info->hdr + shstr->sh_offset;
+
+    for (int i = 0; i < info->hdr->e_shnum; i++) {
+        Elf_Shdr *shdr = &info->sechdrs[i];
+        if (!elf_string_valid(info->secstrings, shstr->sh_size, shdr->sh_name)) {
+            set_load_error(info, "invalid ELF section name");
+            return -ENOEXEC;
+        }
+        if (i && shdr->sh_type != SHT_NOBITS &&
+            !elf_range_valid(shdr->sh_offset, shdr->sh_size, info->len)) {
+            set_load_error(info, "ELF section data outside input");
+            return -ENOEXEC;
+        }
+        if (shdr->sh_addralign > 1 &&
+            (shdr->sh_addralign & (shdr->sh_addralign - 1))) {
+            set_load_error(info, "invalid ELF section alignment");
+            return -ENOEXEC;
+        }
+    }
 
     if ((rc = rewrite_section_headers(info))) {
         logke("rewrite section error\n");
@@ -421,8 +484,16 @@ static int setup_load_info(struct load_info *info)
 
     for (int i = 1; i < info->hdr->e_shnum; i++) {
         if (info->sechdrs[i].sh_type == SHT_SYMTAB) {
+            Elf_Shdr *symsec = &info->sechdrs[i];
+            if (symsec->sh_link >= info->hdr->e_shnum ||
+                info->sechdrs[symsec->sh_link].sh_type != SHT_STRTAB ||
+                symsec->sh_entsize != sizeof(Elf_Sym) ||
+                symsec->sh_size % sizeof(Elf_Sym)) {
+                set_load_error(info, "invalid ELF symbol table");
+                return -ENOEXEC;
+            }
             info->index.sym = i;
-            info->index.str = info->sechdrs[i].sh_link;
+            info->index.str = symsec->sh_link;
             info->strtab = (char *)info->hdr + info->sechdrs[info->index.str].sh_offset;
             break;
         }
@@ -438,16 +509,24 @@ static int setup_load_info(struct load_info *info)
 
 static int elf_header_check(struct load_info *info)
 {
-    if (info->len <= sizeof(*(info->hdr))) {
+    if (!info || !info->hdr || info->len <= sizeof(*(info->hdr))) {
         set_load_error(info, "ELF header is truncated");
         return -ENOEXEC;
     }
-    if (memcmp(info->hdr->e_ident, ELFMAG, SELFMAG) || info->hdr->e_type != ET_REL || !elf_check_arch(info->hdr) ||
-        info->hdr->e_shentsize != sizeof(Elf_Shdr)) {
+    if (memcmp(info->hdr->e_ident, ELFMAG, SELFMAG) ||
+        info->hdr->e_ident[EI_CLASS] != ELFCLASS64 ||
+        info->hdr->e_ident[EI_DATA] != ELFDATA2LSB ||
+        info->hdr->e_ident[EI_VERSION] != EV_CURRENT ||
+        info->hdr->e_type != ET_REL || !elf_check_arch(info->hdr) ||
+        info->hdr->e_version != EV_CURRENT ||
+        info->hdr->e_ehsize != sizeof(Elf_Ehdr) ||
+        info->hdr->e_shentsize != sizeof(Elf_Shdr) ||
+        !info->hdr->e_shnum || info->hdr->e_shstrndx >= info->hdr->e_shnum) {
         set_load_error(info, "ELF header is not a supported AArch64 relocatable module");
         return -ENOEXEC;
     }
-    if (info->hdr->e_shoff >= info->len || (info->hdr->e_shnum * sizeof(Elf_Shdr) > info->len - info->hdr->e_shoff)) {
+    if (!elf_range_valid(info->hdr->e_shoff,
+                         (unsigned long)info->hdr->e_shnum * sizeof(Elf_Shdr), info->len)) {
         set_load_error(info, "ELF section headers are invalid");
         return -ENOEXEC;
     }
@@ -464,6 +543,11 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     struct load_info *info = &load_info;
     long rc = 0;
 
+    if (!data || len <= 0) {
+        rc = -EINVAL;
+        set_load_error(info, "invalid module input");
+        goto out;
+    }
     if ((rc = elf_header_check(info))) goto out;
     if ((rc = setup_load_info(info))) goto out;
 
