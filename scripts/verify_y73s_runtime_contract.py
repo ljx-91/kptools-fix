@@ -325,7 +325,7 @@ def main():
     add_profile = function_body(sucompat_c, "int su_add_allow_uid(")
     require(r"strncpy\(profile\.scontext,\s*scontext,\s*sizeof\(profile\.scontext\)\s*-\s*1\)",
             add_profile, "SU context copy must not read a fixed-size span past a short string")
-    require(r"profile\.scontext\[sizeof\(profile\.scontext\)\s*-\s*1\]\s*=\s*'\\\\0'",
+    require(r"profile\.scontext\[sizeof\(profile\.scontext\)\s*-\s*1\]\s*=\s*'\\0'",
             add_profile, "SU context copy must always terminate the stored string")
 
     print("[PASS] SU profile record sizes and bounded SELinux context copy")
