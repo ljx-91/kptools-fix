@@ -364,3 +364,32 @@ Windows kptools build, and offline static patch operation have passed.
 certified boot-safe, and no real-device boot test is claimed. The previous
 automatic reboot loop remains unresolved until a controlled device test can
 confirm the patched kernel passes early boot.
+
+
+## Required memblock-interface fail-closed gate (2026-11-08)
+
+A final resolver review found that `memblock_mark_nomap` was previously optional
+in the tool-side preset and runtime path, even though the Y73S relocation flow
+requires it. The resolver also had a fallback to an internal
+`__memblock_reserve` name without proving that helper's ABI matched the
+two-argument public API.
+
+The branch now:
+- resolves only the public two-argument `memblock_reserve`,
+  `memblock_free`, and `memblock_mark_nomap` symbols;
+- refuses to produce a patch if any of those interfaces is missing;
+- checks the corresponding preset fields again in `mem_proc()`;
+- treats a failed `memblock_mark_nomap()` as fatal before destination mapping.
+
+The exact Y73S target has all three public symbols. GCC 14.2 build and both
+ELF verifiers passed for commit
+`fbd182acd92785a118a1585ad7bf07819b85edac`:
+[build and audit run](https://github.com/ljx-91/kptools-fix/actions/runs/42455784476).
+The Windows `kptools.exe` build also passed:
+[Windows build run](https://github.com/ljx-91/kptools-fix/actions/runs/42455784420).
+
+A host `kptools` rebuilt with the fail-closed resolver then patched a temporary
+copy of the supplied original kernel using the GCC 14.2 KPIMG. The log selected
+the exact expected Y73S symbols and `kptools -l` reported
+`patched=true`, KPIMG `0xd0a`, `arm64`. This remains an offline/static
+patch validation only; it does not prove that the phone boots.
