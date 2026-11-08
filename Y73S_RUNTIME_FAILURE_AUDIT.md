@@ -174,3 +174,32 @@ The updated source commit `45138be7b961cc15fadc2f7172b9a7a1b3f278bf` passed GCC 
 The downloaded ELF was disassembled locally with LLVM objdump. `hook_prepare` initializes the relocation buffer through offset `0x128` from offset `0x58`, which is 52 32-bit words, matching the new array size. The emitted `branch_relative` checks alignment and uses the distinct positive limit `0x07fffffc` and negative limit `0x08000000`. This is binary confirmation of the two source changes.
 
 The ZIP still stores files at its root while `SHA256SUMS.txt` names them with a `dist-y73s/` prefix; therefore `sha256sum -c SHA256SUMS.txt` fails if run from the extracted root. Each file's SHA-256 was independently calculated and matches the manifest. Fix the artifact directory layout in a separate workflow cleanup.
+
+
+## ARM64 entry-thunk resolver hardening (2026-11-08)
+
+The prior `branch_func_addr()` followed unconditional A64 `B` entry branches in an unbounded loop. A self-branch or cyclic thunk chain could therefore hang the KP hook setup path indefinitely. It also did not validate each resolved target before the next instruction fetch.
+
+The resolver now:
+- rejects invalid or non-4-byte-aligned starting addresses;
+- records up to eight visited entry addresses and rejects cycles;
+- validates every next target before dereferencing it;
+- rejects chains longer than eight hops with a zero result;
+- makes `hook()`, `hook_wrap()`, and `hook_unwrap_remove()` reject an invalid resolved origin rather than proceeding with origin zero.
+
+The first CI attempt caught that the `hook_wrap()` / `hook_unwrap_remove()` callers still checked the original function pointer after resolution. That check was corrected to validate `origin`; the subsequent run passed.
+
+### Build and ELF confirmation
+
+- CI: https://github.com/ljx-91/kptools-fix/actions/runs/42475912679
+- Source commit: `29841d24c65d4126a5fa956a624a1e687aa01343`
+- GCC 14.2 build and all source/static checks: passed
+- KPIMG SHA-256: `b7ceed6f78ff6f44a7326618cdf87affabce6dc5c1b5a561cce4d330b36d7252`
+- Artifact ZIP SHA-256: `3e2cb32bc532ab21a553db6667c6920ac2159f7c48fe4fcd4f500d103bcd9fef`
+- Artifact ID: `13615726175`
+
+The downloaded ELF disassembly of `branch_func_addr` shows the eight-entry stack tracking array, the hop-count comparison against eight, the alignment check, and the zero-return failure path. This verifies code generation for the resolver change, not the vendor kernel's memory validity rules or runtime behavior.
+
+### CFI scope clarification
+
+The built KPIMG ELF contains symbols named `bypass_kcfi`, `replace_report_cfi_failure`, and `replace__cfi_slowpath`, but the current repository source tree does not expose their matching implementation as a CFI source file. Their ELF disassembly shows address-range filtering and tail-branching to saved original callbacks for addresses outside KP-owned ranges. The exact callback prototypes, vendor CFI implementation, and call-site ABI cannot be proven from these KP symbols alone. Treat CFI bypass as **unverified**, not as a completed compatibility result. The original Y73S vendor kernel image and its matching symbol/prototype context are required for a sound ABI audit.
