@@ -65,8 +65,10 @@ def main():
     alloc = function_body(map_c, "static uint64_t map_phys_alloc(")
     require(r"memblock_find_in_range_f[^;]*\)\(\s*0,\s*0,\s*size,\s*align\)",
             alloc, "physical range finder arguments changed")
-    before(alloc, "memblock_find_in_range_f", "memblock_reserve_f",
-           "range result must be reserved before use")
+    find_call = alloc.find("0, 0, size, align")
+    reserve_call = alloc.find("(pa, size)")
+    if find_call < 0 or reserve_call <= find_call:
+        raise AssertionError("range result must be reserved before it is returned")
     require(r"if\s*\(\(\(memblock_reserve_f\).*?\)\(pa,\s*size\)\)\s*return 0;",
             alloc, "reservation failure must reject the physical allocation")
     require(r"return pa;", alloc, "physical allocator must return the reserved PA")
