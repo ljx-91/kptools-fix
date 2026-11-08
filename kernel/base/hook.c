@@ -675,6 +675,7 @@ hook_err_t hook(void *func, void *replace, void **backup)
             goto out;
         }
     }
+    hook_mem_publish(hook);
     *backup = (void *)hook->relo_addr;
     logkv("Hook func: %llx succeeded\\n", hook->func_addr);
     return HOOK_NO_ERR;
@@ -836,6 +837,7 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
             goto err;
         }
     }
+    hook_mem_publish(chain);
     logkv("Wrap func: %llx succsseed\\n", hook->func_addr);
     return HOOK_NO_ERR;
 err:
