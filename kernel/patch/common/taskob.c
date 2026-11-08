@@ -11,6 +11,7 @@
 #include <linux/sched/task.h>
 #include <linux/pid.h>
 #include <linux/security.h>
+#include <linux/compiler.h>
 #include <log.h>
 #include <linux/cred.h>
 #include <linux/err.h>
@@ -30,7 +31,8 @@ extern void kp_debug_write(const char *fmt, ...);
 /*
  * task_ext per-task slot table.
  *
- * Slots are immutable after publication and are deliberately not recycled:
+ * Slot identity is immutable after publication; policy flags are mutable and
+ * accessed with READ_ONCE/WRITE_ONCE. Slots are deliberately not recycled:
  * lock-free readers (including SELinux hooks) may still hold a returned ext
  * pointer after lookup. Reusing a slot from do_exit would create a use-after-
  * reuse race. The bounded table fails closed when exhausted.
@@ -53,7 +55,7 @@ static inline void task_ext_reset(struct task_ext *ext)
 }
 
 /*
- * The ext is fully initialized before publishing its task key. Slots are
+ * The ext identity is initialized before publishing its task key. Slots are
  * never reused, so a lock-free lookup can safely retain the returned pointer.
  */
 struct task_ext *kf_get_task_ext(const struct task_struct *task)
