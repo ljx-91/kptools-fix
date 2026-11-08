@@ -155,14 +155,16 @@ static void prepare_task_ext(struct task_struct *new, struct task_struct *old)
      * over. This keeps the table from filling up with one entry per thread.
      */
     if (unlikely(!task_ext_valid(old_ext))) return;
-    if (!(old_ext->sel_allow || old_ext->priv_sel_allow)) return;
+    bool sel_allow = READ_ONCE(old_ext->sel_allow);
+    bool priv_sel_allow = READ_ONCE(old_ext->priv_sel_allow);
+    if (!(sel_allow || priv_sel_allow)) return;
     struct task_ext *new_ext = task_ext_create(new);
     if (!new_ext) {
         logkfe("task_ext slot table full, skip\n");
         return;
     }
-    new_ext->sel_allow = old_ext->sel_allow;
-    new_ext->priv_sel_allow = old_ext->priv_sel_allow;
+    WRITE_ONCE(new_ext->sel_allow, sel_allow);
+    WRITE_ONCE(new_ext->priv_sel_allow, priv_sel_allow);
 
     dsb(ish);
 }
