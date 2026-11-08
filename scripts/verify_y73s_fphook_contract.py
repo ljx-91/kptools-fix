@@ -5,6 +5,7 @@ from pathlib import Path
 root = Path(__file__).resolve().parents[1]
 src = (root / "kernel/base/fphook.c").read_text()
 hdr = (root / "kernel/include/hook.h").read_text()
+acc = (root / "kernel/patch/common/accctl.c").read_text()
 
 checks = {
     "fp_hook returns hotpatch status": "return hotpatch((void **)addrs, values, 2);" in src,
