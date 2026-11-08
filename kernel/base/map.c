@@ -52,12 +52,13 @@ static uint64_t map_phys_alloc(map_data_t *data, uint64_t size, uint64_t align)
     if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID ||
         data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_ALLOC_TRY_NID) {
         /*
-         * memblock_phys_alloc_try_nid(size, align, nid): 3rd arg is the NUMA node.
-         * memblock_alloc_try_nid(size, align, min_addr, max_addr, nid): 3rd arg is min_addr.
-         * On old kernels (4.x) that lack memblock_phys_alloc_try_nid, the patcher falls back
-         * to the 5-arg memblock_alloc_try_nid. Passing NUMA_NO_NODE(-1) there makes min_addr
-         * 0xffffffffffffffff so the allocation always fails (start > end) and start_pa = 0,
-         * which corrupts memory at PA 0 and prevents boot. Use 0 (= nid 0 / min_addr 0).
+         * Y73S's 4.14.141 CFI entry for memblock_alloc_try_nid is a
+         * 3-argument function (size, align, nid), confirmed from the original
+         * kernel's ARM64 instructions. It is not the 5-argument
+         * memblock_virt_alloc_try_nid interface declared separately below.
+         * Keep the existing target-specific node selection unchanged:
+         * NUMA_NO_NODE for memblock_phys_alloc_try_nid and 0 for the
+         * memblock_alloc_try_nid fallback. Re-audit before using on other kernels.
          */
         int third_arg = (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID)
                             ? NUMA_NO_NODE
