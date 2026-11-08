@@ -399,7 +399,10 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
     const char *imgend = pimg->kimg + pimg->kimg_len;
     const char *banner = (char *)pimg->kimg;
     while ((banner = (char *)memmem(banner + 1, imgend - banner, linux_banner_prefix, prefix_len)) != NULL) {
-        if (isdigit(*(banner + prefix_len)) && *(banner + prefix_len + 1) == '.') {
+        size_t banner_remaining = (size_t)(imgend - banner);
+        if (banner_remaining > prefix_len + 1 &&
+            isdigit((unsigned char)banner[prefix_len]) && banner[prefix_len + 1] == '.' &&
+            memchr(banner, '\\0', banner_remaining)) {
             pimg->banner = banner;
             break;
         }
@@ -546,9 +549,11 @@ int print_image_patch_info_path(const char *kimg_path)
 
 static int extra_compare(const void *a, const void *b)
 {
-    extra_config_t *pa = (extra_config_t *)a;
-    extra_config_t *pb = (extra_config_t *)b;
-    return -(pa->priority - pb->priority);
+    const extra_config_t *pa = (const extra_config_t *)a;
+    const extra_config_t *pb = (const extra_config_t *)b;
+    if (pa->priority < pb->priority) return 1;
+    if (pa->priority > pb->priority) return -1;
+    return 0;
 }
 
 static void extra_append(char *kimg, const void *data, int len, int *offset)
@@ -557,34 +562,45 @@ static void extra_append(char *kimg, const void *data, int len, int *offset)
     *offset += len;
 }
 
-static void hexstr_to_bytes(const char *hexstr, size_t out_len, unsigned char *out)
+static int hex_nibble(char c)
 {
-    for (size_t i = 0; i < out_len; i++) {
-        char tmp[3] = { hexstr[i * 2], hexstr[i * 2 + 1], 0 };
-        out[i] = (unsigned char)strtoul(tmp, NULL, 16);
-    }
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
 }
 
-int hex_patch(char *img, size_t imglen,
-                      const char *pattern_hex,
-                      const char *replace_hex)
+static int hexstr_to_bytes(const char *hexstr, size_t out_len, unsigned char *out)
 {
-    size_t patternlen = strlen(pattern_hex) / 2;
-    size_t replacelen = strlen(replace_hex) / 2;
+    for (size_t i = 0; i < out_len; i++) {
+        int hi = hex_nibble(hexstr[i * 2]);
+        int lo = hex_nibble(hexstr[i * 2 + 1]);
+        if (hi < 0 || lo < 0) return -EINVAL;
+        out[i] = (unsigned char)((hi << 4) | lo);
+    }
+    return 0;
+}
 
+int hex_patch(char *img, size_t imglen, const char *pattern_hex, const char *replace_hex)
+{
+    if (!img || !pattern_hex || !replace_hex) return -EINVAL;
+    size_t pattern_chars = strlen(pattern_hex);
+    size_t replace_chars = strlen(replace_hex);
+    if (!pattern_chars || (pattern_chars & 1) || !replace_chars || (replace_chars & 1))
+        return -EINVAL;
+    size_t patternlen = pattern_chars / 2;
+    size_t replacelen = replace_chars / 2;
+    if (patternlen > 32 || replacelen > 32 || patternlen != replacelen || patternlen > imglen)
+        return -EINVAL;
 
     unsigned char pattern[32];
     unsigned char replace[32];
-
-    hexstr_to_bytes(pattern_hex, patternlen, pattern);
-    hexstr_to_bytes(replace_hex, replacelen, replace);
+    if (hexstr_to_bytes(pattern_hex, patternlen, pattern) ||
+        hexstr_to_bytes(replace_hex, replacelen, replace)) return -EINVAL;
 
     unsigned char *p = memmem(img, imglen, pattern, patternlen);
-    if (p) {
-        memcpy(p, replace, replacelen);
-    }else{
-        return -1;
-    }
+    if (!p) return -ENOENT;
+    memcpy(p, replace, replacelen);
     return 0;
 }
 
