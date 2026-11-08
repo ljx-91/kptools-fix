@@ -6,6 +6,8 @@ root = Path(__file__).resolve().parents[1]
 src = (root / "kernel/base/fphook.c").read_text()
 hdr = (root / "kernel/include/hook.h").read_text()
 acc = (root / "kernel/patch/common/accctl.c").read_text()
+hmem = (root / "kernel/base/hmem.c").read_text()
+hook = (root / "kernel/base/hook.c").read_text()
 
 checks = {
     "fp_hook returns hotpatch status": "return hotpatch((void **)addrs, values, 2);" in src,
@@ -25,6 +27,11 @@ checks = {
     "SELinux SID consumers use READ_ONCE": "set_security_override(new, READ_ONCE(all_allow_sid))" in acc and
         "if (ssid == all_allow_sid)" not in acc and
         "if (all_allow_sid != SECSID_NULL)" not in acc,
+    "retired hook slots are not reused": "warp->using = 2;" in hmem and
+        "if (wrap->using == 1 && wrap->addr == origin_addr)" in hmem,
+    "inline hook retirement on successful restore": "hook_mem_retire(hook);" in hook and
+        "hook_mem_retire(chain);" in hook,
+    "function-pointer chain retirement on successful restore": "hook_mem_retire(chain);" in src,
 }
 for label, ok in checks.items():
     print(("PASS" if ok else "FAIL") + ": " + label)
