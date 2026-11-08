@@ -31,8 +31,45 @@ extern void kp_debug_write(const char *fmt, ...);
 char all_allow_sctx[SUPERCALL_SCONTEXT_LEN] = { '\0' };
 uint32_t all_allow_sid = SECSID_NULL;
 
-static void su_cred(struct cred *cred, uid_t uid)
+#define CRED_LAYOUT_SIZE 0x100
+#define TASK_LAYOUT_SIZE 0x1800
+
+static bool cred_field_valid(int offset, size_t size)
 {
+    return offset >= 0 && size <= CRED_LAYOUT_SIZE &&
+           (size_t)offset <= CRED_LAYOUT_SIZE - size;
+}
+
+static bool cred_layout_valid(void)
+{
+    return cred_field_valid(cred_offset.cap_inheritable_offset, sizeof(kernel_cap_t)) &&
+           cred_field_valid(cred_offset.cap_permitted_offset, sizeof(kernel_cap_t)) &&
+           cred_field_valid(cred_offset.cap_effective_offset, sizeof(kernel_cap_t)) &&
+           cred_field_valid(cred_offset.cap_bset_offset, sizeof(kernel_cap_t)) &&
+           cred_field_valid(cred_offset.cap_ambient_offset, sizeof(kernel_cap_t)) &&
+           cred_field_valid(cred_offset.uid_offset, sizeof(uid_t)) &&
+           cred_field_valid(cred_offset.euid_offset, sizeof(uid_t)) &&
+           cred_field_valid(cred_offset.fsuid_offset, sizeof(uid_t)) &&
+           cred_field_valid(cred_offset.suid_offset, sizeof(uid_t)) &&
+           cred_field_valid(cred_offset.gid_offset, sizeof(gid_t)) &&
+           cred_field_valid(cred_offset.egid_offset, sizeof(gid_t)) &&
+           cred_field_valid(cred_offset.fsgid_offset, sizeof(gid_t)) &&
+           cred_field_valid(cred_offset.sgid_offset, sizeof(gid_t));
+}
+
+static bool task_cred_fields_valid(void)
+{
+    return cred_field_valid(task_struct_offset.cred_offset, sizeof(void *)) &&
+           cred_field_valid(task_struct_offset.real_cred_offset, sizeof(void *));
+}
+
+static int su_cred(struct cred *cred, uid_t uid)
+{
+    if (!cred || !cred_layout_valid()) {
+        logkfe("su_cred refused: invalid cred pointer or unresolved cred layout\\n");
+        return -EINVAL;
+    }
+
     *(kernel_cap_t *)((uintptr_t)cred + cred_offset.cap_inheritable_offset) = full_cap;
     *(kernel_cap_t *)((uintptr_t)cred + cred_offset.cap_permitted_offset) = full_cap;
     *(kernel_cap_t *)((uintptr_t)cred + cred_offset.cap_effective_offset) = full_cap;
@@ -48,6 +85,7 @@ static void su_cred(struct cred *cred, uid_t uid)
     *(uid_t *)((uintptr_t)cred + cred_offset.egid_offset) = uid;
     *(uid_t *)((uintptr_t)cred + cred_offset.fsgid_offset) = uid;
     *(uid_t *)((uintptr_t)cred + cred_offset.sgid_offset) = uid;
+    return 0;
 }
 
 int set_all_allow_sctx(const char *sctx)
@@ -72,8 +110,14 @@ int set_all_allow_sctx(const char *sctx)
 
 int commit_kernel_su()
 {
+    if (!cred_layout_valid()) return -EINVAL;
     struct cred *new = prepare_kernel_cred(0);
-    set_security_override(new, all_allow_sid);
+    if (!new) return -ENOMEM;
+    int rc = set_security_override(new, all_allow_sid);
+    if (rc) {
+        abort_creds(new);
+        return rc;
+    }
     return commit_creds(new);
 }
 
@@ -103,10 +147,28 @@ int commit_common_su(uid_t to_uid, const char *sctx)
     }
 
     ext->sel_allow = 1;
+    if (!cred_layout_valid()) {
+        rc = -EINVAL;
+        goto out;
+    }
+
     struct cred *new = prepare_creds();
-    su_cred(new, to_uid);
+    if (!new) {
+        rc = -ENOMEM;
+        goto out;
+    }
+    rc = su_cred(new, to_uid);
+    if (rc) {
+        abort_creds(new);
+        goto out;
+    }
 
     struct group_info *group_info = groups_alloc(0);
+    if (!group_info) {
+        abort_creds(new);
+        rc = -ENOMEM;
+        goto out;
+    }
     set_groups(new, group_info);
 
     if (sctx && sctx[0]) {
@@ -147,7 +209,16 @@ int task_su(pid_t pid, uid_t to_uid, const char *sctx)
         goto out;
     }
 
+    if (!task_cred_fields_valid() || !cred_layout_valid()) {
+        rc = -EINVAL;
+        goto out;
+    }
+
     struct thread_info *thi = get_task_thread_info(task);
+    if (!thi) {
+        rc = -EINVAL;
+        goto out;
+    }
     thi->flags &= ~(_TIF_SECCOMP);
 
     if (task_struct_offset.comm_offset > 0) {
@@ -159,12 +230,18 @@ int task_su(pid_t pid, uid_t to_uid, const char *sctx)
     }
 
     struct cred *cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
-    su_cred(cred, to_uid);
+    struct cred *real_cred = *(struct cred **)((uintptr_t)task + task_struct_offset.real_cred_offset);
+    if (!cred || !real_cred) {
+        rc = -EINVAL;
+        goto out;
+    }
+    rc = su_cred(cred, to_uid);
+    if (rc) goto out;
     if (sctx && sctx[0]) scontext_changed = !set_security_override_from_ctx(cred, sctx);
 
-    struct cred *real_cred = *(struct cred **)((uintptr_t)task + task_struct_offset.real_cred_offset);
     if (cred != real_cred) {
-        su_cred(real_cred, to_uid);
+        rc = su_cred(real_cred, to_uid);
+        if (rc) goto out;
         if (sctx && sctx[0]) scontext_changed = scontext_changed && !set_security_override_from_ctx(real_cred, sctx);
     }
     ext->priv_sel_allow = !scontext_changed;
