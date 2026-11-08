@@ -132,19 +132,23 @@ static int su_cred(struct cred *cred, uid_t uid)
 int set_all_allow_sctx(const char *sctx)
 {
     if (!sctx || !sctx[0]) {
-        all_allow_sctx[0] = 0;
-        all_allow_sid = SECSID_NULL;
+        /* Disable the policy first; readers must not observe a stale SID. */
+        WRITE_ONCE(all_allow_sid, SECSID_NULL);
         dsb(ish);
-        logkfd("clear all allow sconetxt\n");
+        all_allow_sctx[0] = 0;
+        logkfd("clear all allow sconetxt\\n");
         return 0;
     }
 
-    int rc = security_secctx_to_secid(sctx, strlen(sctx), &all_allow_sid);
-    if (!rc && all_allow_sid != SECSID_NULL) {
+    uint32_t sid = SECSID_NULL;
+    int rc = security_secctx_to_secid(sctx, strlen(sctx), &sid);
+    if (!rc && sid != SECSID_NULL) {
         strncpy(all_allow_sctx, sctx, sizeof(all_allow_sctx) - 1);
-        all_allow_sctx[sizeof(all_allow_sctx) - 1] = '\0';
+        all_allow_sctx[sizeof(all_allow_sctx) - 1] = '\\0';
+        /* Publish the completed context only after its string is ready. */
         dsb(ish);
-        logkfd("set all allow sconetxt: %s, sid: %d\n", all_allow_sctx, all_allow_sid);
+        WRITE_ONCE(all_allow_sid, sid);
+        logkfd("set all allow sconetxt: %s, sid: %d\\n", all_allow_sctx, sid);
     }
     return rc;
 }
@@ -239,7 +243,7 @@ out:
 
 int commit_su(uid_t to_uid, const char *sctx)
 {
-    if (all_allow_sid != SECSID_NULL && !to_uid) {
+    if (READ_ONCE(all_allow_sid) != SECSID_NULL && !to_uid) {
         return commit_kernel_su();
     } else {
         return commit_common_su(to_uid, sctx);
@@ -268,12 +272,12 @@ static int (*avc_denied_backup)(struct selinux_state *state, void *ssid, void *t
 static int avc_denied_replace(struct selinux_state *_state, void *_ssid, void *_tsid, void *_tclass, void *_requested,
                               void *_driver, void *_xperm, void *_flags, struct av_decision *_avd)
 {
-    if (all_allow_sid != SECSID_NULL) {
+    if (READ_ONCE(all_allow_sid) != SECSID_NULL) {
         u32 ssid = (u32)(u64)_ssid;
         if ((uint64_t)_state <= 0xffffffffL) {
             ssid = (u32)(u64)_state;
         }
-        if (ssid == all_allow_sid) {
+        if (ssid == READ_ONCE(all_allow_sid)) {
             goto allow;
         }
     }
