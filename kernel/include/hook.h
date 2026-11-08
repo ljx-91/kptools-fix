@@ -43,7 +43,7 @@ typedef int8_t chain_item_state;
 
 #define HOOK_MEM_REGION_NUM 4
 #define TRAMPOLINE_MAX_NUM 6
-#define RELOCATE_INST_NUM (4 * 8 + 8 - 4)
+#define RELOCATE_INST_NUM (TRAMPOLINE_MAX_NUM * 8 + 4)
 
 #define HOOK_CHAIN_NUM 0x10
 /* GCC 14 emits a ~100-instruction _transit12 (12-arg hook chain); 0x60 left it
