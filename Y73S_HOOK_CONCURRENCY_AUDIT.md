@@ -151,3 +151,45 @@ is still not approved as the hook callback lifetime mechanism. Verify actual
 lookup results and read-side semantics against the target kernel first; if
 any required function is absent or ambiguously resolved, fail closed and use
 another proven lifetime protocol.
+
+
+## Follow-up: CFI suffix resolver audit (2026-11-08)
+
+The Y73S kallsyms evidence includes `synchronize_rcu.cfi`, but not an
+unsuffixed `synchronize_rcu` name in the recovered listing. The suffix
+resolver previously rejected every suffix token named `cfi`, despite its
+comment claiming to reject only `.cfi_jt` jump-table stubs. Consequently,
+the corrected `synchronize_rcu()` wrapper could still fail to resolve the
+available instrumented implementation. The resolver now accepts the real
+`.cfi` implementation and rejects only the `.cfi_jt` jump-table stub.
+Source regression assertions cover both rules.
+
+GCC 14.2 build and all configured static audits passed on commit
+`531640d14248a6412edaff8afd7deb53ab3a9a94`, workflow run
+`42495162302`. This remains a build/static result, not runtime symbol
+resolution evidence.
+
+### Final RCU assessment for this target
+
+The recovered Y73S symbol listing contains `__rcu_read_unlock` but does not
+show `__rcu_read_lock`. The KP `kfunc_call_void` family silently does
+nothing when a function pointer is unresolved. Therefore the presence of a
+corrected `synchronize_rcu()` wrapper does not establish a working RCU
+read-side critical section. RCU is **not approved** as the callback lifetime
+solution for this target. Do not use it to justify callback/module unload.
+
+### Release gate
+
+The source and build audit is complete for this pass. The Hook allocator,
+chain publication, callback add/remove/dispatch, concurrent first-wrap, and
+callback code/data lifetime races remain unresolved. The existing private
+spinlock helper is not by itself a lifetime protocol; holding a spinlock
+across arbitrary callbacks is unsafe, and waiting synchronously for readers
+can deadlock if a callback removes itself. A safe implementation needs an
+explicit callback owner/unload contract plus a proven reader-quiescence
+mechanism, or must permanently pin callback code/data and reject unsafe
+removal. Until that design is implemented and tested, the branch is **not
+release-ready and not suitable for device boot testing**.
+
+No device write, Fastboot operation, partition modification, or runtime test
+was performed.
