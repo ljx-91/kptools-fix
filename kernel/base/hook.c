@@ -851,7 +851,7 @@ void hook_unwrap_remove(void *func, void *before, void *after, int remove)
     uint64_t faddr = (uint64_t)func;
     uint64_t origin = branch_func_addr(faddr);
     if (is_bad_address((void *)origin)) return;
-    hook_chain_t *chain = (hook_chain_t *)hook_get_mem_from_origin(origin);
+    hook_chain_t *chain = (hook_chain_t *)hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
     if (!chain) return;
     hook_chain_remove(chain, before, after);
     if (!remove) return;
