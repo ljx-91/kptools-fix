@@ -219,9 +219,10 @@ int decompress_gzip(const uint8_t *in_data, size_t in_size, const char *out_path
 
 static int decompress_gzip_to_mem(const uint8_t *in_data, size_t in_size, uint8_t **out_data, uint32_t *out_size)
 {
+    if (!in_data || !out_data || !out_size || in_size > 0xffffffffULL) return -1;
     z_stream strm = { 0 };
     strm.next_in = (Bytef *)in_data;
-    strm.avail_in = in_size;
+    strm.avail_in = (uInt)in_size;
 
     if (inflateInit2(&strm, 16 + MAX_WBITS) != Z_OK) return -1;
 
@@ -246,9 +247,26 @@ static int decompress_gzip_to_mem(const uint8_t *in_data, size_t in_size, uint8_
             return -2;
         }
         size_t have = sizeof(out_buf) - strm.avail_out;
-        if (out_off + have > cap) {
-            size_t new_cap = cap * 2;
-            while (new_cap < out_off + have) new_cap *= 2;
+        if (have > 0xffffffffULL - out_off) {
+            free(out);
+            inflateEnd(&strm);
+            return -1;
+        }
+        size_t needed = out_off + have;
+        if (needed > cap) {
+            size_t new_cap = cap;
+            while (new_cap < needed) {
+                if (new_cap > 0xffffffffULL / 2) {
+                    new_cap = 0xffffffffULL;
+                    break;
+                }
+                new_cap *= 2;
+            }
+            if (new_cap < needed) {
+                free(out);
+                inflateEnd(&strm);
+                return -1;
+            }
             uint8_t *tmp = realloc(out, new_cap);
             if (!tmp) {
                 free(out);
