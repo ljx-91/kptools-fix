@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - y73s-dcache-coherency-20261108
+      - y73s-cred-layout-guards-20261108
+    paths:
+      - 'tools/**'
+      - 'scripts/**'
+      - '.github/workflows/build-y73s-kptools-host.yml'
+      - y73s-cred-layout-guards-20261108
 
 permissions:
   contents: read
@@ -28,6 +34,7 @@ jobs:
           make -C tools -j"$(nproc)"
           test -s tools/kptools
           tools/kptools --version
+          python3 scripts/verify_kpm_loader_contract.py
       - name: Package
         run: |
           set -eux
