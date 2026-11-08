@@ -193,3 +193,88 @@ release-ready and not suitable for device boot testing**.
 
 No device write, Fastboot operation, partition modification, or runtime test
 was performed.
+
+
+## Follow-up: KPM callback ownership and unload ordering (2026-11-08)
+
+A further lifecycle audit of `kernel/patch/module/module.c`,
+`kernel/linux/include/linux/rcupdate.h`, `kernel/base/hook.c`, and
+`kernel/base/fphook.c` found an additional release blocker.
+
+### 1. KPM exit runs inside an RCU read-side section
+
+Current `unload_module()` performs the following sequence:
+
+1. `rcu_read_lock()`;
+2. find the module and unlink it with `list_del()`;
+3. invoke `mod->exit()` while still inside that read-side section;
+4. free module text with `kp_free_exec()` and free the module object;
+5. only then call `rcu_read_unlock()`.
+
+This ordering is incompatible with an exit callback that waits for an RCU grace
+period: `synchronize_rcu()` called from `mod->exit()` can wait for the very
+read-side section that cannot finish until `mod->exit()` returns. It also frees
+module text before leaving the section that is intended to protect readers.
+The unload path has a `// todo: lock` marker and does not provide a complete
+module lifetime protocol.
+
+### 2. Y73S RCU read-side symbol mapping is not proven
+
+The current compatibility header implements `__rcu_read_lock()` by
+`kfunc_call(__rcu_read_lock)` and `__rcu_read_unlock()` by
+`kfunc_call(__rcu_read_unlock)`. The recovered Y73S kallsyms listing contains
+`__rcu_read_unlock` but has no exact `__rcu_read_lock` entry. The kfunc call
+helper silently skips unresolved functions. Therefore the shim may not execute
+the read-side lock operation while still resolving the unlock operation. This
+must be treated as an invalid/unbalanced RCU mapping until the actual target
+implementation and resolver behavior are proven. Do not use the module
+loader's RCU sections as evidence that KPM text is pinned on this target.
+
+### 3. Hook callback owner is not tracked
+
+The inline and function-pointer chain entries contain callback pointers and
+`udata`, but no KPM owner/module reference. `hook_wrap()` and
+`fp_hook_wrap()` cannot currently pin the module containing the callback.
+KPM documentation tells modules to unregister hooks from `.kpm.exit`, but
+unregistering currently only clears a READY slot; it does not wait for a CPU
+that already loaded the callback pointer or is between before/origin/after
+phases. Since `unload_module()` frees module executable memory immediately
+after the exit callback, an in-flight callback can execute freed text or
+access freed module data.
+
+### 4. Required architectural correction (not applied in this pass)
+
+Do not add a call to `synchronize_rcu()` inside a KPM exit callback as a
+workaround. The safe correction requires coordinated changes:
+
+- replace the current module-list/unload lifetime scheme with a serialized
+  module state machine (LIVE -> UNLOADING -> QUIESCED -> FREED), and ensure
+  module callbacks cannot start after UNLOADING;
+- do not invoke a module exit callback while holding an RCU read-side lock;
+- provide a proven target-specific reader mechanism, or an explicit KP-owned
+  active-call/reference protocol that does not depend on the unresolved
+  `__rcu_read_lock` symbol;
+- associate hook chain entries with their owning KPM (explicit owner token or
+  a validated callback-address-to-module mapping);
+- acquire a callback reference before reading/invoking its pointer, retain it
+  across both before and after phases, and prevent slot reuse until all refs
+  drain;
+- make removal report a pending/busy state and provide an unload path that
+  waits only from a sleepable, non-self-callback context; reject or defer
+  self-unload rather than waiting on the caller's own reference;
+- only free module text/data after both ordinary KPM entry points and Hook
+  callback references have reached zero.
+
+A spinlock around list mutation alone is insufficient. Holding a spinlock
+across arbitrary callbacks is unsafe, and a global wait from within the same
+callback can deadlock. Existing void unregister APIs also cannot communicate
+that a callback is still executing, so an unload-safe API/contract change is
+required.
+
+### Release status
+
+The CFI suffix resolver and KPIMG build checks passed on commit
+`531640d14248a6412edaff8afd7deb53ab3a9a94`. This follow-up is a static
+source audit only. The KPM unload ordering, RCU mapping, Hook callback owner
+tracking, and in-flight callback quiescence remain unresolved. The branch is
+still **not release-ready and not suitable for device boot testing**.
