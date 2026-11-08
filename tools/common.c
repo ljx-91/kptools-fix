@@ -41,36 +41,36 @@ int32_t relo_branch_func(const char *img, int32_t func_offset)
 void read_file_align(const char *path, char **con, int *out_len, int align)
 {
     if (!path || !con || !out_len || align <= 0 || (align & (align - 1)))
-        tools_loge_exit("invalid read_file_align arguments\\n");
+        tools_loge_exit("invalid read_file_align arguments\n");
 
     FILE *fp = fopen(path, "rb");
-    if (!fp) tools_log_errno_exit("open file %s\\n", path);
+    if (!fp) tools_log_errno_exit("open file %s\n", path);
     if (fseek(fp, 0, SEEK_END) != 0) {
         fclose(fp);
-        tools_log_errno_exit("seek file %s\\n", path);
+        tools_log_errno_exit("seek file %s\n", path);
     }
     long file_size = ftell(fp);
     if (file_size < 0 || file_size > 0x7fffffffL || fseek(fp, 0, SEEK_SET) != 0) {
         fclose(fp);
-        tools_loge_exit("invalid or oversized file %s\\n", path);
+        tools_loge_exit("invalid or oversized file %s\n", path);
     }
 
     uint64_t aligned = align_ceil((uint64_t)file_size, (uint64_t)align);
     if (aligned > 0x7fffffffULL) {
         fclose(fp);
-        tools_loge_exit("aligned file %s is too large\\n", path);
+        tools_loge_exit("aligned file %s is too large\n", path);
     }
     size_t allocation = aligned ? (size_t)aligned : 1;
     char *buf = (char *)calloc(1, allocation);
     if (!buf) {
         fclose(fp);
-        tools_loge_exit("allocate file buffer for %s failed\\n", path);
+        tools_loge_exit("allocate file buffer for %s failed\n", path);
     }
     size_t readlen = fread(buf, 1, (size_t)file_size, fp);
     if (readlen != (size_t)file_size) {
         free(buf);
         fclose(fp);
-        tools_loge_exit("short read from file %s\\n", path);
+        tools_loge_exit("short read from file %s\n", path);
     }
     fclose(fp);
     *con = buf;
