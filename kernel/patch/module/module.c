@@ -107,12 +107,31 @@ static char *next_string(char *string, unsigned long *secsize)
     return *secsize ? string : NULL;
 }
 
-/* Update size with this section: return offset. */
+/* Update size with this section: return offset, or a negative errno. */
 static long get_offset(struct module *mod, unsigned int *size, Elf_Shdr *sechdr, unsigned int section)
 {
-    long ret = ALIGN(*size, sechdr->sh_addralign ?: 1);
-    *size = ret + sechdr->sh_size;
-    return ret;
+    unsigned long alignment = sechdr->sh_addralign ?: 1;
+    unsigned long offset = *size;
+
+    if (alignment & (alignment - 1)) return -ENOEXEC;
+    if (offset > (~0UL - (alignment - 1))) return -EOVERFLOW;
+    offset = (offset + alignment - 1) & ~(alignment - 1);
+    if (offset > ~0U || sechdr->sh_size > ~0U - offset) return -EOVERFLOW;
+    *size = (unsigned int)(offset + sechdr->sh_size);
+    return (long)offset;
+}
+
+static int align_module_size(unsigned int *size)
+{
+    unsigned long alignment = page_size;
+    unsigned long value = *size;
+
+    if (!alignment || (alignment & (alignment - 1)) ||
+        value > (~0UL - (alignment - 1))) return -EOVERFLOW;
+    value = (value + alignment - 1) & ~(alignment - 1);
+    if (value > ~0U) return -EOVERFLOW;
+    *size = (unsigned int)value;
+    return 0;
 }
 
 static char *get_next_modinfo(const struct load_info *info, const char *tag, char *prev)
@@ -186,7 +205,7 @@ static unsigned long get_sh_size(struct load_info *info, const char *secname)
     return infosec->sh_size;
 }
 
-static void layout_sections(struct module *mod, struct load_info *info)
+static int layout_sections(struct module *mod, struct load_info *info)
 {
     static unsigned long const masks[][2] = {
         /* NOTE: all executable code must be the first section in this array; otherwise modify the text_size finder in the two loops below */
@@ -205,25 +224,28 @@ static void layout_sections(struct module *mod, struct load_info *info)
             Elf_Shdr *s = &info->sechdrs[i];
             if ((s->sh_flags & masks[m][0]) != masks[m][0] || (s->sh_flags & masks[m][1]) || s->sh_entsize != ~0UL)
                 continue;
-            s->sh_entsize = get_offset(mod, &mod->size, s, i);
+            long offset = get_offset(mod, &mod->size, s, i);
+            if (offset < 0) return (int)offset;
+            s->sh_entsize = (unsigned long)offset;
             // const char *sname = info->secstrings + s->sh_name;
         }
         switch (m) {
         case 0: /* executable */
-            mod->size = align(mod->size);
+            if (align_module_size(&mod->size)) return -EOVERFLOW;
             mod->text_size = mod->size;
             break;
         case 1: /* RO: text and ro-data */
-            mod->size = align(mod->size);
+            if (align_module_size(&mod->size)) return -EOVERFLOW;
             mod->ro_size = mod->size;
             break;
         case 2:
             break;
         case 3: /* whole */
-            mod->size = align(mod->size);
+            if (align_module_size(&mod->size)) return -EOVERFLOW;
             break;
         }
     }
+    return 0;
 }
 
 static bool is_core_symbol(const Elf_Sym *src, const Elf_Shdr *sechdrs, unsigned int shnum)
@@ -304,7 +326,7 @@ static int apply_relocations(struct module *mod, const struct load_info *info)
 }
 
 // todo: free .strtab and .symtab after relocation
-static void layout_symtab(struct module *mod, struct load_info *info)
+static int layout_symtab(struct module *mod, struct load_info *info)
 {
     Elf_Shdr *symsect = info->sechdrs + info->index.sym;
     Elf_Shdr *strsect = info->sechdrs + info->index.str;
@@ -313,7 +335,9 @@ static void layout_symtab(struct module *mod, struct load_info *info)
 
     /* Put symbol section at end of module. */
     symsect->sh_flags |= SHF_ALLOC;
-    symsect->sh_entsize = get_offset(mod, &mod->size, symsect, info->index.sym);
+    long sym_offset = get_offset(mod, &mod->size, symsect, info->index.sym);
+    if (sym_offset < 0) return (int)sym_offset;
+    symsect->sh_entsize = (unsigned long)sym_offset;
 
     src = (void *)info->hdr + symsect->sh_offset;
     nsrc = symsect->sh_size / sizeof(*src);
@@ -323,19 +347,31 @@ static void layout_symtab(struct module *mod, struct load_info *info)
     /* Compute total space required for the core symbols' strtab. */
     for (ndst = i = 0; i < nsrc; i++) {
         if (i == 0 || is_core_symbol(src + i, info->sechdrs, info->hdr->e_shnum)) {
-            strtab_size += strlen(&info->strtab[src[i].st_name]) + 1;
+            unsigned long name_size = strlen(&info->strtab[src[i].st_name]) + 1;
+            if (name_size > ~0U - strtab_size || ndst == ~0U) return -EOVERFLOW;
+            strtab_size += (unsigned int)name_size;
             ndst++;
         }
     }
 
     /* Append room for core symbols at end. */
-    info->symoffs = ALIGN(mod->size, symsect->sh_addralign ?: 1);
-    info->stroffs = mod->size = info->symoffs + ndst * sizeof(Elf_Sym);
+    unsigned long sym_alignment = symsect->sh_addralign ?: 1;
+    unsigned long symoffs = mod->size;
+    if ((sym_alignment & (sym_alignment - 1)) ||
+        symoffs > (~0UL - (sym_alignment - 1))) return -EOVERFLOW;
+    symoffs = (symoffs + sym_alignment - 1) & ~(sym_alignment - 1);
+    if (symoffs > ~0U || ndst > (~0U - symoffs) / sizeof(Elf_Sym)) return -EOVERFLOW;
+    info->symoffs = (unsigned int)symoffs;
+    info->stroffs = mod->size = (unsigned int)(symoffs + ndst * sizeof(Elf_Sym));
+    if (strtab_size > ~0U - mod->size) return -EOVERFLOW;
     mod->size += strtab_size;
 
     /* Put string table section at end of module. */
     strsect->sh_flags |= SHF_ALLOC;
-    strsect->sh_entsize = get_offset(mod, &mod->size, strsect, info->index.str);
+    long str_offset = get_offset(mod, &mod->size, strsect, info->index.str);
+    if (str_offset < 0) return (int)str_offset;
+    strsect->sh_entsize = (unsigned long)str_offset;
+    return 0;
 }
 
 static int rewrite_section_headers(struct load_info *info)
@@ -578,8 +614,14 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
         strcpy(mod->args, args);
     }
 
-    layout_sections(mod, info);
-    layout_symtab(mod, info);
+    if ((rc = layout_sections(mod, info))) {
+        set_load_error(info, "module section layout overflow");
+        goto free;
+    }
+    if ((rc = layout_symtab(mod, info))) {
+        set_load_error(info, "module symbol layout overflow");
+        goto free;
+    }
 
     if ((rc = move_module(mod, info))) {
         set_load_error(info, "allocate executable module memory failed");
