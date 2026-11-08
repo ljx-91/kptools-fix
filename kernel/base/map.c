@@ -114,6 +114,8 @@ static __noinline void copy_map_data(map_data_t *dst)
 static __noinline void mem_proc(map_data_t *data)
 {
     copy_map_data(data);
+    if (!data->map_symbol.memblock_reserve_relo || !data->map_symbol.memblock_free_relo ||
+        !data->map_symbol.memblock_mark_nomap_relo) __builtin_trap();
     uint64_t kernel_va = get_kva();
 
     // relocation
@@ -549,8 +551,7 @@ void __noinline _paging_init()
 
     // A failed NOMAP update means the destination is not in the state expected
     // by the later mapping/copy path. Stop before touching it.
-    if (data->map_symbol.memblock_mark_nomap_relo &&
-        ((memblock_mark_nomap_f)data->map_symbol.memblock_mark_nomap_relo)(start_pa, all_size))
+    if (((memblock_mark_nomap_f)data->map_symbol.memblock_mark_nomap_relo)(start_pa, all_size))
         __builtin_trap();
 
     // paging_init
