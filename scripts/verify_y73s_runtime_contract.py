@@ -138,12 +138,12 @@ def main():
 
     # Worst case: six instruction slots * eight emitted words, plus jump-back.
     hook_h = source("kernel/include/hook.h")
-    require(r"#define RELOCATE_INST_NUM \\(TRAMPOLINE_MAX_NUM \\* 8 \\+ 4\\)", hook_h,
+    require(r"#define RELOCATE_INST_NUM \(TRAMPOLINE_MAX_NUM \* 8 \+ 4\)", hook_h,
             "relocation buffer is smaller than the conservative worst-case bound")
     branch_range = function_body(hook_c, "static uint32_t can_b_rel(")
-    require(r"src_addr \\& 0x3", branch_range,
+    require(r"src_addr \& 0x3", branch_range,
             "relative branch source must be instruction-aligned")
-    require(r"dst_addr \\& 0x3", branch_range,
+    require(r"dst_addr \& 0x3", branch_range,
             "relative branch target must be instruction-aligned")
     require(r"0x07fffffcULL", branch_range,
             "positive A64 B range must exclude +128 MiB")
