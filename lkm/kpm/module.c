@@ -846,7 +846,9 @@ static struct kp_module *kp_module_get_by_addr(unsigned long addr)
 
 	spin_lock_irqsave(&module_lock, flags);
 	list_for_each_entry(pos, &modules.list, list) {
-		if (pos->state != KP_MODULE_LOADING && pos->state != KP_MODULE_LIVE)
+		if (pos->state != KP_MODULE_LOADING &&
+		    pos->state != KP_MODULE_LIVE &&
+		    pos->state != KP_MODULE_EXITING)
 			continue;
 		start = (unsigned long)pos->start;
 		end = start + pos->size;
@@ -1123,9 +1125,10 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	}
 	{
 		unsigned long flags;
+		/* Keep the image registered while the failure exit callback runs,
+		 * so CFI range checks and nested kallsyms iteration remain valid. */
 		spin_lock_irqsave(&module_lock, flags);
-		list_del_init(&mod->list);
-		mod->state = KP_MODULE_DEAD;
+		mod->state = KP_MODULE_EXITING;
 		spin_unlock_irqrestore(&module_lock, flags);
 	}
 	set_load_error(info, "module init failed");
@@ -1133,6 +1136,13 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	       args ? args : "", rc);
 	if (mod->exit)
 		kp_call_exit(mod->exit, reserved);
+	{
+		unsigned long flags;
+		spin_lock_irqsave(&module_lock, flags);
+		list_del_init(&mod->list);
+		mod->state = KP_MODULE_DEAD;
+		spin_unlock_irqrestore(&module_lock, flags);
+	}
 
 free:
 	if (mod->args)
