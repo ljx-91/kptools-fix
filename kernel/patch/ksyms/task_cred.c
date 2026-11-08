@@ -387,7 +387,12 @@ int resolve_cred_offset()
     new_cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
     /* prctl installed a slab cred, not one of our CRED_MAX_SIZE scratch buffers. */
     unsigned long (*cred_size)(const void *) = (typeof(cred_size))kallsyms_lookup_name("ksize");
-    unsigned long ambient_scan_len = cred_size ? cred_size(new_cred) : CRED_MAX_SIZE;
+    /* new_cred is a slab allocation. Never assume CRED_MAX_SIZE bytes are
+     * readable when the allocator's actual object size is unavailable. */
+    unsigned long ambient_scan_len = cred_size ? cred_size(new_cred) : 0;
+    if (ambient_scan_len > CRED_MAX_SIZE) ambient_scan_len = CRED_MAX_SIZE;
+    if (!ambient_scan_len)
+        log_boot("    ksize unavailable; refusing unbounded cap_ambient scan\\n");
     for (int i = 0; i + (int)sizeof(kernel_cap_t) <= CRED_MAX_SIZE &&
                     i + (int)sizeof(kernel_cap_t) <= ambient_scan_len; i += sizeof(uint32_t)) {
         if (is_bl(i)) continue;
