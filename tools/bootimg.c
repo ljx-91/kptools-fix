@@ -1401,7 +1401,10 @@ int patch_bootimg(const char *bootimg_path, const char *kpimg_path, const char *
     }
 
     struct boot_img_hdr hdr;
-    fread(&hdr, sizeof(hdr), 1, fp);
+    if (fread(&hdr, sizeof(hdr), 1, fp) != 1) {
+        fclose(fp);
+        return -2;
+    }
 
     if (memcmp(hdr.magic, "ANDROID!", 8) != 0) {
         tools_loge("Invalid boot image magic.\n");
