@@ -837,6 +837,31 @@ static void kp_module_put(struct kp_module *mod)
 	spin_unlock_irqrestore(&module_lock, flags);
 }
 
+/* Hold the owning KPM alive for the complete kernel kallsyms iteration.
+ * LOADING is permitted because init may itself iterate kallsyms; UNLOADING
+ * is rejected so a new callback cannot race module teardown. */
+static struct kp_module *kp_module_get_by_addr(unsigned long addr)
+{
+	struct kp_module *pos;
+	unsigned long flags;
+	unsigned long start, end;
+
+	spin_lock_irqsave(&module_lock, flags);
+	list_for_each_entry(pos, &modules.list, list) {
+		if (pos->state != KP_MODULE_LOADING && pos->state != KP_MODULE_LIVE)
+			continue;
+		start = (unsigned long)pos->start;
+		end = start + pos->size;
+		if (addr >= start && addr < end) {
+			pos->active_calls++;
+			spin_unlock_irqrestore(&module_lock, flags);
+			return pos;
+		}
+	}
+	spin_unlock_irqrestore(&module_lock, flags);
+	return NULL;
+}
+
 /* One PAGE_SIZE module_alloc'd RWX page. The safe kallsyms_on_each_symbol()
  * stand-in assigns a distinct 16-byte slot to each active KPM callback:
  * two zero words satisfy the KCFI [target-4] read, followed by bti c and a
@@ -935,18 +960,28 @@ int kp_kpm_safe_kallsyms_on_each_symbol(kp_kallsyms_cb_t fn, void *data)
 	unsigned long slot, offset;
 	long branch_off;
 	u32 *words;
+	struct kp_module *owner = NULL;
 	int rc;
 
 	if (!kp_real_kallsyms_on_each_symbol)
 		return -EOPNOTSUPP;
 	if (!kp_kpm_cfi_allowed_addr((unsigned long)fn))
 		return kp_real_kallsyms_on_each_symbol(fn, data);
-	if (!kp_callback_tramp)
+	owner = kp_module_get_by_addr((unsigned long)fn);
+	/* A true CFI range result with no LIVE/LOADING owner means teardown
+	 * raced the range check; fail closed instead of calling stale text. */
+	if (!owner)
+		return -EBUSY;
+	if (!kp_callback_tramp) {
+		kp_module_put(owner);
 		return -EOPNOTSUPP;
+	}
 
 	rc = kp_callback_tramp_slot_alloc(&slot);
-	if (rc)
+	if (rc) {
+		kp_module_put(owner);
 		return rc;
+	}
 	offset = slot * KP_CALLBACK_TRAMP_SLOT_SIZE;
 	words = (u32 *)((char *)kp_callback_tramp + offset);
 	branch_off = (long)((unsigned long)fn -
@@ -955,6 +990,7 @@ int kp_kpm_safe_kallsyms_on_each_symbol(kp_kallsyms_cb_t fn, void *data)
 	if ((branch_off & 3) || branch_off < -(1L << 27) ||
 	    branch_off >= (1L << 27)) {
 		kp_callback_tramp_slot_free(slot);
+		kp_module_put(owner);
 		return -ERANGE;
 	}
 
@@ -970,6 +1006,7 @@ int kp_kpm_safe_kallsyms_on_each_symbol(kp_kallsyms_cb_t fn, void *data)
 	rc = kp_real_kallsyms_on_each_symbol(
 		(kp_kallsyms_cb_t)((char *)kp_callback_tramp + offset + 8), data);
 	kp_callback_tramp_slot_free(slot);
+	kp_module_put(owner);
 	return rc;
 }
 
