@@ -13,5 +13,6 @@ void *hook_mem_zalloc(uintptr_t origin_addr, enum hook_type type);
 void hook_mem_free(void *hook_mem);
 void hook_mem_retire(void *hook_mem);
 void *hook_get_mem_from_origin(uint64_t origin_addr);
+void *hook_get_mem_from_origin_type(uint64_t origin_addr, enum hook_type type);
 
 #endif
