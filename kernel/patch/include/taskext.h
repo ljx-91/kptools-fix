@@ -11,6 +11,7 @@
 #include <linux/sched/task.h>
 #include <stdbool.h>
 #include <linux/err.h>
+#include <linux/compiler.h>
 
 #define TASK_EXT_MAGIC 0x11581158
 
