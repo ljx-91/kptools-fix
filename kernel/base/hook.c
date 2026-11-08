@@ -670,7 +670,9 @@ KP_EXPORT_SYMBOL(hook);
 
 void unhook(void *func)
 {
+    if (is_bad_address(func)) return;
     uint64_t origin = branch_func_addr((uint64_t)func);
+    if (is_bad_address((void *)origin)) return;
     hook_t *hook = hook_get_mem_from_origin(origin);
     if (!hook) return;
     int rc = hook_uninstall(hook);
@@ -804,8 +806,20 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
     if (err) goto err;
     err = hook_chain_add(chain, before, after, udata);
     if (err) goto err;
-    hook_chain_install(chain);
-    logkv("Wrap func: %llx succsseed\n", hook->func_addr);
+    {
+        int patch_rc = hook_install(&chain->hook);
+        if (patch_rc) {
+            if (patch_rc == -EUCLEAN) {
+                /* Do not free memory while patched text may still reference it. */
+                logkv("Wrap func: %llx patch rollback uncertain: %d\\n",
+                      hook->func_addr, patch_rc);
+                return -HOOK_PATCH_UNCERTAIN;
+            }
+            err = -HOOK_PATCH_FAILED;
+            goto err;
+        }
+    }
+    logkv("Wrap func: %llx succsseed\\n", hook->func_addr);
     return HOOK_NO_ERR;
 err:
     hook_mem_free(chain);
@@ -828,8 +842,15 @@ void hook_unwrap_remove(void *func, void *before, void *after, int remove)
     for (int i = 0; i < HOOK_CHAIN_NUM; i++) {
         if (chain->states[i] != CHAIN_ITEM_STATE_EMPTY) return;
     }
-    hook_chain_uninstall(chain);
-    // todo: unsafe
+    {
+        int rc = hook_uninstall(&chain->hook);
+        if (rc) {
+            /* Keep chain/trampoline storage alive while origin text may reference it. */
+            logkv("Unwrap func: %llx restore failed: %d; retaining chain memory\\n",
+                  (uint64_t)func, rc);
+            return;
+        }
+    }
     hook_mem_free(chain);
     logkv("Unwrap func: %llx\n", (uint64_t)func);
 }
