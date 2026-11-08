@@ -283,6 +283,7 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
             }
             dsb(ish);
             chain->states[i] = CHAIN_ITEM_STATE_READY;
+            hook_mem_publish(chain);
             logkv("Wrap func pointer add: %llx, %llx, %llx successed\n", chain->hook.fp_addr, before, after);
             return HOOK_NO_ERR;
         }
