@@ -992,7 +992,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
     uint8_t *compressed_buf = NULL;
 
     if (method == 1) {
-        tools_logi("Compressing new kernel with GZIP...\\n");
+        tools_logi("Compressing new kernel with GZIP...\n");
         if (compress_gzip(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size) != 0) {
             free(extracted_dtb);
             fclose(f_orig);
@@ -1001,7 +1001,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
         final_k_buf = compressed_buf;
     }
     if (method == 2) {
-        tools_logi("Compressing new kernel with LZ4...\\n");
+        tools_logi("Compressing new kernel with LZ4...\n");
         if (compress_lz4(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size, k_head) != 0) {
             free(extracted_dtb);
             fclose(f_orig);
@@ -1010,7 +1010,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
         final_k_buf = compressed_buf;
     }
     if (method == 3) {
-        tools_logi("Compressing new kernel with LZ4 Legacy...\\n");
+        tools_logi("Compressing new kernel with LZ4 Legacy...\n");
         if (compress_lz4_le(raw_k_buf, raw_k_size, &compressed_buf, &final_k_size, k_head) != 0) {
             free(extracted_dtb);
             fclose(f_orig);
@@ -1386,7 +1386,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
         goto write_fail;
     if (extracted_dtb && fwrite(extracted_dtb, 1, dtb_size, f_out) != dtb_size)
         goto write_fail;
-    tools_logi("dtb_size=%d\\n", dtb_size);
+    tools_logi("dtb_size=%d\n", dtb_size);
 
     if (new_k_total_aligned > hdr.kernel_size) {
         if (fseek(f_out, (long)page_size + new_k_total_aligned - 1, SEEK_SET) != 0 ||
@@ -1403,7 +1403,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
     long footer_pos = has_avb ? total_size - (long)sizeof(avb) : total_size;
     int footer_written = 0;
     if (has_avb && current_pos > footer_pos) {
-        tools_loge("Repacked image ends at %ld, no room for the AVB footer at %ld\\n",
+        tools_loge("Repacked image ends at %ld, no room for the AVB footer at %ld\n",
                    current_pos, footer_pos);
     } else {
         long padding = current_pos < footer_pos ? footer_pos - current_pos : 0;
