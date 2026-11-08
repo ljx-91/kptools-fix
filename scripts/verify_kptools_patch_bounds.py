@@ -106,6 +106,7 @@ def main():
     need(r"patternlen\s*>\s*32.*?replacelen\s*>\s*32", hex_patch,
          "hex patcher must bound both stack buffers")
     need(r"patternlen\s*!=\s*replacelen", hex_patch,
+         "hex patcher must not overwrite beyond the matched pattern")
     need(r"static int hex_nibble\(", src, "hex patcher must reject invalid hex digits")
     need(r"hex_nibble\(", hex_patch, "hex patcher must reject invalid hex digits")
 
