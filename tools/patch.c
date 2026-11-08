@@ -479,7 +479,9 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
             (size_t)item->args_size > remaining - sizeof(*item) ||
             (size_t)item->con_size > remaining - sizeof(*item) - (size_t)item->args_size ||
             !memchr(item->name, '\0', sizeof(item->name)) ||
-            !memchr(item->event, '\0', sizeof(item->event)))
+            !memchr(item->event, '\0', sizeof(item->event)) ||
+            (item->args_size &&
+             !memchr(item_pos + sizeof(*item), '\0', (size_t)item->args_size)))
             return -ENOEXEC;
 
         size_t record_size = sizeof(*item) + (size_t)item->args_size + (size_t)item->con_size;
@@ -819,7 +821,9 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
                     kpm_info_t kpm_info = { 0 };
                     int rc = get_kpm_info(data, len, &kpm_info);
                     if (rc) tools_loge_exit("can get infomation of kpm, path: %s\n", path);
-                    if (!kpm_info.name) tools_loge_exit("KPM name is missing: %s\n", path);
+                    if (!kpm_info.name ||
+                        strnlen(kpm_info.name, sizeof(item->name)) >= sizeof(item->name))
+                        tools_loge_exit("KPM name is missing or too long: %s\n", path);
                     strncpy(item->name, kpm_info.name, sizeof(item->name) - 1);
                     item->name[sizeof(item->name) - 1] = '\0';
                 } else {
@@ -1036,8 +1040,12 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     // modify kernel entry
     int paging_init_offset = get_symbol_offset_exit(&kallsym, kallsym_kimg, "paging_init");
     setup->paging_init_offset = relo_branch_func(kallsym_kimg, paging_init_offset);
+    if (kpimg_len <= SZ_4K || align_kimg_len > 0x7fffffff - SZ_4K)
+        tools_loge_exit("KPIMG start image offset is invalid\\n");
     int text_offset = align_kimg_len + SZ_4K;
-    b((uint32_t *)(out_kernel_file.kimg + kinfo->b_stext_insn_offset), kinfo->b_stext_insn_offset, text_offset);
+    if (b((uint32_t *)(out_kernel_file.kimg + kinfo->b_stext_insn_offset),
+          kinfo->b_stext_insn_offset, (uint64_t)text_offset) != 4)
+        tools_loge_exit("kernel entry branch is out of range or unaligned\\n");
 
     // additional [len key=value] set
     char *addition_pos = setup->additional;
