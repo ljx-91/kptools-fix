@@ -200,7 +200,7 @@ __attribute__((no_sanitize("cfi")))
 static void kp_flush_kpm_icache(void *start, size_t size)
 {
 	/* flush_icache_all() performs the architecture's inner-shareable
-	 * instruction-cache invalidation. A local "ic iallu" is insufficient:
+	 * instruction-cache invalidation. Local-only invalidation is insufficient:
 	 * another CPU may execute freshly written KPM or trampoline code. */
 	(void)start;
 	(void)size;
