@@ -1498,6 +1498,8 @@ long kp_module_control0(const char *name, const char *ctl_args, char __user *out
 
 	if (!name || !ctl_args || !*ctl_args)
 		return -EINVAL;
+	if (outlen < 0 || (outlen && !out_msg))
+		return -EINVAL;
 	args_copy = kstrdup(ctl_args, GFP_KERNEL);
 	if (!args_copy)
 		return -ENOMEM;
