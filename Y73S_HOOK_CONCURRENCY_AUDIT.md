@@ -1070,10 +1070,9 @@ independent issues rather than merely adjusting the failing checks.
 
 Both workflows below ran against the same source-code HEAD:
 - Source HEAD: 81831f30c9e274e5362cd37c5a9efbffc036b2e0
-- Current branch HEAD: 9d392d05c0947fa2a69252bb078d2c522a1a9687
-  (report-only commit after the successful source-code runs; no production
-  source, verifier, or workflow files changed in that final documentation
-  commit.)
+- The audit document was updated after these successful source-code runs;
+  that documentation-only update did not change production source, verifier,
+  or workflow files.
 - LKM source audit + host kptools build: run 42622781803, success
 - Arm GNU GCC 14.2 Y73S KPIMG build + full audit suite: run 42622781699, success
 
