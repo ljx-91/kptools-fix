@@ -1022,23 +1022,27 @@ int hook_unwrap_remove(void *func, void *before, void *after, int remove)
     uint64_t origin;
     hook_chain_t *chain;
     unsigned long flags;
-    int i, rc;
+    int i, rc, busy;
 
     if (is_bad_address(func)) return -HOOK_BAD_ADDRESS;
     origin = branch_func_addr((uint64_t)func);
     if (is_bad_address((void *)origin)) return -HOOK_BAD_ADDRESS;
-    chain = (hook_chain_t *)hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
-    if (!chain) return -ENOENT;
-
-    if (hook_chain_remove(chain, before, after) == -EBUSY)
-        return -EBUSY;
-    if (!remove) return 0;
-    hook_chain_reap_slots(chain, 0);
-
     flags = hook_engine_lock();
-if (hook_get_mem_from_origin_type(origin, INLINE_CHAIN) != chain) {
+    chain = hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
+    if (!chain) {
         hook_engine_unlock(flags);
         return -ENOENT;
+    }
+    hook_chain_remove_locked(chain, before, after);
+    busy = __atomic_load_n(&chain->active_readers, __ATOMIC_SEQ_CST) != 0;
+    hook_chain_reap_slots_locked(chain, 0);
+    if (busy) {
+        hook_engine_unlock(flags);
+        return -EBUSY;
+    }
+    if (!remove) {
+        hook_engine_unlock(flags);
+        return 0;
     }
     for (i = 0; i < HOOK_CHAIN_NUM; i++) {
         if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY) {
@@ -1051,4 +1055,5 @@ if (hook_get_mem_from_origin_type(origin, INLINE_CHAIN) != chain) {
         hook_mem_retire(chain);
     hook_engine_unlock(flags);
     return rc;
+}
 KP_EXPORT_SYMBOL(hook_unwrap_remove);
