@@ -140,10 +140,16 @@ def main():
 
     cfi = body(module, "bool kp_kpm_cfi_allowed_addr(")
     need(r"spin_lock_irqsave", cfi, "CFI range traversal lock")
+    need(r"pos->text_size", cfi, "CFI range must exclude non-executable module data")
     if "rcu_read_lock" in module:
         raise AssertionError("LKM module registry must not mix plain list writers with RCU readers")
 
+    owner_register = body(module, "int kp_hook_owner_register(")
+    need(r"pos->text_size", owner_register,
+         "hook callback owner must resolve only to executable text")
     owner_lookup = body(module, "static struct kp_module *kp_module_get_by_addr(")
+    need(r"pos->text_size", owner_lookup,
+         "kallsyms callback owner must resolve only to executable text")
     for token in ("KP_MODULE_LOADING", "KP_MODULE_LIVE", "KP_MODULE_UNLOADING"):
         need(re.escape(token), owner_lookup, f"kallsyms owner lookup must allow {token}")
     if "KP_MODULE_EXITING" in owner_lookup:
