@@ -1424,7 +1424,7 @@ long kp_unload_module(const char *name, void __user *reserved)
 		kp_do_set_memory_nx((unsigned long)mod->start, npages);
 	}
 	if (mod->start)
-		kp_free_exec(mod->start);
+		kp_free_exec(mod->start, mod->size);
 	kfree(mod);
 	logkfi("name: %s, rc: %ld\n", name, rc);
 	return rc;
