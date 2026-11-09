@@ -101,6 +101,8 @@ def main():
          "a footer may only be written when an AVB footer was actually read")
     need(r"AVB metadata bytes are preserved, but partition digest and signature are not recomputed; do not treat the repacked image as AVB-verified",
          repack, "AVB repack must warn that preserved metadata is not a recomputed AVB signature")
+    need(r"if\s*\(err\)\s*\{[^}]*fclose\(f_orig\);[^}]*free\(compressed_buf\);[^}]*free\(extracted_dtb\);[^}]*free\(rest_buf\);[^}]*rest_buf_tmp\s*&&\s*rest_buf_tmp\s*!=\s*rest_buf[^}]*return -5;",
+         repack, "AVB validation failure must release all repack buffers before returning")
     need(r"fwrite\(&hdr,\s*sizeof\(hdr\),\s*1,\s*f_out\)\s*!=\s*1", repack,
          "repack must check output header writes")
     need(r"fwrite\(final_k_buf,\s*1,\s*final_k_size,\s*f_out\)\s*!=\s*final_k_size", repack,
