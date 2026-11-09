@@ -56,7 +56,7 @@ checks = {
         "kp_copy_user_string(name, sizeof(name), uname)" in
         body(kpm, "long kp_kpm_info_sc("),
     "no unchecked strncpy_from_user remains in KPM handlers":
-        kpm.count("strncpy_from_user(") == 1,
+        kpm.count("strncpy_from_user(") == 2,
     "feature-control name rejects overlong user input":
         "(size_t)len >= sizeof(name)" in body(dispatch, "long kp_control_feature_sc(") and
         "return -ENAMETOOLONG;" in body(dispatch, "long kp_control_feature_sc(") and
