@@ -19,6 +19,8 @@
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <linux/string.h>
+#include <linux/preempt.h>
+#include <asm/irqflags.h>
 #include <asm/cacheflush.h>
 #include <asm/fixmap.h>
 #include <asm/page.h>
@@ -287,6 +289,10 @@ int kp_patch_text_batch(void *addrs[], const u32 values[], int count)
 		return -EINVAL;
 	if (!kp_patch_stop_machine)
 		return -EOPNOTSUPP;
+	/* stop_machine may sleep and must not be entered with preemption or IRQs
+	 * disabled; fail closed for KPM callers in atomic/interrupt context. */
+	if (in_atomic() || irqs_disabled())
+		return -EWOULDBLOCK;
 	return kp_patch_stop_machine(kp_patch_text_batch_stop, &patch, NULL);
 }
 
