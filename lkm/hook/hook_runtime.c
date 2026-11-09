@@ -93,6 +93,7 @@ static enum kp_hook_alloc_backend kp_hook_alloc_backend;
 /* Normalize executable hook pages before publishing any trampoline.
  * Clearing GP is required because KPM-generated relocated code has no BTI
  * landing pads; PTE updates are serialized by the kernel page-table lock. */
+__attribute__((no_sanitize("cfi"), __noinline__))
 static int kp_hook_update_exec(void *region, unsigned long size, bool executable)
 {
 	unsigned long base = (unsigned long)region;
