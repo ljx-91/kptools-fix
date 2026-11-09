@@ -40,6 +40,8 @@ def main():
          "relative kallsyms backward scans must stop before image underflow")
     need(r"cand\s*<=\s*imglen\s*-\s*elem_size", offsets,
          "relative kallsyms forward scan must read only complete entries")
+    need(r"info->arch\s*==\s*ARM64\s*\?\s*\(uint32_t\)raw_offset", offsets,
+         "ARM64 relative kallsyms values must retain their unsigned 32-bit encoding")
     if "for (;; cand -= elem_size)" in offsets:
         raise AssertionError("unbounded kallsyms_offsets backward scan reintroduced")
 
