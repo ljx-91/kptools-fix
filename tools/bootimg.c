@@ -1229,6 +1229,10 @@ int repack_bootimg_mem(const char *orig_boot_path,
         if (err) {
             tools_loge("%s, refusing to write a broken AVB footer\n", err);
             fclose(f_orig);
+            free(compressed_buf);
+            free(extracted_dtb);
+            free(rest_buf);
+            if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
             return -5;
         }
     }
