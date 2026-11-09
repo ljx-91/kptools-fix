@@ -654,7 +654,9 @@ int kp_hook_owner_call_get(void *owner)
 {
     struct module *mod = owner; unsigned long flags; int rc = 0;
     if (!mod) return 0; flags = module_lock_acquire();
-    if (mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING) { mod->active_calls++; rc = 1; }
+    if ((mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING) &&
+        mod->active_calls != UINT_MAX) { mod->active_calls++; rc = 1; }
+    else if (mod->active_calls == UINT_MAX) rc = -EOVERFLOW;
     else rc = -EBUSY;
     module_lock_release(flags); return rc;
 }
@@ -896,6 +898,7 @@ static struct module *module_get_live(const char *name)
     flags = module_lock_acquire();
     mod = find_module_locked(name);
     if (!mod || mod->state != KP_MODULE_LIVE) mod = NULL;
+    else if (mod->active_calls == UINT_MAX) mod = NULL;
     else mod->active_calls++;
     module_lock_release(flags);
     return mod;
