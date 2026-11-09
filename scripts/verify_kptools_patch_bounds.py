@@ -43,6 +43,36 @@ def main():
     if "for (;; cand -= elem_size)" in offsets:
         raise AssertionError("unbounded kallsyms_offsets backward scan reintroduced")
 
+    token_table = body(kallsym_src, "static int find_token_table(")
+    need(r"!info\\s*\\|\\|\\s*!img\\s*\\|\\|\\s*imglen\\s*<=", token_table,
+         "token-table parser must reject null and undersized images")
+    need(r"imgend\\s*-\\s*num_end\\s*<\\s*2", token_table,
+         "numeric token probe must leave two bytes inside the image")
+    need(r"imgend\\s*-\\s*letter\\s*<", token_table,
+         "alphabetic token probe must fit completely inside the image")
+    need(r"memcmp\\(letter,\\s*letters_syms", token_table,
+         "alphabetic token validation must not use an unchecked memmem span")
+    need(r"preceding_terminators\\s*!=\\s*'0'\\s*\\+\\s*1", token_table,
+         "token-table backward scan must reject a missing prefix")
+    need(r"memchr\\(token_pos,\\s*'\\\\0',\\s*imgend\\s*-\\s*token_pos\\)", token_table,
+         "all 256 token strings must terminate inside the image")
+
+    token_index = body(kallsym_src, "static int find_token_index(")
+    need(r"token_offset\\s*>\\s*UINT16_MAX", token_index,
+         "token-index generation must reject token offsets wider than 16 bits")
+    need(r"memchr\\(img\\s*\\+\\s*offset,\\s*'\\\\0',\\s*imglen\\s*-\\s*offset\\)", token_index,
+         "token-index generation must bound each string terminator")
+    need(r"offset\\s*<\\s*start\\s*\\|\\|\\s*offset\\s*>=\\s*imglen", token_index,
+         "token-index generation must validate each cursor before dereferencing")
+
+    num_syms = body(kallsym_src, "static int find_num_syms(")
+    need(r"approx_end\\s*<\\s*0\\s*\\|\\|\\s*approx_end\\s*>\\s*imglen\\s*-\\s*num_syms_elem_size",
+         num_syms, "symbol-count scan must validate its image range")
+    need(r"cand\\s*>=\\s*lower\\s*&&\\s*cand\\s*<=\\s*imglen\\s*-\\s*num_syms_elem_size",
+         num_syms, "symbol-count scan must read only complete in-image entries")
+    need(r"nsyms\\s*<=\\s*0\\s*\\|\\|\\s*nsyms\\s*>\\s*KSYM_MAX_SYMS",
+         num_syms, "symbol-count scan must reject invalid and excessive counts")
+
     preset = body(src, "preset_t *get_preset(")
     need(r"min_preset_size", preset, "preset search must require a complete minimum header")
     need(r"tail\s*>=\s*min_preset_size", preset, "preset candidate must fit inside input")
