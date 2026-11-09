@@ -660,6 +660,31 @@ void kp_hook_owner_call_put(void *owner)
     module_lock_release(flags);
 }
 
+/* Public KPM lifetime API for work items and callbacks outside Hook chains. */
+int kp_kpm_owner_pin(unsigned long callback_addr, void **owner)
+{
+    return kp_hook_owner_register(callback_addr, owner);
+}
+KP_EXPORT_SYMBOL(kp_kpm_owner_pin);
+
+void kp_kpm_owner_unpin(void *owner)
+{
+    kp_hook_owner_unregister(owner);
+}
+KP_EXPORT_SYMBOL(kp_kpm_owner_unpin);
+
+int kp_kpm_owner_call_get(void *owner)
+{
+    return kp_hook_owner_call_get(owner);
+}
+KP_EXPORT_SYMBOL(kp_kpm_owner_call_get);
+
+void kp_kpm_owner_call_put(void *owner)
+{
+    kp_hook_owner_call_put(owner);
+}
+KP_EXPORT_SYMBOL(kp_kpm_owner_call_put);
+
 long load_module_ex(const void *data, int len, const char *args, const char *event, const char *source,
                     void *__user reserved)
 {
