@@ -64,15 +64,26 @@
 - 不执行 Fastboot、刷写、boot/vbmeta 修改或任何设备分区写入。
 
 
-## 6. 目标配置与当前 LKM/Kbuild 编译参数的交叉审计（2026-11-09 补充）
+## 6. 目标配置与当前 LKM/Kbuild 编译参数的交叉审计（2026-11-09 更新）
 
-本轮直接从上述原始 Boot 的 gzip kernel member 解压出 ARM64 Image，再从 Image 内部 IKCFG_ST / IKCFG_ED 容器解压 .config；编译器版本则来自同一 Image 内的 Linux version 字符串。可复核结果：
+本轮直接从上述原始 Boot 的 gzip kernel member 解压出 ARM64 Image，再从 Image 内部 IKCFG_ST / IKCFG_ED 容器解压 .config；编译器版本来自同一 Image 内的 Linux version 字符串。可复核结果：
 
-- 编译器：Android Clang 9.0.3，clang revision 745b335211bb9eadfa6aa6301f84715cee4b37c5；LLD 9.0.3，revision 3ee225094a683a0f52ad9a00299a7f2004a2c997。
-- CONFIG_CFI=y、CONFIG_CFI_CLANG=y、CONFIG_CFI_CLANG_SHADOW=y、CONFIG_LTO_CLANG=y 均已设置。
-- 在该 .config 中未发现 CONFIG_SHADOW_CALL_STACK、CONFIG_ARM64_BTI 或 CONFIG_ARM64_PTR_AUTH 配置项；这不是启用这些功能的证据。旧内核可能使用不同命名/实现，不能仅凭配置项缺失断言 CPU 或内核绝不支持相应指令。
-- 当前仓库 lkm/Kbuild 对 hook/hook_engine.o 无条件追加 -mbranch-protection=bti、-fno-sanitize=shadow-call-stack、-fno-lto 等选项；同时对该对象关闭 CFI 与栈保护。其注释明确以较新的 Android 12/13 5.10 DDK、PAC/SCS/BTI 组合为背景。
+- 编译器：Android Clang 9.0.3；LLD 9.0.3。
+- `CONFIG_CFI=y`、`CONFIG_CFI_CLANG=y`、`CONFIG_CFI_CLANG_SHADOW=y`、`CONFIG_LTO_CLANG=y` 均已设置。
+- 在该 .config 中未发现 `CONFIG_SHADOW_CALL_STACK` 或 `CONFIG_ARM64_BTI_KERNEL`；这不代表 CPU 或内核绝不支持相应指令，只说明本次解析的配置没有启用对应内核选项。
 
-**审计判断：** 当前 Kbuild 的对象级编译参数没有被证明与 Y73s 的 Clang 9.0.3 / 4.14.141 vendor Kbuild 相容。尤其不能把 -mbranch-protection=bti 当作目标内核已启用 BTI 的证据，也不能把对单个对象关闭 CFI/LTO 的策略直接套用到启用 CONFIG_CFI_CLANG_SHADOW 的目标内核。此处暂不盲目改写参数：缺少精确目标 KDIR 的 arch/arm64/Makefile、scripts/Makefile.*、编译命令和生成头文件，无法安全判断内核对模块 LTO/CFI 元数据及间接调用检查的具体约定。
+### 已完成的 Kbuild 修正
 
-**下一步的必要输入：** 与此 Boot 完全对应的 4.14.141 kernel source/build tree、.config、Module.symvers、生成头文件和 Clang/LLD 9.0.3 工具链。拿到后先执行 make V=1 dry-run/compile-command 审计，核对 hook_engine.o 实际参数、CFI type metadata/shadow ABI、LTO plugin/link flags 和 MODVERSIONS CRC；确认后再调整 Kbuild。不得用通用 DDK 成功结果替代。
+此前 `lkm/Kbuild` 对 `hook/hook_engine.o` 无条件追加 BTI 和 SCS 参数。本轮已提交条件化处理：
+
+- 仅当 `CONFIG_ARM64_BTI_KERNEL=y` 时添加 `-mbranch-protection=bti`。
+- 仅当 `CONFIG_SHADOW_CALL_STACK=y` 或 `CONFIG_ARM64_SCS=y` 时添加 `-fno-sanitize=shadow-call-stack`。
+- 保留 Hook engine 的 `-fno-lto` 与 CFI 隔离策略，不擅自推断其对目标内核已经兼容。
+
+因此按当前 Boot .config，Y73s 4.14.141 构建不会再无条件收到 BTI/SCS 参数。该条件化逻辑已纳入 Host 源码契约审计；KPIMG 构建和全量源码审计已通过。
+
+### 仍需目标 KDIR 证明的事项
+
+**审计判断：** 上述参数修正只解决了不必要的 BTI/SCS 强制参数问题，并未证明模块的 CFI/LTO ABI 已完全兼容。目标启用了 CFI、CFI shadow、LTO 和 MODVERSIONS；仍需核对真实 Kbuild 编译命令、CFI type metadata/shadow ABI、LTO plugin/link flags、模块版本 CRC，以及 Hook engine 对 CFI 的隔离是否正确。
+
+**下一步必要输入：** 与此 Boot 完全对应的 4.14.141 kernel source/build tree、`.config`、`Module.symvers`、生成头文件和 Clang/LLD 9.0.3 工具链。拿到后先执行 `make V=1` dry-run/compile-command 审计，再真实编译和 modpost。不得用通用 DDK 示例成功结果替代。
