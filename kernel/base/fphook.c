@@ -510,6 +510,10 @@ void fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after)
     hook_chain_reap_slots(chain, 1);
 
     flags = hook_engine_lock();
+if (hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN) != chain) {
+        hook_engine_unlock(flags);
+        return;
+    }
     for (i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
         if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY) {
             hook_engine_unlock(flags);
