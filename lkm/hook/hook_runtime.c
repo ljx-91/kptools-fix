@@ -205,7 +205,7 @@ static void kp_hook_exec_free(void *region, unsigned long size)
 	/* Do not return executable pages to the allocator unless NX/BTI
 	 * restoration is verified; leaking is safer than executable reuse. */
 	if (kp_hook_make_nx(region, size)) {
-		logke("Hook executable memory permission restore failed; leaking %px\\n", region);
+		logke("Hook executable memory permission restore failed; leaking %px\n", region);
 		return;
 	}
 	switch (kp_hook_alloc_backend) {
