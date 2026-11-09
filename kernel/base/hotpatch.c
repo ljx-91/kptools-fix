@@ -163,43 +163,53 @@ struct hotpatch_ptr64_t {
     bool compare;
 };
 
-static int hotpatch_ptr64_cb(void *arg)
-{
-    struct hotpatch_ptr64_t *pp = arg;
-    uint64_t old;
-    int rc;
-
-    if (!pp || !pp->addr || ((uintptr_t)pp->addr & 7) ||
-        !pgtable_entry_kernel((uintptr_t)pp->addr))
-        return -EINVAL;
-    old = *pp->addr;
-    if (pp->compare && old != pp->expected)
-        return -EAGAIN;
-
-    rc = hotpatch_nosync((void *)pp->addr, (uint32_t)pp->desired);
-    if (!rc)
-        rc = hotpatch_nosync((void *)((uintptr_t)pp->addr + 4),
-                             (uint32_t)(pp->desired >> 32));
-    if (rc) {
-        int r1 = hotpatch_nosync((void *)pp->addr, (uint32_t)old);
-        int r2 = hotpatch_nosync((void *)((uintptr_t)pp->addr + 4),
-                                 (uint32_t)(old >> 32));
-        if (r1 || r2)
-            return -EUCLEAN;
-        return rc;
-    }
-    pp->original = old;
-    return 0;
-}
-
 static int hotpatch_ptr64_run(struct hotpatch_ptr64_t *patch)
 {
+    uintptr_t va, *entry, original_pte;
+    uint64_t old, seen;
+    int rc = 0;
+
     if (!patch || !patch->addr || ((uintptr_t)patch->addr & 7))
         return -EINVAL;
-    if (kver < VERSION(4, 6, 0) || !kfunc(stop_machine) ||
-        (is_interrupt_masked() && !hotpatch_early_boot))
-        return -EOPNOTSUPP;
-    return stop_machine(hotpatch_ptr64_cb, patch, NULL);
+    va = (uintptr_t)patch->addr;
+    entry = pgtable_entry_kernel(va);
+    if (!entry || !pte_valid(*entry))
+        return -EFAULT;
+
+    original_pte = *entry;
+    modify_entry_kernel(va, entry, (original_pte | PTE_DBM) & ~PTE_RDONLY);
+    dsb(ishst);
+
+    if (patch->compare) {
+        seen = __atomic_compare_exchange_n((volatile uint64_t *)patch->addr,
+                                           &patch->expected, patch->desired,
+                                           false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ?
+               patch->expected : patch->expected;
+        /* compare_exchange writes the observed value back to expected on
+         * failure; use a second read only to distinguish success. */
+        old = __atomic_load_n((volatile uint64_t *)patch->addr, __ATOMIC_SEQ_CST);
+        if (old == patch->desired)
+            patch->original = patch->expected;
+        else
+            rc = -EAGAIN;
+    } else {
+        old = __atomic_load_n((volatile uint64_t *)patch->addr, __ATOMIC_SEQ_CST);
+        for (;;) {
+            seen = old;
+            if (__atomic_compare_exchange_n((volatile uint64_t *)patch->addr,
+                                            &seen, patch->desired, false,
+                                            __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+                patch->original = old;
+                break;
+            }
+            old = seen;
+        }
+    }
+
+    modify_entry_kernel(va, entry, original_pte);
+    __flush_dcache_area((void *)va, sizeof(uint64_t));
+    dsb(ishst);
+    return rc;
 }
 
 int hotpatch_exchange64(void *addr, uint64_t desired, uint64_t *original)
