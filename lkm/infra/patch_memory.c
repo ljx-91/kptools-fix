@@ -102,7 +102,7 @@ static unsigned long kp_phys_from_virt(unsigned long addr)
 }
 
 /* Data (rodata) poke through a fixmap; page-align the phys for set_fixmap_offset
- * and add the offset back. Used only for sys_call_table pointer writes. */
+ * and add the offset back. The caller supplies a single-page write. */
 __attribute__((no_sanitize("cfi")))
 static int kp_patch_data(void *dst, const void *src, size_t len)
 {
