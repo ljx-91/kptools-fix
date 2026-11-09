@@ -1248,3 +1248,34 @@ Changes committed on `y73s-cred-layout-guards-20261108`:
 
 The repository remains not certified for device use or untrusted KPM loading
 until target-kernel compilation and runtime validation are completed.
+
+
+## 11. Selected-branch KPIMG profile CI correction (2026-11-09)
+
+The generic `KernelPatch Windows Build` workflow failed during its ARM64
+KPIMG link with `Size too large of .setup.map!`. Comparing the successful
+dedicated Y73S KPIMG run with the generic workflow logs identified the cause:
+the dedicated workflow compiled with `-DKP_TARGET_Y73S=1`, but the generic
+workflow only enabled `Y73S_TARGET` for the older
+`y73s-gcc-audit-20261108` branch. The selected
+`y73s-cred-layout-guards-20261108` branch was omitted, so the generic build
+compiled the non-Y73S map path and exceeded the fixed 4 KiB map region.
+
+### CI changes
+
+- Added the selected branch to the generic workflow's Y73S target-profile
+  condition. It now exports `Y73S_TARGET=1` for either Y73S audit branch.
+- Extended the LKM contract verifier to assert that the selected branch
+  enables this target profile, preventing the branch-specific regression.
+
+The failure was a build-configuration mismatch, not evidence of a new LKM
+loader defect. The workflow fix and regression assertion are committed, but
+the post-fix KPIMG build must complete successfully before the generic build
+can be marked green. The dedicated Y73S KPIMG workflow previously completed
+successfully at commit `64db78c`.
+
+Changes:
+- `7d297af`: enable Y73S KPIMG profile for the selected branch.
+- `90c5a17`, `78a416e`: add and correct the branch-profile verifier assertion.
+
+No target-kernel LKM compile or device-side test has been performed.
