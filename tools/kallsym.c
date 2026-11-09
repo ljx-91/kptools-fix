@@ -932,83 +932,105 @@ static int is_symbol_name_pos(kallsym_t *info, char *img, int32_t pos, char *sym
 
 static int correct_addresses_or_offsets_by_banner(kallsym_t *info, char *img, int32_t imglen)
 {
+    if (!info || !img || imglen <= 0 || info->image_size != imglen ||
+        info->kallsyms_markers_offset <= 0 ||
+        info->kallsyms_markers_offset > imglen) return -1;
+
     int32_t pos = info->kallsyms_names_offset;
+    if (pos < 0 || pos >= info->kallsyms_markers_offset) return -1;
     int32_t index = 0;
-    char symbol[KSYM_SYMBOL_LEN] = { '\0' };
+    char symbol[KSYM_SYMBOL_LEN] = { '\\0' };
 
     while (pos < info->kallsyms_markers_offset) {
         memset(symbol, 0, sizeof(symbol));
         int32_t ret = decompress_symbol_name(info, img, &pos, NULL, symbol);
         if (ret) return ret;
-
         if (!strcmp(symbol, "linux_banner")) {
-            tools_logi("names table linux_banner index: 0x%08x\n", index);
+            tools_logi("names table linux_banner index: 0x%08x\\n", index);
             break;
-        }
-        if (!strcmp(symbol, "pid_vnr")) {
         }
         index++;
     }
 
-    if (pos >= info->kallsyms_markers_offset) {
-        tools_loge("no linux_banner in names table\n");
+    if (pos >= info->kallsyms_markers_offset ||
+        index < 0 || index >= info->kallsyms_num_syms) {
+        tools_loge("no valid linux_banner entry in names table\\n");
         return -1;
     }
     info->symbol_banner_idx = -1;
 
-    // find correct addresses or offsets
-    for (int i = 0; i < info->banner_num; i++) {
-        int32_t target_offset = info->linux_banner_offset[i];
-
-        int32_t elem_size = info->has_relative_base ? get_offsets_elem_size(info) : get_addresses_elem_size(info);
-        pos = info->_approx_addresses_or_offsets_offset;
-
-        int32_t end = pos + 4096 + elem_size;
-        for (; pos < end; pos += elem_size) {
-            if (info->arch == X86_64 && info->has_relative_base) {
-                int32_t raw = (int32_t)int_unpack(img + pos + index * elem_size, elem_size, info->is_be);
-                if ((uint32_t)raw == (uint32_t)target_offset) {
-                    info->has_absolute_percpu = 0;
-                    break;
-                }
-                if (raw < 0 && -1 - raw == target_offset) {
-                    info->has_absolute_percpu = 1;
-                    tools_logi("x86 kallsyms uses absolute percpu offsets\n");
-                    break;
-                }
-                continue;
-            }
-            uint64_t base = uint_unpack(img + pos, elem_size, info->is_be);
-            int32_t offset = uint_unpack(img + pos + index * elem_size, elem_size, info->is_be) - base;
-            if (offset == target_offset) break;
-        }
-        if (pos < end) {
-            info->symbol_banner_idx = i;
-            tools_logi("linux_banner index: %d\n", i);
-            break;
-        }
-    }
-    if (info->symbol_banner_idx < 0) {
-        tools_loge("correct address or offsets error\n");
+    int32_t elem_size = info->has_relative_base ?
+        get_offsets_elem_size(info) : get_addresses_elem_size(info);
+    int32_t table_start = info->_approx_addresses_or_offsets_offset;
+    int32_t table_end = info->_approx_addresses_or_offsets_end;
+    if ((elem_size != 4 && elem_size != 8) || table_start < 0 ||
+        table_end > imglen || table_end < table_start) {
+        tools_loge("invalid kallsyms address-table candidate range\\n");
         return -1;
     }
 
-    int32_t elem_size = info->has_relative_base ? get_offsets_elem_size(info) : get_addresses_elem_size(info);
+    int64_t index_bytes = (int64_t)index * elem_size;
+    int64_t max_base_pos = (int64_t)table_end - index_bytes - elem_size;
+    if (max_base_pos < table_start) {
+        tools_loge("linux_banner index exceeds candidate address-table coverage\\n");
+        return -1;
+    }
+
+    int64_t search_end = (int64_t)table_start + 4096 + elem_size;
+    if (search_end > max_base_pos + elem_size)
+        search_end = max_base_pos + elem_size;
+
+    for (int64_t candidate = table_start; candidate < search_end; candidate += elem_size) {
+        int64_t target_pos = candidate + index_bytes;
+        uint64_t base = uint_unpack(img + candidate, elem_size, info->is_be);
+        uint64_t target = uint_unpack(img + target_pos, elem_size, info->is_be);
+
+        if (info->arch == X86_64 && info->has_relative_base) {
+            int32_t raw = (int32_t)int_unpack(img + target_pos, elem_size, info->is_be);
+            if ((uint32_t)raw == (uint32_t)info->linux_banner_offset[info->banner_num - 1]) {
+                info->has_absolute_percpu = 0;
+                pos = (int32_t)candidate;
+                break;
+            }
+            if (raw < 0 && -1 - raw == info->linux_banner_offset[info->banner_num - 1]) {
+                info->has_absolute_percpu = 1;
+                tools_logi("x86 kallsyms uses absolute percpu offsets\\n");
+                pos = (int32_t)candidate;
+                break;
+            }
+            continue;
+        }
+
+        if (target >= base && target - base <= INT32_MAX &&
+            (int32_t)(target - base) == info->linux_banner_offset[info->banner_num - 1]) {
+            pos = (int32_t)candidate;
+            break;
+        }
+    }
+
+    if (pos < table_start || (int64_t)pos >= search_end) {
+        tools_loge("correct kallsyms address or offsets error\\n");
+        return -1;
+    }
+
+    info->symbol_banner_idx = index;
+    tools_logi("linux_banner index: %d\\n", index);
 
     if (info->has_relative_base) {
         info->kallsyms_offsets_offset = pos;
-        tools_logi("kallsyms_offsets offset: 0x%08x\n", pos);
+        tools_logi("kallsyms_offsets offset: 0x%08x\\n", pos);
     } else {
         info->kallsyms_addresses_offset = pos;
-        tools_logi("kallsyms_addresses offset: 0x%08x\n", pos);
-        info->kernel_base = uint_unpack(img + info->kallsyms_addresses_offset, elem_size, info->is_be);
-        tools_logi("kernel base address: 0x%llx\n", info->kernel_base);
+        info->kernel_base = uint_unpack(img + pos, elem_size, info->is_be);
+        tools_logi("kallsyms_addresses offset: 0x%08x\\n", pos);
+        tools_logi("kernel base address: 0x%llx\\n", (unsigned long long)info->kernel_base);
     }
 
     if (info->arch == ARM64) {
         int32_t pid_vnr_offset = get_symbol_offset(info, img, "pid_vnr");
-        if (arm64_verify_pid_vnr(info, img, imglen, pid_vnr_offset, 0)) {
-            tools_logw("pid_vnr verification failed\n");
+        if (pid_vnr_offset >= 0 &&
+            arm64_verify_pid_vnr(info, img, imglen, pid_vnr_offset, 0)) {
+            tools_logw("pid_vnr verification failed\\n");
         }
     }
 
