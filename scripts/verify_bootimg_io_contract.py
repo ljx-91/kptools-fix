@@ -49,6 +49,16 @@ def main():
     need(r"rest_buf_tmp\s*=\s*calloc[\s\S]*?fread\(rest_buf_tmp[\s\S]*?\)\s*!=\s*rest_data_size\s*-\s*sizeof\(avb\)",
          repack, "repack must check tail allocation and read")
 
+    success_close = repack.find("if (fclose(f_out) != 0)")
+    success_jump = repack.find("goto post_write;", success_close)
+    fail_label = repack.find("write_fail:", success_close)
+    post_label = repack.find("post_write:", fail_label)
+    fail_return = repack.find("return -EIO;", fail_label)
+    if not (success_close >= 0 and success_jump > success_close and
+            fail_label > success_jump and fail_return > fail_label and
+            post_label > fail_return):
+        raise AssertionError("successful repack must jump past failure cleanup before AVB preservation")
+
     patch = body(src, "int patch_bootimg(")
     need(r"fread\(&hdr,\s*sizeof\(hdr\),\s*1,\s*fp\)\s*!=\s*1", patch,
          "patch must reject truncated boot headers")
