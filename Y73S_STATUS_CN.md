@@ -332,3 +332,44 @@
 - 测试只解包并读取工作目录副本，未修改资料库原始 Boot；没有 Fastboot、刷写、分区写入或设备启动操作。
 
 当前阶段结论：**源码契约、Host Linux 工具构建、KPIMG 构建、Windows 工具构建和原始 Y73s Boot 的完整 Kallsyms 离线解析均已通过。** 尚未通过目标 Linux 4.14.141 KDIR 的真实 `.ko` 编译/modpost、KPM 动态 load/unload 与 Hook 压力测试，也未进行真机启动/APatch 初始化；不能据此宣称设备可启动或 APatch 已可用。
+
+
+## 16. 2026-11-10：Boot repack 成功路径、AVB 边界与原始配置提取
+
+### Boot repack 修复
+
+- `repack_bootimg_mem()` 在成功写出并关闭输出文件、释放缓冲区后，原先会顺序落入 `write_fail:`，再次清理并错误返回 `-EIO`。现在成功路径显式 `goto post_write`，跳过失败清理。
+- AVB footer 校验失败的早退分支此前遗漏释放 `compressed_buf`、`extracted_dtb`、`rest_buf` 和独立的 `rest_buf_tmp`；现已补齐释放。
+- 对带 AVB footer 的 repack 增加明确警告：工具只保留 AVB metadata/footer 字节并调整 footer offset，不重新计算分区 digest 或 AVB signature；输出不得被当作 AVB-verified 镜像。回归契约已锁定成功跳转、失败清理和该警告。
+- 主要提交：`8a74d4cf`（成功路径控制流）、`d023bad2`（AVB 错误路径清理）、`dfc651a4` / `e60fc9a6`（AVB 验证警告及契约）。
+
+### 原始 Boot 的只读 round-trip
+
+使用当前分支构建的 Linux kptools（Host Run `42676275704`，工具 SHA-256 `774e856fdddf9ae8154573f16186695ed76a6cefe7b72b49a460686b2d988994`）：
+
+- 在独立临时目录对原始 Boot 副本执行 `kptools repack boot.img`，退出码 0，输出 `new-boot.img` 为 100,663,296 bytes。
+- 再对输出执行 `kptools unpack`，退出码 0；解压内核 SHA-256 与原始解压内核完全相同：`345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`。
+- AVB footer magic 保留；原 vbmeta 1,472 bytes 在新 offset 上逐字节相同。footer 的 image_size 从 17,618,944 调整为 17,602,560，vbmeta_offset 从 17,620,992 调整为 17,604,608，偏移变化 -16,384 bytes。
+- **限制：这只是 Boot 结构、解压内核和 metadata 搬移的 round-trip 检查；没有重算或验证 AVB 分区摘要/签名。工具现已在日志中明确警告，不得将该输出当作 AVB 验证通过。** 未将输出写入设备。
+
+### 从原始内核提取真实 .config
+
+- 原始解压内核包含 `IKCFG_ST` / `IKCFG_ED`，成功解出 gzip 内嵌配置。
+- 配置标头为 Linux/arm64 4.14.141；文件 148,327 bytes，SHA-256：`8edad6360e3769bf32e505d54be40bfafc31695d2e4762dac8fc246607d3c934`。
+- 已确认关键项：`CONFIG_MODULES=y`、`CONFIG_MODVERSIONS=y`、`CONFIG_MODULE_UNLOAD=y`、`CONFIG_LTO_CLANG=y`、`CONFIG_CFI_CLANG=y`、`CONFIG_CFI_CLANG_SHADOW=y`、`CONFIG_MACH_MT6853=y`、`CONFIG_KALLSYMS_ALL=n`、`CONFIG_PGTABLE_LEVELS=3`、`CONFIG_ARM64_4K_PAGES=y`、`CONFIG_ARM64_VA_BITS=39`；`CONFIG_MODULE_SIG` 未启用。
+- 这份精确配置有助于未来恢复 KDIR，但不能替代源码、生成头文件和 `Module.symvers`。
+
+### 公开源码候选核验
+
+- 发现 `vivo-source-mirror/Y53s` 有 PD2031 专用 defconfig 和 `k6853v1_64_6360_PD2031.dts`，可作为 MT6853/PD2031 平台参考。
+- 但该仓库顶层 Makefile 是 Linux 4.14.186，不是本机 Boot 的 4.14.141；仓库也没有生成后的 `include/generated` 和 `Module.symvers`。因此它**不是当前 Boot 可直接使用的 KDIR**，没有拿它编译或声称生成可加载模块。
+- 公开源码候选：`https://github.com/vivo-source-mirror/Y53s`；Makefile：`https://github.com/vivo-source-mirror/Y53s/blob/master/Makefile`；PD2031 defconfig：`https://github.com/vivo-source-mirror/Y53s/blob/master/arch/arm64/configs/k6853v1_64_6360_defconfig_PD2031`。
+
+### 当前代码 CI
+
+- Linux Host kptools + 全量源码契约：Run `42676275704` success。
+- GCC 14.2 ARM64 KPIMG：Run `42676275468` success。
+- Windows kptools.exe：Run `42676275493` success。
+- 当前验证提交：`e42ee0031f1c10b2ecf68d67c5029d3db095df76`。
+
+剩余门槛仍是匹配 4.14.141 的源码/KDIR、生成头文件和 `Module.symvers`，以及真实目标配置下的 `.ko` 编译/modpost、KPM 动态 load/unload、Hook 压力测试。没有进行 Fastboot、刷写、分区写入或真机启动。
