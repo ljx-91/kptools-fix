@@ -14,6 +14,28 @@ hmem = read("kernel/base/hmem.c")
 hmem_h = read("kernel/base/hmem.h")
 hook = read("kernel/base/hook.c")
 fphook = read("kernel/base/fphook.c")
+patch_memory = read("lkm/infra/patch_memory.c")
+
+def function_body(source, signature):
+    start = source.find(signature)
+    if start < 0:
+        raise AssertionError(f"missing function: {signature}")
+    brace = source.find("{", start)
+    depth = 0
+    for pos in range(brace, len(source)):
+        if source[pos] == "{":
+            depth += 1
+        elif source[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace + 1:pos]
+    raise AssertionError(f"unterminated function: {signature}")
+
+
+hotpatch = function_body(runtime, "int hotpatch(void *addrs[], uint32_t values[], int count)")
+patch_data = function_body(patch_memory, "static int kp_patch_data(")
+patch_exchange = function_body(patch_memory, "int kp_patch_exchange64(")
+patch_cmpxchg = function_body(patch_memory, "int kp_patch_cmpxchg64(")
 
 checks = {
     "LKM backend defines hook_mem_retire": "void hook_mem_retire(void *payload)" in runtime,
@@ -85,6 +107,24 @@ checks = {
         "hook_get_mem_from_origin_type(origin, INLINE)" in hook and
         "hook_get_mem_from_origin_type(origin, INLINE_CHAIN)" in hook and
         "hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN)" in fphook,
+    "LKM hook text patch batch snapshots all words before writing":
+        "uint32_t original[64];" in hotpatch and
+        "copy_from_kernel_nofault(&original[i], addrs[i]" in hotpatch,
+    "LKM hook text patch batch rolls back failed and prior words":
+        "for (j = i; j >= 0; j--)" in hotpatch and
+        "rollback_rc = -EUCLEAN" in hotpatch,
+    "shared FIX_TEXT_POKE0 mapping is serialized":
+        "DEFINE_RAW_SPINLOCK(kp_fixmap_patch_lock)" in patch_memory and
+        "raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags)" in patch_memory and
+        "raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags)" in patch_memory,
+    "fixmap data writes reject cross-page ranges":
+        "len > PAGE_SIZE - phy_off" in patch_data and
+        "copy_to_kernel_nofault(map, src, len)" in patch_data,
+    "atomic pointer patchers hold the shared fixmap lock":
+        "raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags)" in patch_exchange and
+        "raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags)" in patch_exchange and
+        "raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags)" in patch_cmpxchg and
+        "raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags)" in patch_cmpxchg,
 }
 
 for label, ok in checks.items():
