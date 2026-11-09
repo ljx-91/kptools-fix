@@ -939,7 +939,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
         has_avb = 1;
     }
     if (has_avb) {
-        tools_logw("AVB footer/vbmeta bytes will be preserved, but partition digest and signature are not recomputed; the repacked image may require re-signing or disabled verification\\n");
+        tools_logw("AVB footer/vbmeta bytes will be preserved, but partition digest and signature are not recomputed; the repacked image may require re-signing or disabled verification\n");
     }
 
     uint32_t header_ver = hdr.unused[0];
