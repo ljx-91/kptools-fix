@@ -292,3 +292,30 @@
 - 专用 Linux Host Run `42672967489` 已实际执行编译；`make` / C 编译阶段通过，但构建步骤被当时错误的 synthetic NUL fixture 拦截，未生成 artifact。fixture 随后已改为 `bytes(49)`，并补上对齐结果断言（提交 `4c34c8b`）。
 - 专用 Linux Host Run `42673414886` 对 `4c34c8b` 显示 workflow-level failure，GitHub 未创建 jobs/check-runs；没有源码失败日志，不能判定为 C 编译失败或通过。
 - 因此：修复后的 C 源码已通过 Windows 编译；Linux Host C 编译曾通过，但修复后的回归脚本尚未在有效 Host CI job 中跑完；**修复后完整 Linux kptools artifact 和完整 C 工具真实 Boot `-d` 结果仍待确认**。
+
+
+## 14. 2026-11-10：原始 Y73s Boot 的完整 Kallsyms 离线解析通过
+
+### 第二处根因与修复
+
+- 最新 C 工具在 Token Table/Index 修复后，名称解码仍失败。
+- 根因：`kallsyms_token_table[]` 保存的是原始输入镜像内的指针；分析流程为 RELA 使用 `copied_img` 工作副本，但 `decompress_symbol_name()` / `is_symbol_name_pos()` 错误地用工作副本基址验证原始镜像指针，造成合法 token 指针被拒绝。
+- `kallsym_t` 新增 `kallsyms_token_table_image` 保存 token 指针所属的原始镜像；新增 `get_token_string()` 统一执行 token 地址、镜像范围和 NUL 终止检查。名称解码和符号探测均改为使用该 helper。
+- 在独立 ASan/UBSan C harness 中，以原始镜像保存 token 指针、以复制镜像解码名称，成功找到 `vectors` index 18 和 `pid_vnr` index 0xd165；Token Table 截断边界用例也全部安全返回。
+
+### CI 与真实镜像验证
+
+- Linux Host kptools + 全量源码契约 Run `42674779169`（HEAD `d9e4e0dc`）：success。
+- 构建产物：`kptools-linux-x86_64`，SHA-256 `a9fef9972e451305a1efc3e5a7ce888258c10241750967f61c5b41648191d06f`。
+- 使用上述产物，对资料库原始 Boot 解压出的 47,517,708-byte ARM64 Image 执行只读 `-d`：**exit code 0**。
+- 最终解析结果：
+  - Linux 4.14.141+，ARM64。
+  - token table `0x01e4bd00`；token index `0x01e4c100`；markers `[0x01e4af00, 0x01e4bc30)`；names `0x01cef600`。
+  - `kallsyms_num_syms=0x1a5b9`，完整导出 107,961 条符号。
+  - `vectors` index 18，offset `0x2800`。
+  - `pid_vnr` index `0xd165`，offset `0x01912460`；CFI B veneer 跳到 `0x0011bc10`，目标指令 `0xd5384108`，成功识别 SP_EL0。
+  - kallsyms addresses `0x01c1c700`；kernel base `0xffffff8008080000`。
+- 通用构建 Run `42674779097` 的 Ubuntu KPIMG job 和新增 Linux kptools/源码契约步骤均 success；Windows job当时仍在进行中。
+- 该结果证明原始 Boot 的完整 Kallsyms 离线解析链已通过；不代表目标设备已启动、APatch 已初始化或真实 `.ko` 已在设备加载。
+
+安全边界不变：没有使用 Fastboot、没有刷写或写设备分区、没有进行真机启动测试。
