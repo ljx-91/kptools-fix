@@ -60,6 +60,8 @@ def main():
          "alphabetic token probe must fit completely inside the image")
     need(r"memcmp\(letter,\s*letters_syms", token_table,
          "alphabetic token validation must not use an unchecked memmem span")
+    need(r"offset\s*=\s*\(int32_t\)\(pos\s*\+\s*1\s*-\s*img\)",
+         token_table, "token-table start must account for the backward scan cursor still pointing at its final NUL")
     need(r"preceding_terminators\s*!=\s*'0'\s*\+\s*1", token_table,
          "token-table backward scan must reject a missing prefix")
     need(r"memchr\(token_pos,\s*'\\0',\s*imgend\s*-\s*token_pos\)", token_table,
