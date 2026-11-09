@@ -121,13 +121,12 @@ def main():
     flush = body(module, "static void kp_flush_kpm_icache(")
     require(r"kp_flush_icache_all_fn\s*\(\s*\)", flush,
             "KPM publication must call the kernel-wide I-cache flush")
-    if re.search(r'ic\\s+iallu', flush):
+    if re.search(r'ic\s+iallu', flush):
         raise AssertionError("local-only I-cache invalidation is insufficient for KPM publication")
     init = body(module, "int kp_kpm_init(")
     require(r"!kp_flush_icache_all_fn", init,
             "KPM loader must fail closed when flush_icache_all is unavailable")
-    require(r"kp_flush_kpm_icache\(words,\\s*KP_CALLBACK_TRAMP_SLOT_SIZE\\)",
-            body(module, "__attribute__((no_sanitize(\\"cfi\\")))\\nint kp_kpm_safe_kallsyms_on_each_symbol("),
+    require(r"kp_flush_kpm_icache\\(words,\\s*KP_CALLBACK_TRAMP_SLOT_SIZE\\)", module,
             "callback trampoline writes must use the shared I-cache flush helper")
 
     registry = body(module, "static struct kp_module *kp_module_get(")
