@@ -36,18 +36,23 @@
 
 int find_ikconfig_blob(char *img, int32_t imglen, size_t *start, size_t *size)
 {
-    char *pos_start = memmem(img, imglen, IKCFG_ST, strlen(IKCFG_ST));
+    if (!img || imglen <= 0 || !start || !size) return -1;
+
+    char *pos_start = memmem(img, (size_t)imglen, IKCFG_ST, strlen(IKCFG_ST));
     if (!pos_start) return 1;
 
-    size_t kcfg_start = pos_start - img + strlen(IKCFG_ST);
-    char *pos_end = memmem(img + kcfg_start, imglen - kcfg_start, IKCFG_ED, strlen(IKCFG_ED));
+    size_t kcfg_start = (size_t)(pos_start - img) + strlen(IKCFG_ST);
+    if (kcfg_start > (size_t)imglen) return 2;
+    char *pos_end = memmem(img + kcfg_start, (size_t)imglen - kcfg_start,
+                           IKCFG_ED, strlen(IKCFG_ED));
     if (!pos_end) return 2;
 
-    while (kcfg_start < (size_t)imglen && (img[kcfg_start] == '\0' || img[kcfg_start] == '\n')) {
+    while (kcfg_start < (size_t)imglen &&
+           (img[kcfg_start] == '\\0' || img[kcfg_start] == '\\n')) {
         kcfg_start++;
     }
 
-    size_t kcfg_bytes = pos_end - (img + kcfg_start);
+    size_t kcfg_bytes = (size_t)(pos_end - (img + kcfg_start));
     if (!kcfg_bytes) return 3;
 
     *start = kcfg_start;
@@ -58,53 +63,92 @@ int find_ikconfig_blob(char *img, int32_t imglen, size_t *start, size_t *size)
 int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
 {
     /*
-	// todo: linux_proc_banner
-  const char linux_banner[] =
-        "Linux version " UTS_RELEASE " (" LINUX_COMPILE_BY "@"
-        LINUX_COMPILE_HOST ") (" LINUX_COMPILER ") " UTS_VERSION "\n";
-  Linux version 4.9.270-g862f51bac900-ab7613625 (android-build@abfarm-east4-101)
-  (Android (7284624, based on r416183b) clang version 12.0.5
-  (https://android.googlesource.com/toolchain/llvm-project
-  c935d99d7cf2016289302412d708641d52d2f7ee)) #0 SMP PREEMPT Thu Aug 5 07:04:42
-  UTC 2021
-  */
+     * A vendor kernel image can contain multiple copies of linux_banner.
+     * Keep only the last four offsets, matching the fixed metadata capacity.
+     */
+    if (!info || !img || imglen <= 0) return -1;
+
     int32_t *kver = (int32_t *)opt;
-    char linux_banner_prefix[] = "Linux version ";
-    size_t prefix_len = strlen(linux_banner_prefix);
-
+    static const char linux_banner_prefix[] = "Linux version ";
+    const size_t prefix_len = sizeof(linux_banner_prefix) - 1;
     char *imgend = img + imglen;
-    char *banner = (char *)img;
+    char *search = img;
+
     info->banner_num = 0;
-    while ((banner = (char *)memmem(banner + 1, imgend - banner - 1, linux_banner_prefix, prefix_len)) != NULL) {
-        if (isdigit(*(banner + prefix_len)) && *(banner + prefix_len + 1) == '.') {
-            info->linux_banner_offset[info->banner_num++] = (int32_t)(banner - img);
-            if (!kver){
-                tools_logi("linux_banner %d: %s", info->banner_num, banner);
-                tools_logi("linux_banner offset: 0x%lx\n", banner - img);
+    while (search < imgend) {
+        char *banner = (char *)memmem(search, (size_t)(imgend - search),
+                                      linux_banner_prefix, prefix_len);
+        if (!banner) break;
+
+        size_t remaining = (size_t)(imgend - banner);
+        if (remaining > prefix_len + 1 &&
+            isdigit((unsigned char)banner[prefix_len]) &&
+            banner[prefix_len + 1] == '.') {
+            int32_t slot;
+            if (info->banner_num < (int32_t)ARRAY_SIZE(info->linux_banner_offset)) {
+                slot = info->banner_num++;
+            } else {
+                memmove(info->linux_banner_offset, info->linux_banner_offset + 1,
+                        (ARRAY_SIZE(info->linux_banner_offset) - 1) *
+                            sizeof(info->linux_banner_offset[0]));
+                slot = (int32_t)ARRAY_SIZE(info->linux_banner_offset) - 1;
             }
+            info->linux_banner_offset[slot] = (int32_t)(banner - img);
+            if (!kver)
+                tools_logi("linux_banner %d offset: 0x%lx\\n",
+                           info->banner_num, (unsigned long)(banner - img));
         }
+        search = banner + 1;
     }
-    banner = img + info->linux_banner_offset[info->banner_num - 1];
 
+    if (!info->banner_num) {
+        tools_loge("no valid linux_banner in image\\n");
+        return -1;
+    }
+
+    char *banner = img + info->linux_banner_offset[info->banner_num - 1];
     char *uts_release_start = banner + prefix_len;
-    char *space = strchr(banner + prefix_len, ' ');
+    char *space = (char *)memchr(uts_release_start, ' ',
+                                 (size_t)(imgend - uts_release_start));
+    if (!space) {
+        tools_loge("linux_banner release string is not terminated inside image\\n");
+        return -1;
+    }
 
-    char *dot = NULL;
+    size_t release_len = (size_t)(space - uts_release_start);
+    char release[128];
+    if (!release_len || release_len >= sizeof(release)) {
+        tools_loge("linux_banner release string has invalid length\\n");
+        return -1;
+    }
+    memcpy(release, uts_release_start, release_len);
+    release[release_len] = '\\0';
 
-    // VERSION
-    info->version.major = (uint8_t)strtoul(uts_release_start, &dot, 10);
-    // PATCHLEVEL
-    info->version.minor = (uint8_t)strtoul(dot + 1, &dot, 10);
-    // SUBLEVEL
-    int32_t patch = (int32_t)strtoul(dot + 1, &dot, 10);
-    info->version.patch = patch <= 256 ? patch : 255;
-    if (kver) *kver = (info->version.major << 16) + (info->version.minor << 8) + info->version.patch;
+    char *cursor = release;
+    char *end = NULL;
+    unsigned long major = strtoul(cursor, &end, 10);
+    if (end == cursor || *end != '.' || major > UINT8_MAX) return -1;
+    cursor = end + 1;
 
-    if(!kver)tools_logi("kernel version major: %d, minor: %d, patch: %d\n", info->version.major, info->version.minor,
-               info->version.patch);
+    unsigned long minor = strtoul(cursor, &end, 10);
+    if (end == cursor || *end != '.' || minor > UINT8_MAX) return -1;
+    cursor = end + 1;
+
+    unsigned long patch = strtoul(cursor, &end, 10);
+    if (end == cursor) return -1;
+
+    info->version.major = (uint8_t)major;
+    info->version.minor = (uint8_t)minor;
+    info->version.patch = patch <= UINT8_MAX ? (uint8_t)patch : UINT8_MAX;
+    if (kver)
+        *kver = (info->version.major << 16) |
+                (info->version.minor << 8) | info->version.patch;
+
+    if (!kver)
+        tools_logi("kernel version major: %d, minor: %d, patch: %d\\n",
+                   info->version.major, info->version.minor, info->version.patch);
     return 0;
 }
-
 
 static int dump_kernel_config(kallsym_t *info, char *img, int32_t imglen)
 {
