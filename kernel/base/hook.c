@@ -773,7 +773,7 @@ KP_EXPORT_SYMBOL(hook_uninstall);
 
 hook_err_t hook(void *func, void *replace, void **backup)
 {
-    hook_err_t err = HOOK_NO_ERR;
+    hook_err_t err;
     uint64_t origin;
     hook_t *hook;
     void *owner = NULL;
@@ -784,9 +784,6 @@ hook_err_t hook(void *func, void *replace, void **backup)
     *backup = NULL;
     origin = branch_func_addr((uintptr_t)func);
     if (is_bad_address((void *)origin)) return -HOOK_BAD_ADDRESS;
-
-    /* Direct replacement bypasses transit callback references. Refuse KPM
-     * text here; KPM callbacks must use hook_wrap() instead. */
     owner_rc = kp_hook_owner_register((unsigned long)replace, &owner);
     if (owner_rc < 0) return -EBUSY;
     if (owner) {
@@ -796,21 +793,22 @@ hook_err_t hook(void *func, void *replace, void **backup)
 
     flags = hook_engine_lock();
     hook = (hook_t *)hook_mem_zalloc(origin, INLINE);
-    if (!hook) {
-        hook_engine_unlock(flags);
-        return -HOOK_NO_MEM;
-    }
+    hook_engine_unlock(flags);
+    if (!hook) return -HOOK_NO_MEM;
+
     hook->func_addr = (uint64_t)func;
     hook->origin_addr = origin;
     hook->replace_addr = (uint64_t)replace;
     hook->relo_addr = (uint64_t)hook->relo_insts;
     err = hook_prepare(hook);
     if (err) goto fail;
+
+    /* hotpatch() may stop other CPUs on KPIMG; never hold the registry
+     * spinlock across that rendezvous. The constructing slot reserves origin. */
     patch_rc = hook_install(hook);
     if (patch_rc) {
         if (patch_rc == -EUCLEAN) {
             hook_mem_publish(hook);
-            hook_engine_unlock(flags);
             return -HOOK_PATCH_UNCERTAIN;
         }
         err = -HOOK_PATCH_FAILED;
@@ -818,11 +816,9 @@ hook_err_t hook(void *func, void *replace, void **backup)
     }
     hook_mem_publish(hook);
     *backup = (void *)hook->relo_addr;
-    hook_engine_unlock(flags);
     return HOOK_NO_ERR;
 fail:
     hook_mem_free(hook);
-    hook_engine_unlock(flags);
     return err;
 }
 KP_EXPORT_SYMBOL(hook);
@@ -839,16 +835,17 @@ void unhook(void *func)
     if (is_bad_address((void *)origin)) return;
     flags = hook_engine_lock();
     hook = hook_get_mem_from_origin_type(origin, INLINE);
-    if (!hook) {
+    if (!hook || hook_mem_claim_retire(hook)) {
         hook_engine_unlock(flags);
         return;
     }
+    hook_engine_unlock(flags);
+
     rc = hook_uninstall(hook);
     if (!rc)
         hook_mem_retire(hook);
-    hook_engine_unlock(flags);
-    if (rc)
-        logkv("Unhook func: %llx restore failed: %d; retaining hook memory\\n", (uint64_t)func, rc);
+    else
+        hook_mem_cancel_retire(hook);
 }
 KP_EXPORT_SYMBOL(unhook);
 
