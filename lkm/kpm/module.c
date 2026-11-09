@@ -836,6 +836,73 @@ static void kp_module_put(struct kp_module *mod)
 	spin_unlock_irqrestore(&module_lock, flags);
 }
 
+/* Persistent hook references pin a KPM image while any published chain slot
+ * can still name its callback. Transient call refs protect actual execution. */
+int kp_hook_owner_register(unsigned long addr, void **owner)
+{
+	struct kp_module *pos;
+	unsigned long flags;
+	int rc = 0;
+
+	if (!owner)
+		return -EINVAL;
+	*owner = NULL;
+	spin_lock_irqsave(&module_lock, flags);
+	list_for_each_entry(pos, &modules.list, list) {
+		unsigned long start = (unsigned long)pos->start;
+		unsigned long end = start + pos->size;
+		if (end < start || addr < start || addr >= end)
+			continue;
+		if (pos->state != KP_MODULE_LOADING && pos->state != KP_MODULE_LIVE) {
+			rc = -EBUSY;
+			break;
+		}
+		pos->hook_refs++;
+		*owner = pos;
+		rc = 1;
+		break;
+	}
+	spin_unlock_irqrestore(&module_lock, flags);
+	return rc;
+}
+
+void kp_hook_owner_unregister(void *owner)
+{
+	struct kp_module *mod = owner;
+	unsigned long flags;
+
+	if (!mod)
+		return;
+	spin_lock_irqsave(&module_lock, flags);
+	if (mod->hook_refs)
+		mod->hook_refs--;
+	spin_unlock_irqrestore(&module_lock, flags);
+}
+
+int kp_hook_owner_call_get(void *owner)
+{
+	struct kp_module *mod = owner;
+	unsigned long flags;
+	int rc = 0;
+
+	if (!mod)
+		return 0;
+	spin_lock_irqsave(&module_lock, flags);
+	if (mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING) {
+		mod->active_calls++;
+		rc = 1;
+	} else {
+		rc = -EBUSY;
+	}
+	spin_unlock_irqrestore(&module_lock, flags);
+	return rc;
+}
+
+void kp_hook_owner_call_put(void *owner)
+{
+	kp_module_put(owner);
+}
+
 /* Hold the owning KPM alive for the complete kernel kallsyms iteration.
  * LOADING is permitted because init may itself iterate kallsyms. UNLOADING
  * is permitted only while an existing active call keeps teardown pending;
