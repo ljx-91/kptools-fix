@@ -58,7 +58,7 @@
 - `CONFIG_LTO_CLANG=y`、`CONFIG_CFI_CLANG=y`、`CONFIG_CFI_CLANG_SHADOW=y`。
 - `CONFIG_KPROBES` 未启用，`CONFIG_KALLSYMS_ALL` 未启用。
 - 原始 Boot HashDescriptor 摘要与资料库原始 `boot.img` 实算值匹配。
-- 现有 KPIMG 候选保留原始嵌入 VBMeta，但其 Boot HashDescriptor 摘要不匹配；候选不是 AVB 验证通过的镜像。
+- 现有 KPIMG 候选保留原始嵌入 VBMeta，但其 Boot HashDescriptor 摘要不匹配；候选不是 AVB 验证通过的镜像。\n- 已发现旧注入报告与资料库候选文件的 Footer 偏移相差 2,048 字节，旧 patch log 的 kernel-size 字段与当前原始 Boot Header 相差 16,988 字节；审计报告已将这些旧记录标为待追溯，不再混用。\n- 仓库现有 \`lkm/Kbuild\` 示例基于 Android 12 / Linux 5.10 DDK，且含 CFI/LTO/BTI/SCS/PAC 对象级覆盖；尚未用 Boot 提取的 Clang 9.0.3 / Linux 4.14.141 配置验证这些选项。
 
 **对后续代码工作的直接影响：** 不能只追求普通 host build。下一阶段必须围绕精确的 4.14.141 KDIR、`Module.symvers`、生成头文件、Clang 9.0.3、MODVERSIONS、LTO 和 CFI shadow 进行兼容性审计。当前源码契约 CI 不证明目标 .ko/KPM 已通过这些约束。
 
