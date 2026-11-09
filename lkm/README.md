@@ -4,6 +4,8 @@ KernelPatch as an out-of-tree Linux loadable module. This is an alternative
 delivery path to the image-patched KPIMG; it does not modify or repack
 `boot.img`.
 
+Current branch-wide status and exact CI evidence: [Y73s status overview](../Y73S_STATUS_CN.md).
+
 ## Implementation status
 
 The repository contains an LKM framework with the following implemented
