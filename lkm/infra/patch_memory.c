@@ -212,56 +212,102 @@ int kp_patch_cmpxchg64(void *dst, u64 expected, u64 desired)
 	return seen == expected ? 0 : -EAGAIN;
 }
 
-struct kp_text_patch {
-	void *dst;
-	const void *src;
-	size_t len;
-	int flags;
+#define KP_PATCH_MAX_TEXT_WORDS 64
+
+struct kp_text_patch_batch {
+	void **addrs;
+	const u32 *values;
+	u32 original[KP_PATCH_MAX_TEXT_WORDS];
+	int count;
 };
 
-/* Text updates can span several instructions and must not be exposed as a
- * partially-written prologue to another CPU. Run the complete page-split
- * fixmap write while stop_machine has all other CPUs parked. */
 __attribute__((no_sanitize("cfi")))
-static int kp_patch_text_stop(void *arg)
+static int kp_patch_text_batch_stop(void *arg)
 {
-	struct kp_text_patch *patch = arg;
-	unsigned long dst = (unsigned long)patch->dst;
-	size_t done = 0;
-	int ret;
+	struct kp_text_patch_batch *patch = arg;
+	int applied = 0;
+	int ret = 0;
+	bool rollback_failed = false;
 
-	while (done < patch->len) {
-		unsigned long page_off = (dst + done) & ~PAGE_MASK;
-		size_t chunk = PAGE_SIZE - page_off;
+	if (!patch || !patch->addrs || !patch->values ||
+	    patch->count <= 0 || patch->count > KP_PATCH_MAX_TEXT_WORDS)
+		return -EINVAL;
 
-		if (chunk > patch->len - done)
-			chunk = patch->len - done;
-		ret = kp_patch_data((void *)(dst + done),
-				    (const char *)patch->src + done, chunk);
-		if (ret)
-			return ret;
-		done += chunk;
+	/* Validate and snapshot every target before modifying the first word. */
+	for (int i = 0; i < patch->count; i++) {
+		unsigned long addr = (unsigned long)patch->addrs[i];
+		unsigned long phy;
+
+		if (!addr || (addr & 3) || addr > ~0UL - sizeof(u32))
+			return -EINVAL;
+		for (int j = 0; j < i; j++)
+			if (patch->addrs[j] == patch->addrs[i])
+				return -EINVAL;
+		phy = kp_phys_from_virt(addr);
+		if (!phy || (phy & ~PAGE_MASK) > PAGE_SIZE - sizeof(u32))
+			return -EFAULT;
+		patch->original[i] = READ_ONCE(*(volatile u32 *)addr);
 	}
-	if (patch->flags & KP_PATCH_TEXT_FLUSH_ICACHE)
-		kp_flush_icache(dst, dst + patch->len);
+
+	for (int i = 0; i < patch->count; i++) {
+		applied = i + 1; /* Include the current word in rollback on error. */
+		ret = kp_patch_data(patch->addrs[i], &patch->values[i], sizeof(u32));
+		if (ret)
+			break;
+	}
+	if (ret) {
+		while (applied > 0) {
+			--applied;
+			if (kp_patch_data(patch->addrs[applied],
+					  &patch->original[applied], sizeof(u32)))
+				rollback_failed = true;
+		}
+		for (int i = 0; i < patch->count; i++) {
+			unsigned long addr = (unsigned long)patch->addrs[i];
+			kp_flush_icache(addr, addr + sizeof(u32));
+		}
+		return rollback_failed ? -EUCLEAN : ret;
+	}
+
+	for (int i = 0; i < patch->count; i++) {
+		unsigned long addr = (unsigned long)patch->addrs[i];
+		kp_flush_icache(addr, addr + sizeof(u32));
+	}
 	return 0;
+}
+
+__attribute__((no_sanitize("cfi")))
+int kp_patch_text_batch(void *addrs[], const u32 values[], int count)
+{
+	struct kp_text_patch_batch patch = {
+		.addrs = addrs,
+		.values = values,
+		.count = count,
+	};
+
+	if (!addrs || !values || count <= 0 || count > KP_PATCH_MAX_TEXT_WORDS)
+		return -EINVAL;
+	if (!kp_patch_stop_machine)
+		return -EOPNOTSUPP;
+	return kp_patch_stop_machine(kp_patch_text_batch_stop, &patch, NULL);
 }
 
 __attribute__((no_sanitize("cfi")))
 int kp_patch_text(void *dst, const void *src, size_t len, int flags)
 {
-	struct kp_text_patch patch = {
-		.dst = dst,
-		.src = src,
-		.len = len,
-		.flags = flags,
-	};
+	void *addrs[KP_PATCH_MAX_TEXT_WORDS];
+	u32 values[KP_PATCH_MAX_TEXT_WORDS];
+	int count;
 
-	if (!dst || !src || !len || len > ULONG_MAX - (unsigned long)dst)
+	(void)flags; /* Text writes always flush D-cache and I-cache. */
+	if (!dst || !src || !len || (len & (sizeof(u32) - 1)) ||
+	    len / sizeof(u32) > KP_PATCH_MAX_TEXT_WORDS)
 		return -EINVAL;
-	if (!kp_patch_stop_machine)
-		return -EOPNOTSUPP;
-	return kp_patch_stop_machine(kp_patch_text_stop, &patch, NULL);
+	count = len / sizeof(u32);
+	memcpy(values, src, len);
+	for (int i = 0; i < count; i++)
+		addrs[i] = (char *)dst + i * sizeof(u32);
+	return kp_patch_text_batch(addrs, values, count);
 }
 
 #endif /* __aarch64__ */
