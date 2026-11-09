@@ -185,6 +185,18 @@ static void add_bll(int16_t off, int16_t size)
     }
 }
 
+int kp_task_ext_identity(struct task_struct *task, unsigned long *stack_identity)
+{
+    if (!task || !stack_identity ||
+        task_struct_offset.stack_offset < 0 ||
+        task_struct_offset.stack_offset > TASK_STRUCT_MAX_SIZE - sizeof(unsigned long))
+        return -EINVAL;
+
+    *stack_identity = READ_ONCE(*(unsigned long *)((uintptr_t)task +
+                                                    task_struct_offset.stack_offset));
+    return *stack_identity ? 0 : -EINVAL;
+}
+
 int resolve_cred_offset()
 {
     log_boot("struct cred: \n");

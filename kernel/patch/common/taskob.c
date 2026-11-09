@@ -27,6 +27,8 @@
 #include <baselib.h>
 
 extern void kp_debug_write(const char *fmt, ...);
+extern int kp_task_ext_identity(struct task_struct *task,
+                                unsigned long *stack_identity);
 
 /*
  * task_ext per-task slot table.
@@ -40,6 +42,7 @@ extern void kp_debug_write(const char *fmt, ...);
 #define TASK_EXT_SLOT_NUM 1024
 struct task_ext_slot {
     struct task_struct *task;
+    unsigned long stack_identity;
     struct task_ext ext;
 };
 static struct task_ext_slot task_ext_slots[TASK_EXT_SLOT_NUM];
@@ -63,6 +66,10 @@ struct task_ext *kf_get_task_ext(const struct task_struct *task)
     if (unlikely(!task)) return &task_ext_invalid;
     if (likely(!atomic_read(&task_ext_active_count))) return &task_ext_invalid;
     pid_t pid = __task_pid_nr_ns((struct task_struct *)task, PIDTYPE_PID, 0);
+    pid_t tgid = __task_pid_nr_ns((struct task_struct *)task, PIDTYPE_TGID, 0);
+    unsigned long stack_identity;
+    if (kp_task_ext_identity((struct task_struct *)task, &stack_identity))
+        return &task_ext_invalid;
     for (int i = 0; i < TASK_EXT_SLOT_NUM; i++) {
         struct task_struct *slot_task = READ_ONCE(task_ext_slots[i].task);
         if (slot_task != task) continue;
@@ -70,7 +77,10 @@ struct task_ext *kf_get_task_ext(const struct task_struct *task)
          * extension identity after observing the published task pointer. */
         dsb(ish);
         pid_t slot_pid = READ_ONCE(task_ext_slots[i].ext.pid);
-        if (slot_pid == pid) return &task_ext_slots[i].ext;
+        pid_t slot_tgid = READ_ONCE(task_ext_slots[i].ext.tgid);
+        unsigned long slot_stack = READ_ONCE(task_ext_slots[i].stack_identity);
+        if (slot_pid == pid && slot_tgid == tgid && slot_stack == stack_identity)
+            return &task_ext_slots[i].ext;
     }
     return &task_ext_invalid;
 }
@@ -78,11 +88,18 @@ struct task_ext *kf_get_task_ext(const struct task_struct *task)
 static struct task_ext *task_ext_create(struct task_struct *task, bool sel_allow, bool priv_sel_allow)
 {
     if (unlikely(!task)) return NULL;
+    pid_t pid = __task_pid_nr_ns(task, PIDTYPE_PID, 0);
+    pid_t tgid = __task_pid_nr_ns(task, PIDTYPE_TGID, 0);
+    unsigned long stack_identity;
+    if (kp_task_ext_identity(task, &stack_identity))
+        return NULL;
     struct task_ext *ret = NULL;
     unsigned long flags = kp_private_spin_lock(&task_ext_lock);
     for (int i = 0; i < TASK_EXT_SLOT_NUM; i++) {
         if (READ_ONCE(task_ext_slots[i].task) == task &&
-            READ_ONCE(task_ext_slots[i].ext.pid) == __task_pid_nr_ns(task, PIDTYPE_PID, 0)) {
+            READ_ONCE(task_ext_slots[i].ext.pid) == pid &&
+            READ_ONCE(task_ext_slots[i].ext.tgid) == tgid &&
+            READ_ONCE(task_ext_slots[i].stack_identity) == stack_identity) {
             ret = &task_ext_slots[i].ext;
             if (sel_allow) WRITE_ONCE(ret->sel_allow, true);
             if (priv_sel_allow) WRITE_ONCE(ret->priv_sel_allow, true);
@@ -94,8 +111,9 @@ static struct task_ext *task_ext_create(struct task_struct *task, bool sel_allow
             if (!READ_ONCE(task_ext_slots[i].task)) {
                 ret = &task_ext_slots[i].ext;
                 task_ext_reset(ret);
-                ret->pid = __task_pid_nr_ns(task, PIDTYPE_PID, 0);
-                ret->tgid = __task_pid_nr_ns(task, PIDTYPE_TGID, 0);
+                ret->pid = pid;
+                ret->tgid = tgid;
+                WRITE_ONCE(task_ext_slots[i].stack_identity, stack_identity);
                 WRITE_ONCE(ret->sel_allow, sel_allow);
                 WRITE_ONCE(ret->priv_sel_allow, priv_sel_allow);
                 dsb(ish);

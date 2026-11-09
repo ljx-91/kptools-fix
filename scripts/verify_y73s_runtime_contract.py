@@ -302,6 +302,20 @@ def main():
     require(r"return -EOPNOTSUPP;", task_su_fn,
             "cross-task credential mutation must remain unsupported")
 
+    taskob_c = source("kernel/patch/common/taskob.c")
+    task_identity_fn = function_body(taskcred_c, "int kp_task_ext_identity(")
+    require(r"task_struct_offset\.stack_offset\s*<\s*0", task_identity_fn,
+            "task extension identity must validate the runtime task stack offset")
+    require(r"\*stack_identity\s*=\s*READ_ONCE", task_identity_fn,
+            "task extension identity must use the stable task stack allocation")
+    task_lookup_fn = function_body(taskob_c, "struct task_ext *kf_get_task_ext(")
+    require(r"slot_tgid\s*==\s*tgid.*?slot_stack\s*==\s*stack_identity",
+            task_lookup_fn, "task extension lookup must reject recycled task/PID identities")
+    task_create_fn = function_body(taskob_c, "static struct task_ext *task_ext_create(")
+    before(task_create_fn, "WRITE_ONCE(task_ext_slots[i].stack_identity",
+           "WRITE_ONCE(task_ext_slots[i].task",
+           "task identity must be published before the task key")
+
     resolve_cred_fn = function_body(taskcred_c, "int resolve_cred_offset(")
     before(resolve_cred_fn, "if (cred_offset.cap_effective_offset < 0",
            "*(kernel_cap_t *)((uintptr_t)new_cred + cred_offset.cap_effective_offset)",
