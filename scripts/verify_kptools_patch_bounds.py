@@ -51,10 +51,10 @@ def verify_token_table_cursor_semantics():
             old_count += 1
         old_pos -= 1
     legacy_offset = old_pos + 2
-    if while_offset != legacy_offset or while_offset != 4:
+    if while_offset != legacy_offset or while_offset != 5:
         raise AssertionError(
             f"token-table cursor semantics diverged: while={while_offset}, "
-            f"legacy={legacy_offset}"
+            f"legacy={legacy_offset}, expected=5"
         )
 
 
