@@ -48,7 +48,7 @@ int find_ikconfig_blob(char *img, int32_t imglen, size_t *start, size_t *size)
     if (!pos_end) return 2;
 
     while (kcfg_start < (size_t)imglen &&
-           (img[kcfg_start] == '\\0' || img[kcfg_start] == '\\n')) {
+           (img[kcfg_start] == '\0' || img[kcfg_start] == '\n')) {
         kcfg_start++;
     }
 
@@ -95,14 +95,14 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
             }
             info->linux_banner_offset[slot] = (int32_t)(banner - img);
             if (!kver)
-                tools_logi("linux_banner %d offset: 0x%lx\\n",
+                tools_logi("linux_banner %d offset: 0x%lx\n",
                            info->banner_num, (unsigned long)(banner - img));
         }
         search = banner + 1;
     }
 
     if (!info->banner_num) {
-        tools_loge("no valid linux_banner in image\\n");
+        tools_loge("no valid linux_banner in image\n");
         return -1;
     }
 
@@ -111,18 +111,18 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
     char *space = (char *)memchr(uts_release_start, ' ',
                                  (size_t)(imgend - uts_release_start));
     if (!space) {
-        tools_loge("linux_banner release string is not terminated inside image\\n");
+        tools_loge("linux_banner release string is not terminated inside image\n");
         return -1;
     }
 
     size_t release_len = (size_t)(space - uts_release_start);
     char release[128];
     if (!release_len || release_len >= sizeof(release)) {
-        tools_loge("linux_banner release string has invalid length\\n");
+        tools_loge("linux_banner release string has invalid length\n");
         return -1;
     }
     memcpy(release, uts_release_start, release_len);
-    release[release_len] = '\\0';
+    release[release_len] = '\0';
 
     char *cursor = release;
     char *end = NULL;
@@ -130,12 +130,14 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
     if (end == cursor || *end != '.' || major > UINT8_MAX) return -1;
     cursor = end + 1;
 
+    if (!isdigit((unsigned char)*cursor)) return -1;
     unsigned long minor = strtoul(cursor, &end, 10);
     if (end == cursor || *end != '.' || minor > UINT8_MAX) return -1;
     cursor = end + 1;
 
+    if (!isdigit((unsigned char)*cursor)) return -1;
     unsigned long patch = strtoul(cursor, &end, 10);
-    if (end == cursor) return -1;
+    if (end == cursor || (*end && *end != '+' && *end != '-')) return -1;
 
     info->version.major = (uint8_t)major;
     info->version.minor = (uint8_t)minor;
@@ -145,7 +147,7 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
                 (info->version.minor << 8) | info->version.patch;
 
     if (!kver)
-        tools_logi("kernel version major: %d, minor: %d, patch: %d\\n",
+        tools_logi("kernel version major: %d, minor: %d, patch: %d\n",
                    info->version.major, info->version.minor, info->version.patch);
     return 0;
 }
