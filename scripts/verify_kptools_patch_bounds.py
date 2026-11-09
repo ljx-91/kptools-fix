@@ -73,6 +73,20 @@ def main():
     need(r"nsyms\s*<=\s*0\s*\|\|\s*nsyms\s*>\s*KSYM_MAX_SYMS",
          num_syms, "symbol-count scan must reject invalid and excessive counts")
 
+    rela = body(kallsym_src, "static int try_find_arm64_relo_table(")
+    need(r"!info\\s*\\|\\|\\s*!img\\s*\\|\\|\\s*imglen\\s*<\\s*24", rela,
+         "ARM64 RELA scanner must reject truncated image inputs")
+    need(r"cand_start\\s*<\\s*0\\s*\\|\\|\\s*cand_end\\s*<\\s*cand_start",
+         rela, "ARM64 RELA candidate range must be validated before backward scanning")
+    need(r"while\\s*\\(cand_end\\s*>=\\s*cand_start\\)", rela,
+         "ARM64 RELA trailing-zero scan must stay inside the candidate range")
+    need(r"if\\s*\\(ro\\s*\\|\\|\\s*ri\\s*\\|\\|\\s*ra\\)", rela,
+         "zero-addend RELA entries must not be mistaken for empty padding")
+    need(r"offset64\\s*>=\\s*\\(uint64_t\\)max_offset", rela,
+         "ARM64 relocation target must be range-checked before narrowing")
+    if rela.find("info->kernel_base = kernel_va") < rela.find("rela_num < ARM64_RELO_MIN_NUM"):
+        raise AssertionError("kernel base must not be committed before RELA candidate validation")
+
     preset = body(src, "preset_t *get_preset(")
     need(r"min_preset_size", preset, "preset search must require a complete minimum header")
     need(r"tail\s*>=\s*min_preset_size", preset, "preset candidate must fit inside input")
