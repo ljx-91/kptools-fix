@@ -21,6 +21,11 @@
 #include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
+
+/* The freestanding KPIMG header subset does not expose UINT_MAX. */
+#ifndef UINT_MAX
+#define UINT_MAX (~0U)
+#endif
 #include <linux/rcupdate.h>
 #include <linux/rculist.h>
 #include <kp_spinlock.h>
@@ -646,14 +651,18 @@ int kp_hook_owner_register(unsigned long addr, void **owner)
 void kp_hook_owner_unregister(void *owner)
 {
     struct module *mod = owner; unsigned long flags;
-    if (!mod) return; flags = module_lock_acquire();
+    if (!mod)
+        return;
+    flags = module_lock_acquire();
     if (mod->hook_refs) mod->hook_refs--;
     module_lock_release(flags);
 }
 int kp_hook_owner_call_get(void *owner)
 {
     struct module *mod = owner; unsigned long flags; int rc = 0;
-    if (!mod) return 0; flags = module_lock_acquire();
+    if (!mod)
+        return 0;
+    flags = module_lock_acquire();
     if ((mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING) &&
         mod->active_calls != UINT_MAX) { mod->active_calls++; rc = 1; }
     else if (mod->active_calls == UINT_MAX) rc = -EOVERFLOW;
