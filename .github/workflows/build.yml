@@ -99,7 +99,8 @@ jobs:
 
           export TARGET_COMPILE=aarch64-none-elf-
           export ANDROID=1
-          if [ "${GITHUB_REF_NAME}" = "y73s-gcc-audit-20261108" ]; then
+          if [ "${GITHUB_REF_NAME}" = "y73s-gcc-audit-20261108" ] ||
+             [ "${GITHUB_REF_NAME}" = "y73s-cred-layout-guards-20261108" ]; then
             export Y73S_TARGET=1
           fi
 
