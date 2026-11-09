@@ -368,9 +368,8 @@ int32_t branch_from_to(uint32_t *tramp_buf, uint64_t src_addr, uint64_t dst_addr
 // transit0
 typedef uint64_t (*transit0_func_t)();
 
-static void hook_chain_reap_slots(void *chain, int fp)
+static void hook_chain_reap_slots_locked(void *chain, int fp)
 {
-    unsigned long flags = hook_engine_lock();
     int i, count = fp ? FP_HOOK_CHAIN_NUM : HOOK_CHAIN_NUM;
     chain_item_state *states = fp ? ((fp_hook_chain_t *)chain)->states : ((hook_chain_t *)chain)->states;
     void **before_owners = fp ? ((fp_hook_chain_t *)chain)->before_owners : ((hook_chain_t *)chain)->before_owners;
@@ -378,39 +377,48 @@ static void hook_chain_reap_slots(void *chain, int fp)
     void **befores = fp ? ((fp_hook_chain_t *)chain)->befores : ((hook_chain_t *)chain)->befores;
     void **afters = fp ? ((fp_hook_chain_t *)chain)->afters : ((hook_chain_t *)chain)->afters;
     void **udata = fp ? ((fp_hook_chain_t *)chain)->udata : ((hook_chain_t *)chain)->udata;
-
-    if (__atomic_load_n(fp ? &((fp_hook_chain_t *)chain)->active_readers :
-                           &((hook_chain_t *)chain)->active_readers, __ATOMIC_SEQ_CST) == 0) {
-        for (i = 0; i < count; i++) {
-            if (__atomic_load_n(&states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_RETIRED)
-                continue;
-            kp_hook_owner_unregister(before_owners[i]);
-            kp_hook_owner_unregister(after_owners[i]);
-            before_owners[i] = after_owners[i] = NULL;
-            befores[i] = afters[i] = udata[i] = NULL;
-            __atomic_store_n(&states[i], CHAIN_ITEM_STATE_EMPTY, __ATOMIC_SEQ_CST);
-        }
+    unsigned int readers = fp ?
+        __atomic_load_n(&((fp_hook_chain_t *)chain)->active_readers, __ATOMIC_SEQ_CST) :
+        __atomic_load_n(&((hook_chain_t *)chain)->active_readers, __ATOMIC_SEQ_CST);
+    if (readers)
+        return;
+    for (i = 0; i < count; i++) {
+        if (__atomic_load_n(&states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_RETIRED)
+            continue;
+        kp_hook_owner_unregister(before_owners[i]);
+        kp_hook_owner_unregister(after_owners[i]);
+        before_owners[i] = after_owners[i] = NULL;
+        befores[i] = afters[i] = udata[i] = NULL;
+        __atomic_store_n(&states[i], CHAIN_ITEM_STATE_EMPTY, __ATOMIC_SEQ_CST);
     }
+}
+
+static void hook_chain_reap_slots(void *chain, int fp)
+{
+    unsigned long flags = hook_engine_lock();
+    hook_chain_reap_slots_locked(chain, fp);
     hook_engine_unlock(flags);
 }
 
 static inline void hook_chain_reader_enter(void *chain, int fp)
 {
+    unsigned long flags = hook_engine_lock();
     if (fp)
         __atomic_add_fetch(&((fp_hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
     else
         __atomic_add_fetch(&((hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
+    hook_engine_unlock(flags);
 }
 
 static inline void hook_chain_reader_exit(void *chain, int fp)
 {
-    unsigned int readers;
+    unsigned long flags = hook_engine_lock();
     if (fp)
-        readers = __atomic_sub_fetch(&((fp_hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
+        __atomic_sub_fetch(&((fp_hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
     else
-        readers = __atomic_sub_fetch(&((hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
-    if (!readers)
-        hook_chain_reap_slots(chain, fp);
+        __atomic_sub_fetch(&((hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
+    hook_chain_reap_slots_locked(chain, fp);
+    hook_engine_unlock(flags);
 }
 
 static void hook_chain_pin_callbacks(void *chain, int fp,
