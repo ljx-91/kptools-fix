@@ -579,6 +579,8 @@ static int find_approx_addresses(kallsym_t *info, char *img, int32_t imglen)
 
 static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
 {
+    if (!info || !img || imglen <= 0) return -1;
+
     int32_t sym_num = 0;
     int32_t elem_size = info->asm_long_size;
     uint64_t prev_offset = 0;
@@ -586,7 +588,7 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
     int32_t MAX_ZERO_OFFSET_NUM = 10;
     int32_t zero_offset_num = 0;
 
-    if (!img || imglen <= 0 || elem_size != 4 ||
+    if (elem_size != 4 ||
         imglen < KSYM_MIN_NEQ_SYMS * elem_size) {
         tools_logw("invalid kallsyms_offsets scan range or element size\n");
         return -1;
