@@ -1,25 +1,24 @@
 # Vivo Y73s 项目当前状态（唯一状态入口）
 
-> 更新时间：2026-11-09  
+> 更新时间：2026-11-10  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 当前源码 HEAD：`e066808ec7634e68963c1cd083d1f0930a4cc0d2`  
+> 当前源码 HEAD（本次文档更新前）：`3f69f882ba5c5b4d98bcfb4976623b99dd3a1b69`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
 
 本轮完成了 KPIMG 启动映射、LKM/KPM ELF 与 ARM64 重定位、凭据偏移保护、任务扩展身份校验及 Kbuild 条件参数优化。
 
-- Y73S GCC 14.2 KPIMG 构建与专用审计：通过。
-- Host kptools 构建及全量源码契约审计：通过。
-- Windows kptools 构建：最新 HEAD 对应工作流已通过。
+- 2026-11-09 代码基线的 Y73S GCC 14.2 KPIMG、Host kptools 和 Windows 构建曾通过。
+- 2026-11-10 新增 Kallsyms/RELA/名称解析修改后，最新 HEAD 的 Actions 结果尚未取得；不能沿用旧 Run 作为最新通过证明。
 - 目标 Linux 4.14.141 的真实 `.ko` 编译、KPM 动态加载、设备启动和 APatch/root 验证：尚未完成。
 
 **因此当前结论是源码与 KPIMG 构建阶段取得进展，不是设备可用或可刷入版本。**
 
-## 2. 分支与最近 CI
+## 2. 分支与最近 CI（历史基线）
 
 - 分支：[y73s-cred-layout-guards-20261108](https://github.com/ljx-91/kptools-fix/tree/y73s-cred-layout-guards-20261108)
-- 最近代码与契约提交：[8d3422d](https://github.com/ljx-91/kptools-fix/commit/8d3422d33f828bd423ba8575f1cc472c5f9a80e8)（本次状态文档更新后 HEAD 会继续前移）
+- 本次文档更新前最近代码与契约提交：[3f69f88](https://github.com/ljx-91/kptools-fix/commit/3f69f882ba5c5b4d98bcfb4976623b99dd3a1b69)
 
 | 工作流 | Run | 结果 | 证明范围 |
 |---|---:|---|---|
@@ -27,7 +26,7 @@
 | Y73S host kptools + source contracts | [42653184913](https://github.com/ljx-91/kptools-fix/actions/runs/42653184913) | 成功 | Host 工具构建、12 项源码契约验证 |
 | KernelPatch Windows Build | [42653184632](https://github.com/ljx-91/kptools-fix/actions/runs/42653184632) | 成功 | Android KPIMG 与 Windows kptools.exe 构建及打包 |
 
-全量源码契约审计包含 bootimg I/O、kptools patch bounds、KPIMG loader、KPM lifecycle、LKM/KPM contract、ELF/RELA loader、Hook runtime、supercall input、userd file、Y73s fphook、memblock 和 runtime contract 检查。
+上述 Run 是 2026-11-09 旧代码基线的历史结果，不代表 2026-11-10 最新 HEAD。全量源码契约审计包含 bootimg I/O、kptools patch bounds、KPIMG loader、KPM lifecycle、LKM/KPM contract、ELF/RELA loader、Hook runtime、supercall input、userd file、Y73s fphook、memblock 和 runtime contract 检查。
 
 这些是源码级和构建级证据，不替代目标 KDIR 编译、设备端加载或运行时压力测试。
 
@@ -156,3 +155,35 @@
 外部 ABI 依据：
 - Linux `CONFIG_KALLSYMS_BASE_RELATIVE` 说明：<https://cateee.net/lkddb/web-lkddb/KALLSYMS_BASE_RELATIVE.html>
 - Linux v4.14 Kallsyms 实现：<https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git/+/refs/tags/v4.14.264/kernel/kallsyms.c>
+
+
+## 9. 2026-11-10：Kallsyms 解析链完整边界审计
+
+在第 8 节基础上继续检查 Linux Kallsyms 解析入口和 ARM64 的 fallback：
+
+### Linux banner / IKCONFIG / marker / names
+
+- `find_linux_banner()` 不再在没有匹配 banner 时访问 `linux_banner_offset[-1]`；每次前缀探测都验证剩余长度，最多保留结构体可容纳的 4 个 banner 偏移。
+- 版本字符串先在镜像边界内定位空格，再复制到固定长度缓冲区解析 major/minor/patch；拒绝截断和格式错误输入。
+- `find_ikconfig_blob()` 验证输入长度和输出指针，所有 marker 搜索都限制在镜像范围。
+- `find_markers_internal()` 验证初始读取位置和 marker table 终点。
+- 恢复并加固 `verify_names_candidate()` / `find_names()`：压缩名称长度使用减法边界判断，marker index 和 marker table 读取均验证完整范围，候选窗口运算使用 64 位中间值。
+
+### 名称解压 / 地址表候选
+
+- 解压器基于 `kallsym_t.image_size` 和 markers 终点检查所有输入。
+- Token 指针、NUL 终止、解压字符串容量和符号索引均有边界保护。
+- 查询、遍历和导出符号的调用方会传播解压/索引失败。
+- ARM64 vector fallback 限定为 ARM64，搜索窗口和索引偏移使用 64 位运算；地址差值在缩窄前检查，保留高半区 canonical kernel VA 的无符号语义。
+- ARM64 相对偏移扫描使用 32 位无符号表项解释，避免把高位设置的合法 offset 错当作负数并反转排序。
+- ARM64 指令窗口与 CFI 分支目标均使用 64 位偏移并验证完整 4 字节指令。
+- Kallsyms 分析失败时不再把部分重定位后的临时镜像复制回调用者缓冲区。
+
+### 当前提交与验证状态
+
+- 本轮后续源码提交包括：`7b1e98c`、`e2bff68`、`bf736f7`、`fa0d422`、`7d40828`、`d7c6cb9`、`03fb4a2`、`a9a5e8d`、`9e49f0c`、`0e2aaf5`、`6b6d282`、`bfcf5c9`、`d47c8b6`、`36520d2`、`10b8d5b`、`dcbf9d1`、`d7c8095`、`cc5c9ba`、`3f69f88` 等。
+- `scripts/verify_kptools_patch_bounds.py` 已增加 banner、IKCONFIG、marker、names、decompressor、ARM64 vector、RELA 和失败回滚契约。
+- `build-y73s-kptools-host.yml` 的 push 触发范围覆盖 `tools/**` 和 `scripts/**`，且执行 Host 构建与该契约脚本。
+- 最新 HEAD 的 GitHub combined status 没有返回 checks；工作流运行查询也没有返回可确认的 run。**当前状态只能标记为已推送、待 CI，不可标记为通过。**
+- 目标 Linux 4.14.141 KDIR 编译、真实 `.ko` modpost、KPM fuzz/load/unload 和真机启动仍未完成。
+
