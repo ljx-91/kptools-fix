@@ -4,6 +4,7 @@
  */
 
 #include <hook.h>
+#include <cache.h>
 #include <io.h>
 #include <symbol.h>
 #include <pgtable.h>
