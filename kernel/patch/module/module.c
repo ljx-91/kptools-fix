@@ -799,192 +799,144 @@ long load_module_path(const char *path, const char *args, void *__user reserved)
     return load_module_path_event(path, args, "load-file", reserved);
 }
 
+static struct module *module_get_live(const char *name)
+{
+    struct module *mod; unsigned long flags;
+    if (!name) return NULL;
+    flags = module_lock_acquire();
+    mod = find_module_locked(name);
+    if (!mod || mod->state != KP_MODULE_LIVE) mod = NULL;
+    else mod->active_calls++;
+    module_lock_release(flags);
+    return mod;
+}
+
+static void module_put_live(struct module *mod)
+{
+    unsigned long flags;
+    if (!mod) return;
+    flags = module_lock_acquire();
+    if (mod->active_calls) mod->active_calls--;
+    module_lock_release(flags);
+}
+
 long module_control0(const char *name, const char *ctl_args, char *__user out_msg, int outlen)
 {
-    if (!name || !ctl_args) return -EINVAL;
-    int args_len = strlen(ctl_args);
-    if (args_len <= 0) return -EINVAL;
-
-    logkfi("name %s, args: %s\n", name, ctl_args);
-
-    long rc = 0;
-    rcu_read_lock();
-
-    struct module *mod = find_module(name);
-    if (!mod) {
-        rc = -ENOENT;
-        goto out;
-    }
-
-    if (!mod->ctl0 || !*mod->ctl0) {
-        logkfe("no ctl0\n");
-        rc = -ENOSYS;
-        goto out;
-    }
-
-    if (mod->ctl_args) kvfree(mod->ctl_args);
-
-    mod->ctl_args = vmalloc(args_len + 1);
-    if (!mod->ctl_args) {
-        rc = -ENOMEM;
-        goto out;
-    }
-
-    strcpy(mod->ctl_args, ctl_args);
-
-    rc = (*mod->ctl0)(mod->ctl_args, out_msg, outlen);
-
-    logkfi("name: %s, rc: %d\n", name, rc);
-out:
-    rcu_read_unlock();
+    struct module *mod; char *args_copy; long rc;
+    if (!name || !ctl_args || !*ctl_args) return -EINVAL;
+    args_copy = kstrdup(ctl_args, GFP_KERNEL);
+    if (!args_copy) return -ENOMEM;
+    mod = module_get_live(name);
+    if (!mod) { kfree(args_copy); return -ENOENT; }
+    if (!mod->ctl0 || !*mod->ctl0) rc = -ENOSYS;
+    else rc = (*mod->ctl0)(args_copy, out_msg, outlen);
+    kfree(args_copy);
+    module_put_live(mod);
     return rc;
 }
 
 long module_control1(const char *name, void *a1, void *a2, void *a3)
 {
-    logkfi("name %s, a1: %llx, a2: %llx, a3: %llx\n", name, a1, a2, a3);
-    long rc = 0;
-    rcu_read_lock();
-
-    struct module *mod = find_module(name);
-    if (!mod) {
-        rc = -ENOENT;
-        goto out;
-    }
-
-    if (!mod->ctl1 || !*mod->ctl1) {
-        logkfe("no ctl1\n");
-        rc = -ENOSYS;
-        goto out;
-    }
-
-    rc = (*mod->ctl1)(a1, a2, a3);
-
-    logkfi("name: %s, rc: %d\n", name, rc);
-out:
-    rcu_read_unlock();
+    struct module *mod; long rc;
+    if (!name) return -EINVAL;
+    mod = module_get_live(name);
+    if (!mod) return -ENOENT;
+    if (!mod->ctl1 || !*mod->ctl1) rc = -ENOSYS;
+    else rc = (*mod->ctl1)(a1, a2, a3);
+    module_put_live(mod);
     return rc;
 }
 
 long notify_modules_event(const char *event, const char *args, void *__user reserved)
 {
+    struct module **snapshot; struct module *pos;
+    unsigned int capacity, n, i; unsigned long flags;
+    long result = 0; int count = 0;
     if (!event) return -EINVAL;
-
-    long result = 0;
-    int count = 0;
-    rcu_read_lock();
-
-    struct module *pos;
-    list_for_each_entry(pos, &modules.list, list)
-    {
-        if (!pos->event || !*pos->event) continue;
-
-        long rc = (*pos->event)(event, args, reserved);
-        logkfi("event: %s, module: %s, rc: %ld\n", event, pos->info.name, rc);
+    for (;;) {
+        capacity = 0;
+        flags = module_lock_acquire();
+        list_for_each_entry(pos, &modules.list, list)
+            if (pos->state == KP_MODULE_LIVE && pos->event && *pos->event) capacity++;
+        module_lock_release(flags);
+        snapshot = kcalloc(capacity ? capacity : 1, sizeof(*snapshot), GFP_KERNEL);
+        if (!snapshot) return -ENOMEM;
+        flags = module_lock_acquire();
+        n = 0;
+        list_for_each_entry(pos, &modules.list, list)
+            if (pos->state == KP_MODULE_LIVE && pos->event && *pos->event) n++;
+        if (n > capacity) {
+            module_lock_release(flags); kfree(snapshot); continue;
+        }
+        n = 0;
+        list_for_each_entry(pos, &modules.list, list) {
+            if (pos->state != KP_MODULE_LIVE || !pos->event || !*pos->event) continue;
+            pos->active_calls++; snapshot[n++] = pos;
+        }
+        module_lock_release(flags);
+        break;
+    }
+    for (i = 0; i < n; i++) {
+        long rc = (*snapshot[i]->event)(event, args, reserved);
         if (rc < 0 && !result) result = rc;
         count++;
+        module_put_live(snapshot[i]);
     }
-
-    rcu_read_unlock();
-    return result ?: count;
+    kfree(snapshot);
+    return result ? result : count;
 }
 KP_EXPORT_SYMBOL(notify_modules_event);
 
 struct module *find_module(const char *name)
 {
-    if (!name) return NULL;
-    struct module *pos;
-    list_for_each_entry(pos, &modules.list, list)
-    {
-        if (!strcmp(name, pos->info.name)) {
-            return pos;
-        }
-    }
-    return 0;
+    struct module *mod; unsigned long flags;
+    flags = module_lock_acquire();
+    mod = find_module_locked(name);
+    module_lock_release(flags);
+    return mod; /* Legacy borrowed pointer; callers must provide external lifetime. */
 }
 
-int get_module_nums()
+int get_module_nums(void)
 {
-    rcu_read_lock();
-
-    struct module *pos;
-    int n = 0;
+    struct module *pos; unsigned long flags; int n = 0;
+    flags = module_lock_acquire();
     list_for_each_entry(pos, &modules.list, list)
-    {
-        n++;
-    }
-    rcu_read_unlock();
-
-    logkfd("%d\n", n);
+        if (pos->state == KP_MODULE_LIVE) n++;
+    module_lock_release(flags);
     return n;
 }
 
 int list_modules(char *out_names, int size)
 {
+    struct module *pos; unsigned long flags; int off = 0;
     if (!out_names || size <= 0) return -EINVAL;
     out_names[0] = '\0';
-
-    rcu_read_lock();
-
-    struct module *pos;
-    int off = 0;
-    list_for_each_entry(pos, &modules.list, list)
-    {
-        int remaining = size - off;
+    flags = module_lock_acquire();
+    list_for_each_entry(pos, &modules.list, list) {
         int written;
-        if (remaining <= 1) break;
-        written = snprintf(out_names + off, remaining, "%s\n", pos->info.name);
-        if (written < 0) {
-            rcu_read_unlock();
-            return -EIO;
-        }
-        if (written >= remaining) {
-            off = size - 1;
-            break;
-        }
-        off += written;
+        if (pos->state != KP_MODULE_LIVE || off >= size - 1) continue;
+        written = snprintf(out_names + off, size - off, "%s\n", pos->info.name);
+        if (written > 0) off += min(written, size - off - 1);
     }
+    module_lock_release(flags);
     if (off > 0 && out_names[off - 1] == '\n') off--;
     out_names[off] = '\0';
-
-    rcu_read_unlock();
     return off;
 }
 
 int get_module_info(const char *name, char *out_info, int size)
 {
+    struct module *mod; int sz;
     if (!name || !out_info || size <= 0) return -EINVAL;
-    rcu_read_lock();
-
-    struct module *mod = find_module(name);
-    if (!mod) {
-        rcu_read_unlock();
-        return -ENOENT;
-    }
-
-    int sz = snprintf(out_info, size,
-                      "name=%s\n"
-                      "version=%s\n"
-                      "license=%s\n"
-                      "author=%s\n"
-                      "description=%s\n"
-                      "args=%s\n",
-                      mod->info.name, mod->info.version, mod->info.license, mod->info.author, mod->info.description,
-                      mod->args ? mod->args : "");
-
+    mod = module_get_live(name);
+    if (!mod) return -ENOENT;
+    sz = snprintf(out_info, size,
+                  "name=%s\nversion=%s\nlicense=%s\nauthor=%s\ndescription=%s\nargs=%s\nload_event=%s\nload_source=%s\n",
+                  mod->info.name, mod->info.version, mod->info.license, mod->info.author,
+                  mod->info.description, mod->args ? mod->args : "", mod->load_event, mod->load_source);
     if (sz < 0) sz = 0;
-    if (sz < size) {
-        int tail = snprintf(out_info + sz, size - sz,
-                            "load_event=%s\n"
-                            "load_source=%s\n",
-                            mod->load_event, mod->load_source);
-        if (tail > 0) sz += tail;
-    }
-
     out_info[size - 1] = '\0';
-    logkfd("%s", out_info);
-
-    rcu_read_unlock();
+    module_put_live(mod);
     return sz;
 }
 
