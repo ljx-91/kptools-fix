@@ -73,14 +73,6 @@ enum kp_exec_backend {
 };
 static enum kp_exec_backend kp_exec_backend;
 
-enum kp_exec_backend {
-	KP_EXEC_BACKEND_NONE,
-	KP_EXEC_BACKEND_MODULE,
-	KP_EXEC_BACKEND_EXECMEM,
-	KP_EXEC_BACKEND_VMALLOC,
-};
-static enum kp_exec_backend kp_exec_backend;
-
 /* Clear the Guarded-Page bit (BTI enable), Privileged-eXecute-Never and
  * User-eXecute-Never. Fail closed if any page cannot be inspected or made
  * executable: the KPM must never enter init on an NX/BTI-incompatible image. */
