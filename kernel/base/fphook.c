@@ -14,6 +14,63 @@
 // transit0
 typedef uint64_t (*transit0_func_t)();
 
+static void hook_chain_reap_slots(void *chain, int fp)
+{
+    unsigned long flags = hook_engine_lock();
+    int i, count = fp ? FP_HOOK_CHAIN_NUM : HOOK_CHAIN_NUM;
+    chain_item_state *states = fp ? ((fp_hook_chain_t *)chain)->states : ((hook_chain_t *)chain)->states;
+    void **before_owners = fp ? ((fp_hook_chain_t *)chain)->before_owners : ((hook_chain_t *)chain)->before_owners;
+    void **after_owners = fp ? ((fp_hook_chain_t *)chain)->after_owners : ((hook_chain_t *)chain)->after_owners;
+    void **befores = fp ? ((fp_hook_chain_t *)chain)->befores : ((hook_chain_t *)chain)->befores;
+    void **afters = fp ? ((fp_hook_chain_t *)chain)->afters : ((hook_chain_t *)chain)->afters;
+    void **udata = fp ? ((fp_hook_chain_t *)chain)->udata : ((hook_chain_t *)chain)->udata;
+    if (__atomic_load_n(fp ? &((fp_hook_chain_t *)chain)->active_readers :
+                           &((hook_chain_t *)chain)->active_readers, __ATOMIC_SEQ_CST) == 0) {
+        for (i = 0; i < count; i++) {
+            if (__atomic_load_n(&states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_RETIRED)
+                continue;
+            kp_hook_owner_unregister(before_owners[i]);
+            kp_hook_owner_unregister(after_owners[i]);
+            before_owners[i] = after_owners[i] = NULL;
+            befores[i] = afters[i] = udata[i] = NULL;
+            __atomic_store_n(&states[i], CHAIN_ITEM_STATE_EMPTY, __ATOMIC_SEQ_CST);
+        }
+    }
+    hook_engine_unlock(flags);
+}
+
+static inline void hook_chain_reader_enter(void *chain, int fp)
+{
+    if (fp)
+        __atomic_add_fetch(&((fp_hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
+    else
+        __atomic_add_fetch(&((hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
+}
+
+static inline void hook_chain_reader_exit(void *chain, int fp)
+{
+    unsigned int readers;
+    if (fp)
+        readers = __atomic_sub_fetch(&((fp_hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
+    else
+        readers = __atomic_sub_fetch(&((hook_chain_t *)chain)->active_readers, 1, __ATOMIC_SEQ_CST);
+    if (!readers)
+        hook_chain_reap_slots(chain, fp);
+}
+
+static inline void hook_invoke_callback(void *func, void *fargs, void *udata, void *owner)
+{
+    int rc;
+    if (!func)
+        return;
+    rc = kp_hook_owner_call_get(owner);
+    if (rc < 0)
+        return;
+    ((void (*)(void *, void *))func)(fargs, udata);
+    if (rc > 0)
+        kp_hook_owner_call_put(owner);
+}
+
 #define current_fp_hook_chain() ({ \
     uint64_t chain_va; \
     asm volatile("mov %0, x16" : "=r"(chain_va)); \
@@ -24,13 +81,14 @@ uint64_t __attribute__((section(".fp.transit0.text"))) __attribute__((__noinline
 {
     fp_hook_chain_t *hook_chain = current_fp_hook_chain();
     if (!hook_chain) return 0;
+    hook_chain_reader_enter(hook_chain, 1);
     hook_fargs0_t fargs;
     fargs.skip_origin = 0;
     fargs.chain = hook_chain;
     for (int32_t i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         hook_chain0_callback func = hook_chain->befores[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        hook_invoke_callback(func, &fargs, hook_chain->udata[i], hook_chain->before_owners[i]);
     }
     if (!fargs.skip_origin) {
         transit0_func_t origin_func = (transit0_func_t)hook_chain->hook.origin_fp;
@@ -39,8 +97,9 @@ uint64_t __attribute__((section(".fp.transit0.text"))) __attribute__((__noinline
     for (int32_t i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         hook_chain0_callback func = hook_chain->afters[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        hook_invoke_callback(func, &fargs, hook_chain->udata[i], hook_chain->after_owners[i]);
     }
+    hook_chain_reader_exit(hook_chain, 1);
     return fargs.ret;
 }
 extern void _fp_transit0_end();
@@ -53,6 +112,7 @@ _fp_transit4(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3)
 {
     fp_hook_chain_t *hook_chain = current_fp_hook_chain();
     if (!hook_chain) return 0;
+    hook_chain_reader_enter(hook_chain, 1);
     hook_fargs4_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
@@ -63,7 +123,7 @@ _fp_transit4(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3)
     for (int32_t i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         hook_chain4_callback func = hook_chain->befores[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        hook_invoke_callback(func, &fargs, hook_chain->udata[i], hook_chain->before_owners[i]);
     }
     if (!fargs.skip_origin) {
         transit4_func_t origin_func = (transit4_func_t)hook_chain->hook.origin_fp;
@@ -72,8 +132,9 @@ _fp_transit4(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3)
     for (int32_t i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         hook_chain4_callback func = hook_chain->afters[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        hook_invoke_callback(func, &fargs, hook_chain->udata[i], hook_chain->after_owners[i]);
     }
+    hook_chain_reader_exit(hook_chain, 1);
     return fargs.ret;
 }
 
@@ -88,6 +149,7 @@ _fp_transit8(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_
 {
     fp_hook_chain_t *hook_chain = current_fp_hook_chain();
     if (!hook_chain) return 0;
+    hook_chain_reader_enter(hook_chain, 1);
     hook_fargs8_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
@@ -102,7 +164,7 @@ _fp_transit8(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_
     for (int32_t i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         hook_chain8_callback func = hook_chain->befores[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        hook_invoke_callback(func, &fargs, hook_chain->udata[i], hook_chain->before_owners[i]);
     }
     if (!fargs.skip_origin) {
         transit8_func_t origin_func = (transit8_func_t)hook_chain->hook.origin_fp;
@@ -112,8 +174,9 @@ _fp_transit8(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_
     for (int32_t i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         hook_chain8_callback func = hook_chain->afters[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        hook_invoke_callback(func, &fargs, hook_chain->udata[i], hook_chain->after_owners[i]);
     }
+    hook_chain_reader_exit(hook_chain, 1);
     return fargs.ret;
 }
 
@@ -129,6 +192,7 @@ _fp_transit12(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64
 {
     fp_hook_chain_t *hook_chain = current_fp_hook_chain();
     if (!hook_chain) return 0;
+    hook_chain_reader_enter(hook_chain, 1);
     hook_fargs12_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
@@ -147,7 +211,7 @@ _fp_transit12(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64
     for (int32_t i = 0; i < hook_chain->chain_items_max; i++) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         hook_chain12_callback func = hook_chain->befores[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        hook_invoke_callback(func, &fargs, hook_chain->udata[i], hook_chain->before_owners[i]);
     }
     if (!fargs.skip_origin) {
         transit12_func_t origin_func = (transit12_func_t)hook_chain->hook.origin_fp;
@@ -157,8 +221,9 @@ _fp_transit12(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64
     for (int32_t i = hook_chain->chain_items_max - 1; i >= 0; i--) {
         if (hook_chain->states[i] != CHAIN_ITEM_STATE_READY) continue;
         hook_chain12_callback func = hook_chain->afters[i];
-        if (func) func(&fargs, hook_chain->udata[i]);
+        hook_invoke_callback(func, &fargs, hook_chain->udata[i], hook_chain->after_owners[i]);
     }
+    hook_chain_reader_exit(hook_chain, 1);
     return fargs.ret;
 }
 
