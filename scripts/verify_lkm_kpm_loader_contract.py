@@ -163,7 +163,7 @@ def main():
     exec_alloc = body(module, "static void *kp_malloc_exec(")
     exec_free = body(module, "static void kp_free_exec(")
     restore_perm = body(module, "static int kp_restore_nx_gp(")
-    permissions = body(module, "static int kp_clear_bti_gp(")
+    permissions = body(module, "static int kp_update_bti_gp(")
     kpm_init = body(module, "int kp_kpm_init(void)")
     need(r"switch\s*\(kp_exec_backend\)", exec_alloc,
          "executable allocator must use the selected backend")
