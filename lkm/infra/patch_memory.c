@@ -114,7 +114,7 @@ static int kp_patch_data(void *dst, const void *src, size_t len)
 		return -EINVAL;
 	phy = kp_phys_from_virt((unsigned long)dst);
 	if (!phy) {
-		logke("no phys for data patch dst 0x%lx\\n", (unsigned long)dst);
+		logke("no phys for data patch dst 0x%lx\n", (unsigned long)dst);
 		return -ENOENT;
 	}
 	phy_off = phy & ~PAGE_MASK;
