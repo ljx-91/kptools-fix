@@ -1123,6 +1123,8 @@ strcmp(), logging, or path handling could read beyond the local buffer.
   pointers no longer silently become absent arguments.
 - The KPM list/info output handlers now reject null output pointers and
   invalid lengths before copying to userspace.
+- Both the LKM and KPIMG KPM control handlers reject negative output lengths
+  and nonzero output lengths paired with a null output pointer.
 - The feature-control name parser now rejects overlong names and explicitly
   terminates accepted names.
 - lkm/supercall/sucompat_hook.c now applies the same bounded-copy rule to
@@ -1143,15 +1145,15 @@ string entry points, execve and SUPERCMD input handling, local context buffers,
 and stack-based filename redirection. It runs in the LKM source-audit job.
 
 Validated source HEAD:
-- 2cc2776f5994dddae6258331312b99b455e3283a
-- Host/LKM source-audit workflow run 42625300840: success
+- 3cffd04f2e7c899e6d811b8af0a6db17ec4e42f2
+- Host/LKM source-audit workflow run 42625593449: success
   - LKM KPM ELF/relocation contracts: success
   - LKM Hook runtime contracts: success
   - KPM lifecycle contracts: success
   - LKM supercall input contracts: success
   - host kptools build/package: success
 
-The matching KPIMG workflow run 42625300566 also completed successfully:
+The matching KPIMG workflow run 42625593407 also completed successfully:
 Arm GNU GCC 14.2 KPIMG build and audit suite: success. This is a separate
 KPIMG build and does not compile the LKM objects against the Y73s target KDIR.
 
