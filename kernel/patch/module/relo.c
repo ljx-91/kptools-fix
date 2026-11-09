@@ -4,6 +4,8 @@
 #include <asm/elf.h>
 #include <kpmalloc.h>
 #include <linux/err.h>
+#include <linux/vmalloc.h>
+#include <linux/string.h>
 
 #include "insn.h"
 
@@ -172,7 +174,8 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
                        struct module *me)
 {
     unsigned int i;
-    int ovf;
+    int ovf, ret = 0;
+    void *backup;
     bool overflow_check;
     Elf64_Sym *sym;
     void *loc;
@@ -185,9 +188,37 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
     targethdr = &sechdrs[relhdr->sh_info];
     symhdr = &sechdrs[symindex];
     if (relhdr->sh_type != SHT_RELA || relhdr->sh_entsize != sizeof(Elf64_Rela) ||
-        relhdr->sh_size % sizeof(Elf64_Rela) || symhdr->sh_type != SHT_SYMTAB ||
-        symhdr->sh_size % sizeof(Elf64_Sym)) return -ENOEXEC;
+        relhdr->sh_size % sizeof(Elf64_Rela) || relhdr->sh_link != symindex ||
+        !relhdr->sh_addr || !(targethdr->sh_flags & SHF_ALLOC) || !targethdr->sh_addr ||
+        symhdr->sh_type != SHT_SYMTAB || symhdr->sh_entsize != sizeof(Elf64_Sym) ||
+        symhdr->sh_size % sizeof(Elf64_Sym) || !symhdr->sh_addr) return -ENOEXEC;
     rel = (void *)relhdr->sh_addr;
+
+    /* Validate every target range and symbol index before any write. */
+    for (i = 0; i < relhdr->sh_size / sizeof(*rel); i++) {
+        unsigned int type = ELF64_R_TYPE(rel[i].r_info);
+        unsigned int symno = ELF64_R_SYM(rel[i].r_info);
+        unsigned int width;
+
+        switch (type) {
+        case R_ARM_NONE:
+        case R_AARCH64_NONE: width = 0; break;
+        case R_AARCH64_ABS64:
+        case R_AARCH64_PREL64: width = 8; break;
+        case R_AARCH64_ABS16:
+        case R_AARCH64_PREL16: width = 2; break;
+        default: width = 4; break;
+        }
+        if (symno >= symhdr->sh_size / sizeof(Elf64_Sym)) return -ENOEXEC;
+        if (rel[i].r_offset > targethdr->sh_size ||
+            width > targethdr->sh_size - rel[i].r_offset) return -ENOEXEC;
+        if (width && (rel[i].r_offset & (width - 1))) return -ENOEXEC;
+    }
+
+    backup = vmalloc(targethdr->sh_size ? targethdr->sh_size : 1);
+    if (!backup) return -ENOMEM;
+    if (targethdr->sh_size)
+        memcpy(backup, (void *)targethdr->sh_addr, targethdr->sh_size);
 
     for (i = 0; i < relhdr->sh_size / sizeof(*rel); i++) {
         unsigned int type = ELF64_R_TYPE(rel[i].r_info);
@@ -347,13 +378,18 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
             break;
         default:
             pr_err("unsupported RELA relocation: %llu\n", ELF64_R_TYPE(rel[i].r_info));
-            return -ENOEXEC;
+            ret = -ENOEXEC;
+            goto rollback;
         }
 
         if (overflow_check && ovf == -ERANGE) goto overflow;
     }
+    vfree(backup);
     return 0;
-overflow:
-    pr_err("overflow in relocation type %d val %llx\n", (int)ELF64_R_TYPE(rel[i].r_info), val);
-    return -ENOEXEC;
+
+rollback:
+    if (targethdr->sh_size)
+        memcpy((void *)targethdr->sh_addr, backup, targethdr->sh_size);
+    vfree(backup);
+    return ret;
 }
