@@ -431,6 +431,13 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
     int32_t cand = 0;
     int32_t MAX_ZERO_OFFSET_NUM = 10;
     int32_t zero_offset_num = 0;
+
+    if (!img || imglen <= 0 || (elem_size != 4 && elem_size != 8) ||
+        imglen < KSYM_MIN_NEQ_SYMS * elem_size) {
+        tools_logw("invalid kallsyms_offsets scan range or element size\\n");
+        return -1;
+    }
+
     for (; cand < imglen - KSYM_MIN_NEQ_SYMS * elem_size; cand += elem_size) {
         int64_t raw_offset = int_unpack(img + cand, elem_size, info->is_be);
         uint64_t offset = raw_offset < 0 ? (1ull << 32) + (uint32_t)(-raw_offset) : (uint32_t)raw_offset;
@@ -451,38 +458,59 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
         }
     }
     if (sym_num < KSYM_MIN_NEQ_SYMS) {
-        tools_logw("find approximate kallsyms_offsets error\n");
+        tools_logw("find approximate kallsyms_offsets error\\n");
         return -1;
     }
+
     cand -= KSYM_MIN_NEQ_SYMS * elem_size;
-    for (;; cand -= elem_size)
-        if (!int_unpack(img + cand, elem_size, info->is_be)) break;
-    for (;; cand -= elem_size) {
-        if (int_unpack(img + cand, elem_size, info->is_be)) break;
-        if (zero_offset_num++ >= MAX_ZERO_OFFSET_NUM) break;
+    if (cand < 0 || cand > imglen - elem_size) {
+        tools_logw("kallsyms_offsets candidate start is outside the image\\n");
+        return -1;
     }
+
+    /* Locate the zero sentinel before the relative-offset array. */
+    while (cand >= 0 && int_unpack(img + cand, elem_size, info->is_be))
+        cand -= elem_size;
+    if (cand < 0) {
+        tools_logw("kallsyms_offsets zero sentinel is not bounded by the image\\n");
+        return -1;
+    }
+
+    /* Walk back across the bounded run of zero entries preceding the table. */
+    while (cand >= 0 && !int_unpack(img + cand, elem_size, info->is_be)) {
+        if (zero_offset_num++ >= MAX_ZERO_OFFSET_NUM) break;
+        cand -= elem_size;
+    }
+    if (cand < 0) {
+        tools_logw("kallsyms_offsets table start underflows the image\\n");
+        return -1;
+    }
+
     cand += elem_size;
+    if (cand < 0 || cand > imglen - elem_size) {
+        tools_logw("kallsyms_offsets table start has no complete entry\\n");
+        return -1;
+    }
     int32_t approx_offset = cand;
     info->_approx_addresses_or_offsets_offset = approx_offset;
 
-    // approximate kallsyms_offsets end
+    /* Read only complete elements; the kernel image may end with a short tail. */
     prev_offset = 0;
-    for (; cand < imglen; cand += elem_size) {
+    for (; cand <= imglen - elem_size; cand += elem_size) {
         int64_t raw_offset = int_unpack(img + cand, elem_size, info->is_be);
         uint64_t offset = raw_offset < 0 ? (1ull << 32) + (uint32_t)(-raw_offset) : (uint32_t)raw_offset;
         if (offset < prev_offset) break;
         prev_offset = offset;
     }
-    // the last symbol may not 4k alinged
-    // end is not include
+
+    /* end is exclusive and never extends beyond imglen */
     int32_t end = cand;
     info->_approx_addresses_or_offsets_end = end;
     info->has_relative_base = 1;
     int32_t approx_num_syms = (end - approx_offset) / elem_size;
     info->_approx_addresses_or_offsets_num = approx_num_syms;
-    // The real interval is contained in this approximate interval
     tools_logi("approximate kallsyms_offsets range: [0x%08x, 0x%08x) "
-               "count: 0x%08x\n",
+               "count: 0x%08x\\n",
                approx_offset, end, approx_num_syms);
     return 0;
 }
