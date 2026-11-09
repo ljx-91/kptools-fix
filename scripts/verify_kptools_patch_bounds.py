@@ -137,6 +137,8 @@ def main():
          "linux_banner parser must bound version-prefix lookahead")
     need(r"info->banner_num\s*<\s*\(int32_t\)ARRAY_SIZE", banner,
          "linux_banner parser must cap stored banner offsets")
+    need(r"if\s*\(!info->banner_num\)\s*\{[^}]*return\s+0;", banner,
+         "missing linux_banner must leave the vector fallback path available")
     need(r"if\s*\(!info->banner_num\)", banner,
          "linux_banner parser must reject images without a valid banner")
     need(r"memchr\(uts_release_start,\s*' ',", banner,
