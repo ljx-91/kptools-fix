@@ -294,10 +294,12 @@ static int simplify_symbols(struct module *mod, struct load_info *info)
         const char *name = info->strtab + sym[i].st_name;
         switch (sym[i].st_shndx) {
         case SHN_COMMON:
-            if (!strncmp(name, "__gnu_lto", 9)) {
-                logkd("Please compile with -fno-common\n");
-                ret = -ENOEXEC;
-            }
+            /* No common-symbol allocator exists in this loader. */
+            logkd("unsupported SHN_COMMON symbol %s; compile with -fno-common\n", name);
+            if (!info->info.error_msg[0])
+                snprintf(info->info.error_msg, sizeof(info->info.error_msg),
+                         "unsupported common symbol: %s", name);
+            ret = -ENOEXEC;
             break;
         case SHN_ABS:
             break;
