@@ -438,6 +438,11 @@ static int layout_sections(struct kp_module *mod, struct kp_load_info *info)
 			break;
 		}
 	}
+	for (int i = 1; i < info->hdr->e_shnum; i++) {
+		Elf_Shdr *section = &info->sechdrs[i];
+		if ((section->sh_flags & SHF_ALLOC) && section->sh_entsize == ~0UL)
+			return -ENOEXEC;
+	}
 	return 0;
 }
 
