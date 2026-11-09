@@ -190,7 +190,7 @@ def main():
             "entry thunk resolver must validate each address before dereference")
     require(r"return 0;", branch_resolver,
             "malformed or cyclic thunk chains must fail closed")
-    require(r"is_bad_address\(\(void \*\)origin_addr\)", hook_fn,
+    require(r"is_bad_address\(\(void \*\)origin\)", hook_fn,
             "hook() must reject failed entry resolution")
     wrap_fn = function_body(hook_c, "hook_err_t hook_wrap(")
     require(r"is_bad_address\(\(void \*\)origin\)", wrap_fn,
