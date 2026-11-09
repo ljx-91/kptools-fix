@@ -1505,6 +1505,7 @@ long kp_notify_modules_event(const char *event, const char *args, void __user *r
 	struct kp_module *pos;
 	unsigned long flags;
 	unsigned int capacity, n, i;
+	bool overflow;
 	long result = 0;
 	int count = 0;
 
@@ -1536,11 +1537,23 @@ long kp_notify_modules_event(const char *event, const char *args, void __user *r
 			continue;
 		}
 		n = 0;
+		overflow = false;
 		list_for_each_entry(pos, &modules.list, list) {
 			if (pos->state != KP_MODULE_LIVE || !pos->event || !*pos->event)
 				continue;
+			if (pos->active_calls == UINT_MAX) {
+				overflow = true;
+				break;
+			}
 			pos->active_calls++;
 			snapshot[n++] = pos;
+		}
+		if (overflow) {
+			for (i = 0; i < n; i++)
+				snapshot[i]->active_calls--;
+			spin_unlock_irqrestore(&module_lock, flags);
+			kfree(snapshot);
+			return -EOVERFLOW;
 		}
 		spin_unlock_irqrestore(&module_lock, flags);
 		break;
