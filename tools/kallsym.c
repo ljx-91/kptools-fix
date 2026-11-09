@@ -1484,7 +1484,8 @@ int analyze_kallsym_info(kallsym_t *info, char *img, int32_t imglen, enum arch_t
     }
 
 out:
-    memcpy(img, copied_img, imglen);
+    /* Never publish a partially relocated image when Kallsyms analysis fails. */
+    if (!rc) memcpy(img, copied_img, (size_t)imglen);
     free(copied_img);
     return rc;
 }
