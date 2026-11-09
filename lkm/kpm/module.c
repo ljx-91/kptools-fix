@@ -850,7 +850,7 @@ int kp_hook_owner_register(unsigned long addr, void **owner)
 	spin_lock_irqsave(&module_lock, flags);
 	list_for_each_entry(pos, &modules.list, list) {
 		unsigned long start = (unsigned long)pos->start;
-		unsigned long end = start + pos->size;
+		unsigned long end = start + pos->text_size;
 		if (end < start || addr < start || addr >= end)
 			continue;
 		if (pos->state != KP_MODULE_LOADING && pos->state != KP_MODULE_LIVE) {
@@ -922,8 +922,8 @@ static struct kp_module *kp_module_get_by_addr(unsigned long addr)
 		    pos->state != KP_MODULE_UNLOADING)
 			continue;
 		start = (unsigned long)pos->start;
-		end = start + pos->size;
-		if (addr >= start && addr < end) {
+		end = start + pos->text_size;
+		if (end >= start && addr >= start && addr < end) {
 			pos->active_calls++;
 			spin_unlock_irqrestore(&module_lock, flags);
 			return pos;
