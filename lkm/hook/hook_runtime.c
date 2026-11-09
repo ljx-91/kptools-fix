@@ -247,7 +247,7 @@ void hook_mem_free(void *payload)
 
 	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry_safe(mem, tmp, &kp_hook_mems, list) {
-		if (mem->payload == payload) {
+			if (mem->payload == payload && !mem->ready) {
 			list_del(&mem->list);
 			raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 			kp_hook_exec_free(mem->region);
