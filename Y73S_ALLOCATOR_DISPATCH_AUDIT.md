@@ -1,5 +1,8 @@
 # Y73S allocator ABI audit — binary-level correction
 
+> **历史审计记录（非当前状态页）**：本文保留逐阶段发现、修复与验证证据。较早章节中的“尚未修复 / 待验证”是当时的时间点记录，不代表当前分支状态；请先看[当前状态总览](Y73S_STATUS_CN.md)，再按最新源码和 CI 结果判断。本文的历史证据不应被理解为真机验证结论。
+
+
 Branch: `y73s-gcc-audit-20261108`
 
 Scope: read-only analysis of the original `kernel-b`, the supplied patch log, and the current branch source. No runtime source was changed, no KPIMG or boot image was generated, and no device operation was performed.
