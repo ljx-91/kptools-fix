@@ -122,5 +122,9 @@ typedef int (*kp_kallsyms_cb_t)(void *, const char *, struct module *, unsigned 
 #endif
 bool kp_kpm_cfi_allowed_addr(unsigned long addr);
 int kp_kpm_safe_kallsyms_on_each_symbol(kp_kallsyms_cb_t fn, void *data);
+int kp_kpm_owner_pin(unsigned long callback_addr, void **owner);
+void kp_kpm_owner_unpin(void *owner);
+int kp_kpm_owner_call_get(void *owner);
+void kp_kpm_owner_call_put(void *owner);
 
 #endif /* _KP_LKM_KPM_MODULE_H_ */
