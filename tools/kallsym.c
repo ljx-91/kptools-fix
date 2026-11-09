@@ -76,6 +76,7 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
     char *search = img;
 
     info->banner_num = 0;
+    memset(&info->version, 0, sizeof(info->version));
     while (search < imgend) {
         char *banner = (char *)memmem(search, (size_t)(imgend - search),
                                       linux_banner_prefix, prefix_len);
