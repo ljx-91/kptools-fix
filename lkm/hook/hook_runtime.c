@@ -26,6 +26,7 @@ struct kp_hook_mem {
 	bool ready;
 	bool retiring;
 	void *region;
+	unsigned long region_size;
 	union {
 		hook_t hook;
 		hook_chain_t chain;
@@ -65,6 +66,7 @@ static void *(*kp_hook_module_alloc)(unsigned long size);
 static void (*kp_hook_module_memfree)(void *region);
 static void (*kp_hook_flush_icache_all)(void);
 static int (*kp_hook_set_memory_x)(unsigned long addr, int numpages);
+static int (*kp_hook_set_memory_nx)(unsigned long addr, int numpages);
 
 static struct mm_struct *kp_hook_init_mm;
 
@@ -91,19 +93,21 @@ static enum kp_hook_alloc_backend kp_hook_alloc_backend;
 /* Normalize executable hook pages before publishing any trampoline.
  * Clearing GP is required because KPM-generated relocated code has no BTI
  * landing pads; PTE updates are serialized by the kernel page-table lock. */
-__attribute__((no_sanitize("cfi")))
-static int kp_hook_make_exec(void *region, unsigned long size)
+static int kp_hook_update_exec(void *region, unsigned long size, bool executable)
 {
 	unsigned long base = (unsigned long)region;
 	unsigned long end, addr;
 
 	if (!kp_hook_init_mm || !region || !size ||
-	    (base & (PAGE_SIZE - 1)) || size > ULONG_MAX - base)
+	    (base & (PAGE_SIZE - 1)) || (size & (PAGE_SIZE - 1)) ||
+	    size > ULONG_MAX - base)
 		return -EINVAL;
 	end = base + size;
-	if (kp_hook_set_memory_x &&
-	    kp_hook_set_memory_x(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT))
+	if (executable && kp_hook_set_memory_x &&
+	    kp_hook_set_memory_x(base, size >> PAGE_SHIFT))
 		return -EACCES;
+	if (!executable && kp_hook_set_memory_nx)
+		kp_hook_set_memory_nx(base, size >> PAGE_SHIFT);
 
 	for (addr = base; addr < end; addr += PAGE_SIZE) {
 		pgd_t *pgd = pgd_offset(kp_hook_init_mm, addr);
@@ -113,6 +117,7 @@ static int kp_hook_make_exec(void *region, unsigned long size)
 		pte_t *pte;
 		spinlock_t *ptl;
 		pteval_t v;
+		unsigned long mask = KP_HOOK_PTE_PXN | KP_HOOK_PTE_UXN | KP_HOOK_PTE_GP;
 
 		if (pgd_none(*pgd) || pgd_bad(*pgd))
 			return -EFAULT;
@@ -132,9 +137,13 @@ static int kp_hook_make_exec(void *region, unsigned long size)
 			spin_unlock(ptl);
 			return -EFAULT;
 		}
-		v = pte_val(*pte) & ~(KP_HOOK_PTE_PXN | KP_HOOK_PTE_UXN | KP_HOOK_PTE_GP);
+		v = pte_val(*pte);
+		if (executable)
+			v &= ~mask;
+		else
+			v |= mask;
 		set_pte_at(kp_hook_init_mm, addr, pte, __pte(v));
-		if (pte_val(*pte) & (KP_HOOK_PTE_PXN | KP_HOOK_PTE_UXN | KP_HOOK_PTE_GP)) {
+		if (executable ? (pte_val(*pte) & mask) : ((pte_val(*pte) & mask) != mask)) {
 			spin_unlock(ptl);
 			return -EACCES;
 		}
@@ -144,7 +153,19 @@ static int kp_hook_make_exec(void *region, unsigned long size)
 	return 0;
 }
 
-static void kp_hook_exec_free(void *region);
+__attribute__((no_sanitize("cfi")))
+static int kp_hook_make_exec(void *region, unsigned long size)
+{
+	return kp_hook_update_exec(region, size, true);
+}
+
+__attribute__((no_sanitize("cfi"), __noinline__))
+static int kp_hook_make_nx(void *region, unsigned long size)
+{
+	return kp_hook_update_exec(region, size, false);
+}
+
+static void kp_hook_exec_free(void *region, unsigned long size);
 
 __attribute__((no_sanitize("cfi"), __noinline__))
 static void *kp_hook_exec_alloc(unsigned long size)
@@ -169,17 +190,23 @@ static void *kp_hook_exec_alloc(unsigned long size)
 		break;
 	}
 	if (p && kp_hook_make_exec(p, alloc_size)) {
-		kp_hook_exec_free(p);
+		kp_hook_exec_free(p, alloc_size);
 		p = NULL;
 	}
 	return p;
 }
 
 __attribute__((no_sanitize("cfi"), __noinline__))
-static void kp_hook_exec_free(void *region)
+static void kp_hook_exec_free(void *region, unsigned long size)
 {
 	if (!region)
 		return;
+	/* Do not return executable pages to the allocator unless NX/BTI
+	 * restoration is verified; leaking is safer than executable reuse. */
+	if (kp_hook_make_nx(region, size)) {
+		logke("Hook executable memory permission restore failed; leaking %px\\n", region);
+		return;
+	}
 	switch (kp_hook_alloc_backend) {
 	case KP_HOOK_ALLOC_MODULE:
 		kp_hook_module_memfree(region);
@@ -210,6 +237,7 @@ int kp_hook_runtime_init(void)
 	kp_hook_execmem_free = (void *)kp_resolve_symbol("execmem_free");
 	kp_hook_flush_icache_all = (void *)kp_resolve_symbol("flush_icache_all");
 	kp_hook_set_memory_x = (int (*)(unsigned long, int))kp_resolve_symbol("set_memory_x");
+	kp_hook_set_memory_nx = (int (*)(unsigned long, int))kp_resolve_symbol("set_memory_nx");
 	kp_hook_init_mm = (struct mm_struct *)kp_resolve_symbol("init_mm");
 	if (!kp_hook_init_mm) {
 		logke("init_mm unavailable; cannot verify executable Hook memory permissions\n");
@@ -255,12 +283,13 @@ void *hook_mem_zalloc(uintptr_t origin, enum hook_type type)
 	mem = kzalloc(sizeof(*mem), GFP_KERNEL);
 	if (!mem)
 		return NULL;
-	mem->region = kp_hook_exec_alloc(PAGE_ALIGN(size));
+	mem->region_size = PAGE_ALIGN(size);
+	mem->region = kp_hook_exec_alloc(mem->region_size);
 	if (!mem->region) {
 		kfree(mem);
 		return NULL;
 	}
-	memset(mem->region, 0, PAGE_ALIGN(size));
+	memset(mem->region, 0, mem->region_size);
 	mem->payload = mem->region;
 	mem->origin = origin;
 	mem->type = type;
@@ -272,7 +301,7 @@ void *hook_mem_zalloc(uintptr_t origin, enum hook_type type)
 		list_for_each_entry(pos, &kp_hook_mems, list) {
 			if (pos->origin == origin) {
 				raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
-				kp_hook_exec_free(mem->region);
+				kp_hook_exec_free(mem->region, mem->region_size);
 				kfree(mem);
 				return NULL;
 			}
