@@ -42,6 +42,7 @@ hook_make_exec = function_body(runtime, "static int kp_hook_make_exec(")
 hook_exec_alloc = function_body(runtime, "static void *kp_hook_exec_alloc(")
 hook_runtime_init = function_body(runtime, "int kp_hook_runtime_init(void)")
 hook_make_nx = function_body(runtime, "static int kp_hook_make_nx(")
+hook_update_exec = function_body(runtime, "static int kp_hook_update_exec(")
 hook_exec_free = function_body(runtime, "static void kp_hook_exec_free(void *region, unsigned long size)")
 hook_install = function_body(hook, "int hook_install(")
 
@@ -60,7 +61,7 @@ checks = {
         "return -ENOSYS;" in hook_runtime_init,
     "LKM hook pages are restored to NX/BTI before allocator reuse":
         "kp_hook_set_memory_nx" in runtime and
-        "v |= mask;" in hook_make_nx and
+        "v |= mask;" in hook_update_exec and
         "kp_hook_make_nx(region, size)" in hook_exec_free and
         "permission restore failed; leaking" in hook_exec_free and
         "mem->region_size = PAGE_ALIGN(size)" in runtime and
