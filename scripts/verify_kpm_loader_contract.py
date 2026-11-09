@@ -56,7 +56,7 @@ def main():
 
     symbols = function_body(module, "static int simplify_symbols(")
     common_case = symbols[symbols.index("case SHN_COMMON"):symbols.index("case SHN_ABS")]
-    require(r"ret\\s*=\\s*-ENOEXEC", common_case,
+    require(r"ret\s*=\s*-ENOEXEC", common_case,
             "device loader must reject unsupported SHN_COMMON symbols")
 
     layout = function_body(module, "static int layout_sections(")
