@@ -64,6 +64,10 @@ def main():
          token_table, "token-table start must account for the backward scan cursor still pointing at its final NUL")
     need(r"preceding_terminators\s*!=\s*'0'\s*\+\s*1", token_table,
          "token-table backward scan must reject a missing prefix")
+    need(r"offset\s*=\s*align_ceil\(offset,\s*4\)", token_table,
+         "token-table start must preserve the required four-byte alignment")
+    need(r"offset\s*<\s*0\s*\|\|\s*offset\s*>=\s*imglen", token_table,
+         "aligned token-table start must remain inside the image")
     need(r"memchr\(token_pos,\s*'\\0',\s*imgend\s*-\s*token_pos\)", token_table,
          "all 256 token strings must terminate inside the image")
 
