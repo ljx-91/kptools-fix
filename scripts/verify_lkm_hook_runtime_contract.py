@@ -41,6 +41,7 @@ patch_text_batch = function_body(patch_memory, "int kp_patch_text_batch(")
 hook_make_exec = function_body(runtime, "static int kp_hook_make_exec(")
 hook_exec_alloc = function_body(runtime, "static void *kp_hook_exec_alloc(")
 hook_runtime_init = function_body(runtime, "int kp_hook_runtime_init(void)")
+hook_install = function_body(hook, "int hook_install(")
 
 checks = {
     "LKM hook executable pages clear BTI guard and verify permissions":
@@ -55,6 +56,11 @@ checks = {
         "kp_hook_exec_free(p);" in hook_exec_alloc and
         'kp_resolve_symbol("init_mm")' in hook_runtime_init and
         "return -ENOSYS;" in hook_runtime_init,
+    "LKM trampoline publication flushes instruction cache before patch":
+        "kp_hook_flush_icache_all" in hook_runtime_init and
+        "return -ENOSYS;" in hook_runtime_init and
+        "flush_icache_all();" in hook_install and
+        hook_install.index("flush_icache_all();") < hook_install.index("return hotpatch("),
     "LKM backend defines hook_mem_retire": "void hook_mem_retire(void *payload)" in runtime,
     "retire unlinks metadata without freeing executable region":
         "list_del(&mem->list);" in runtime and
