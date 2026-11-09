@@ -61,7 +61,7 @@ def main():
 
     symbols = body(module, "static int simplify_symbols(")
     common_case = symbols[symbols.index("case SHN_COMMON"):symbols.index("case SHN_ABS")]
-    need(r"ret\\s*=\\s*-ENOEXEC", common_case,
+    need(r"ret\s*=\s*-ENOEXEC", common_case,
          "unsupported SHN_COMMON symbols must be rejected")
 
     layout = body(module, "static int layout_sections(")
