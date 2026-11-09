@@ -92,7 +92,13 @@ def main():
     if re.search(r"\(1\s*<<\s*len\)", data):
         raise AssertionError("undefined signed 32-bit relocation shift reintroduced")
 
+    # setup_load_info validates the original ELF sh_entsize before
+    # layout_symtab repurposes that field as a destination offset.
+    require(r"symsec->sh_entsize\\s*!=\\s*sizeof\\(Elf_Sym\\)", setup,
+            "original ELF symbol entry size must be validated before layout")
     rela = body(relo, "int kp_apply_relocate_add(")
+    if re.search(r"symsec->sh_entsize\\s*!=", rela):
+        raise AssertionError("RELA must not treat the rewritten in-image symbol offset as ELF sh_entsize")
     for pattern, message in (
         (r"sh_entsize\s*!=\s*sizeof\(Elf64_Rela\)", "RELA entry size"),
         (r"sh_size\s*%\s*sizeof\(Elf64_Rela\)", "RELA table divisibility"),
