@@ -29,14 +29,29 @@ struct load_info
     } index;
 };
 
+enum kp_module_state {
+    KP_MODULE_LOADING = 0,
+    KP_MODULE_LIVE,
+    KP_MODULE_UNLOADING,
+    KP_MODULE_EXITING,
+    KP_MODULE_DEAD,
+};
+
 struct module
 {
+    /* Protected by module_lock. Hook registrations pin the image until
+     * their chain slots are retired and all in-flight dispatches drain. */
+    enum kp_module_state state;
+    unsigned int active_calls;
+    unsigned int hook_refs;
+    bool exit_called;
+
     struct
     {
         const char *base, *name, *version, *license, *author, *description;
     } info;
 
-    char *args, *ctl_args;
+    char *args;
     char load_event[32];
     char load_source[16];
 
@@ -69,5 +84,12 @@ long notify_modules_event(const char *event, const char *args, void *__user rese
 int get_module_nums();
 int list_modules(char *out_names, int size);
 int get_module_info(const char *name, char *out_info, int size);
+
+/* Hook engine ownership protocol. A successful registration returns an
+ * opaque module token (NULL means kernel-resident callback). */
+int kp_hook_owner_register(unsigned long addr, void **owner);
+void kp_hook_owner_unregister(void *owner);
+int kp_hook_owner_call_get(void *owner);
+void kp_hook_owner_call_put(void *owner);
 
 #endif
