@@ -248,3 +248,11 @@
 - **尚未用包含此修复的最新 C 二进制完成真实 Boot 端到端解析。** 独立 Python token-table/index 计算确认了偏移根因与预期地址，但不能代替 C 工具测试。
 - 继续等待最新 CI，成功后下载该 run 的 kptools artifact，在解压内核副本上执行 `-d`，确认输出与历史日志一致。
 - 不使用 Fastboot，不刷写、不写设备分区，不进行真机启动测试。
+
+
+### 11 节验证状态补充（HEAD `e0b3c5df7f8a233a562b2586d3b6d9f68fe42d18`）
+
+- 最新 `KernelPatch Windows Build` Run `42672374856`：**success**。其中 Ubuntu ARM GNU GCC 14.2 KPIMG 构建、头文件生成与打包均通过；Windows kptools.exe 编译和 artifact 上传也通过。
+- 独立 `Build Linux kptools for Y73S offline audit` Run `42672375072`：GitHub 返回 failure，但该 run 的 jobs/check-runs 查询均为空，未提供可诊断的 step/log；因此不能确认是源码、契约脚本还是 Actions 调度问题，也不能算作 Linux Host 构建通过。
+- 独立 KPIMG Run `42672375021` 同样返回 failure 且无可读取 job 记录；但同一 commit 的 Windows workflow 中 Ubuntu KPIMG job 已实际成功完成。
+- 现有成功 artifact 是 KPIMG/headers 与 Windows kptools；尚未生成包含 Token Table 起点修复的 Linux kptools artifact，故真实 Boot C 工具端到端复测仍待完成。
