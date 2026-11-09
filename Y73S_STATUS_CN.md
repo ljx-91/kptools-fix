@@ -2,7 +2,7 @@
 
 > 更新时间：2026-11-10  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 当前源码 HEAD（本次文档更新前）：`3f69f882ba5c5b4d98bcfb4976623b99dd3a1b69`  
+> 当前源码 HEAD（本次文档更新前）：`5ace9911f3996ddfe6866514f0989ef84c6955fd`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -18,7 +18,7 @@
 ## 2. 分支与最近 CI（历史基线）
 
 - 分支：[y73s-cred-layout-guards-20261108](https://github.com/ljx-91/kptools-fix/tree/y73s-cred-layout-guards-20261108)
-- 本次文档更新前最近代码与契约提交：[3f69f88](https://github.com/ljx-91/kptools-fix/commit/3f69f882ba5c5b4d98bcfb4976623b99dd3a1b69)
+- 本次文档更新前最近代码与契约提交：[5ace991](https://github.com/ljx-91/kptools-fix/commit/3f69f882ba5c5b4d98bcfb4976623b99dd3a1b69)
 
 | 工作流 | Run | 结果 | 证明范围 |
 |---|---:|---|---|
@@ -185,5 +185,7 @@
 - `scripts/verify_kptools_patch_bounds.py` 已增加 banner、IKCONFIG、marker、names、decompressor、ARM64 vector、RELA 和失败回滚契约。
 - `build-y73s-kptools-host.yml` 的 push 触发范围覆盖 `tools/**` 和 `scripts/**`，且执行 Host 构建与该契约脚本。
 - 最新 HEAD 的 GitHub combined status 没有返回 checks；工作流运行查询也没有返回可确认的 run。**当前状态只能标记为已推送、待 CI，不可标记为通过。**
+- 后续又补强了无 `linux_banner` 场景：`find_linux_banner()` 在没有可用 banner 时安全返回并保留 vector fallback，不会让 `base_funcs` 提前中止；每次解析前清零旧版本元数据。相关提交：`a510b12`、`913892f`、`5ce8251`、`5ace991`；回归契约：`75762ed`、`04a712b`。
+- 已对当前源码执行 8 项关键结构断言（无 banner fallback、版本元数据复位、names/vector 函数存在、names 边界、ARM64 无符号地址语义、RELA 回扫和失败回滚），8/8 符合预期。这是源码结构检查，不是 C 编译或 Actions 成功证明。
 - 目标 Linux 4.14.141 KDIR 编译、真实 `.ko` modpost、KPM fuzz/load/unload 和真机启动仍未完成。
 
