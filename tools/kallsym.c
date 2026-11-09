@@ -776,23 +776,58 @@ static int find_markers(kallsym_t *info, char *img, int32_t imglen)
     return rc;
 }
 
-static int decompress_symbol_name(kallsym_t *info, char *img, int32_t *pos_to_next, char *out_type, char *out_symbol)
+static int decompress_symbol_name(kallsym_t *info, char *img, int32_t *pos_to_next,
+                                  char *out_type, char *out_symbol)
 {
+    if (!info || !img || !pos_to_next || info->image_size <= 0 ||
+        info->kallsyms_markers_offset <= 0 ||
+        info->kallsyms_markers_offset > info->image_size) {
+        return -1;
+    }
+
+    int32_t limit = info->kallsyms_markers_offset;
     int32_t pos = *pos_to_next;
-    int32_t len = *(uint8_t *)(img + pos++);
-    if (len > 0x7F) len = (len & 0x7F) + (*(uint8_t *)(img + pos++) << 7);
-    if (!len || len >= KSYM_SYMBOL_LEN) return -1;
+    if (pos < 0 || pos >= limit) return -1;
+
+    int32_t len = (uint8_t)img[pos++];
+    if (len > 0x7F) {
+        if (pos >= limit) return -1;
+        len = (len & 0x7F) + ((uint8_t)img[pos++] << 7);
+    }
+    if (!len || len >= KSYM_SYMBOL_LEN || len > limit - pos) return -1;
+
+    for (int32_t i = 0; i < len; i++) {
+        uint8_t tokidx = (uint8_t)img[pos + i];
+        char *token = info->kallsyms_token_table[tokidx];
+        if (!token) return -1;
+
+        uintptr_t image_base = (uintptr_t)img;
+        uintptr_t token_addr = (uintptr_t)token;
+        if (token_addr < image_base || token_addr - image_base >= (uintptr_t)info->image_size)
+            return -1;
+
+        size_t token_remaining = info->image_size - (size_t)(token_addr - image_base);
+        char *token_end = (char *)memchr(token, '\\0', token_remaining);
+        if (!token_end) return -1;
+        size_t token_len = (size_t)(token_end - token);
+        if (!token_len) return -1;
+
+        size_t skip = 0;
+        if (!i) {
+            if (out_type) *out_type = token[0];
+            skip = 1;
+        }
+        if (out_symbol) {
+            size_t used = strnlen(out_symbol, KSYM_SYMBOL_LEN);
+            if (used >= KSYM_SYMBOL_LEN || token_len < skip) return -1;
+            size_t append_len = token_len - skip;
+            if (append_len > KSYM_SYMBOL_LEN - 1 - used) return -1;
+            memcpy(out_symbol + used, token + skip, append_len);
+            out_symbol[used + append_len] = '\\0';
+        }
+    }
 
     *pos_to_next = pos + len;
-    for (int32_t i = 0; i < len; i++) {
-        int32_t tokidx = *(uint8_t *)(img + pos + i);
-        char *token = info->kallsyms_token_table[tokidx];
-        if (!i) { // first character, symbol type
-            if (out_type) *out_type = *token;
-            token++;
-        }
-        if (out_symbol) strcat(out_symbol, token);
-    }
     return 0;
 }
 
@@ -1222,7 +1257,9 @@ R kallsyms_token_index
 */
 int analyze_kallsym_info(kallsym_t *info, char *img, int32_t imglen, enum arch_type arch, int32_t is_64)
 {
+    if (!info || !img || imglen <= 0) return -1;
     memset(info, 0, sizeof(kallsym_t));
+    info->image_size = imglen;
     info->arch = arch;
     info->is_64 = is_64;
     info->asm_long_size = 4;
@@ -1246,8 +1283,12 @@ int analyze_kallsym_info(kallsym_t *info, char *img, int32_t imglen, enum arch_t
         raw_layout_ready = 1;
     }
 
-    char *copied_img = (char *)malloc(imglen);
-    memcpy(copied_img, img, imglen);
+    char *copied_img = (char *)malloc((size_t)imglen);
+    if (!copied_img) {
+        tools_loge("failed to allocate kallsyms analysis image\\n");
+        return -1;
+    }
+    memcpy(copied_img, img, (size_t)imglen);
 
     // 1st
     rc = retry_relo(info, copied_img, imglen);
