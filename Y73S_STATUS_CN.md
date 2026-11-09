@@ -256,3 +256,28 @@
 - 独立 `Build Linux kptools for Y73S offline audit` Run `42672375072`：GitHub 返回 failure，但该 run 的 jobs/check-runs 查询均为空，未提供可诊断的 step/log；因此不能确认是源码、契约脚本还是 Actions 调度问题，也不能算作 Linux Host 构建通过。
 - 独立 KPIMG Run `42672375021` 同样返回 failure 且无可读取 job 记录；但同一 commit 的 Windows workflow 中 Ubuntu KPIMG job 已实际成功完成。
 - 现有成功 artifact 是 KPIMG/headers 与 Windows kptools；尚未生成包含 Token Table 起点修复的 Linux kptools artifact，故真实 Boot C 工具端到端复测仍待完成。
+
+
+## 12. 2026-11-10：Token Table 修复后的独立 C 验证与 CI 追踪
+
+### 已完成的额外验证
+
+- 对原始 Boot 解压得到的 47,517,708-byte ARM64 Image 重新执行 49 个 NUL terminator 的反向游标模型。
+- 用独立 C harness 复现仓库当前 `find_token_table()` / `find_token_index()` 的边界与偏移算法，并直接读取原始解压内核：
+  - Token Table：`0x01e4bd00`
+  - 256 个 token 的终点：`0x01e4c05a`
+  - Token Index：`0x01e4c100`
+  - Endian：little
+  - 512-byte index 表唯一匹配。
+- 合成回归模型确认 `while` 游标 `pos + 1` 与旧 `for` 游标 `pos + 2` 得到相同起点；四字节对齐后结果一致。
+- 发现并修正了回归模型本身的两处问题：期望偏移应为 5（不是 4）；NUL fixture 使用 `bytes(49)`，确保是真正的 NUL 字节。最新脚本提交：`0f6f68f`。
+
+### CI 追踪（不把空工作流误报成通过）
+
+- 修复前的 CI artifact（`67ab6611`）确实在 Token Table 偏移多 4 字节后于 `find_token_index()` 失败；该 artifact 不是修复后构建。
+- `38e39fce` 的 host 构建实际编译通过，但两处源码契约 job 都被合成 fixture 错误挡住；失败日志已定位为测试 fixture，而非 C 编译器错误。
+- 修正 fixture 后，`0f6f68f` 对应的专用 Host / Windows 工作流显示 workflow-level failure 且没有创建任何 check runs/jobs；这不是可归因于源码的失败，也不能算通过。专用 GCC KPIMG workflow 仍处于 pending。
+- 因此当前**真实镜像的 Token Table / Token Index 算法已由独立 C harness 和 Python 双重验证，但修复后的完整 kptools CI artifact 尚未生成，完整 C 工具端到端 `-d` 仍待执行**。
+- 下一步：等待专用 Host workflow 正常创建 jobs；拿到修复后 artifact 后，对同一份解压内核运行 `-d`，核对完整 Kallsyms、vector fallback 和符号导出结果。
+
+安全边界继续有效：不使用 Fastboot，不刷写、不写设备分区，不做真机启动测试。
