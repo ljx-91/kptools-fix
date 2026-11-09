@@ -70,6 +70,10 @@ def main():
     ]:
         need(pattern, symbols, f"defined ELF symbols must validate {message}")
 
+    permission_bits = module[:module.index("enum kp_exec_backend")]
+    need(r"#ifdef PTE_GP[\s\S]*?#define KP_LKM_PTE_GP 0UL", permission_bits,
+         "Linux 4.14 headers without PTE_GP must not reference an undefined symbol")
+
     layout = body(module, "static int layout_sections(")
     need(r"get_offset\(", layout, "checked section reservation")
     need(r"kp_align_module_size\(", layout, "checked page alignment")

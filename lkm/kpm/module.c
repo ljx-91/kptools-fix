@@ -42,14 +42,22 @@
 
 /* arm64 PTE permission bits. PXN (bit53) / UXN (bit54) gate execution;
  * GP (bit50) enables BTI. KPM pages must have them all clear. */
-#ifndef PTE_PXN
-#define KP_LKM_PTE_PXN (1UL << 53)
-#define KP_LKM_PTE_UXN (1UL << 54)
-#define KP_LKM_PTE_GP  (1UL << 50)
-#else
+#ifdef PTE_PXN
 #define KP_LKM_PTE_PXN PTE_PXN
+#else
+#define KP_LKM_PTE_PXN (1UL << 53)
+#endif
+#ifdef PTE_UXN
 #define KP_LKM_PTE_UXN PTE_UXN
-#define KP_LKM_PTE_GP  PTE_GP
+#else
+#define KP_LKM_PTE_UXN (1UL << 54)
+#endif
+/* PTE_GP was added after the Linux 4.14 ARM64 headers. Do not set a
+ * reserved descriptor bit on kernels that do not define the BTI guard bit. */
+#ifdef PTE_GP
+#define KP_LKM_PTE_GP PTE_GP
+#else
+#define KP_LKM_PTE_GP 0UL
 #endif
 
 /* Runtime-resolved kernel symbols (not exported on GKI 5.15). */

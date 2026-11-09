@@ -70,14 +70,21 @@ static int (*kp_hook_set_memory_nx)(unsigned long addr, int numpages);
 
 static struct mm_struct *kp_hook_init_mm;
 
-#ifndef PTE_PXN
-#define KP_HOOK_PTE_PXN (1UL << 53)
-#define KP_HOOK_PTE_UXN (1UL << 54)
-#define KP_HOOK_PTE_GP  (1UL << 50)
-#else
+#ifdef PTE_PXN
 #define KP_HOOK_PTE_PXN PTE_PXN
+#else
+#define KP_HOOK_PTE_PXN (1UL << 53)
+#endif
+#ifdef PTE_UXN
 #define KP_HOOK_PTE_UXN PTE_UXN
-#define KP_HOOK_PTE_GP  PTE_GP
+#else
+#define KP_HOOK_PTE_UXN (1UL << 54)
+#endif
+/* Older ARM64 kernels have no BTI guard descriptor bit. */
+#ifdef PTE_GP
+#define KP_HOOK_PTE_GP PTE_GP
+#else
+#define KP_HOOK_PTE_GP 0UL
 #endif
 
 enum kp_hook_alloc_backend {

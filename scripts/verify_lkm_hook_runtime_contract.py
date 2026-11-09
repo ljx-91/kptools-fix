@@ -48,6 +48,9 @@ hook_install = function_body(hook, "int hook_install(")
 phys_from_virt = function_body(patch_memory, "static unsigned long kp_phys_from_virt(")
 
 checks = {
+    "Linux 4.14 without PTE_GP uses a zero BTI guard mask":
+        "#ifdef PTE_GP" in runtime and "#define KP_HOOK_PTE_GP 0UL" in runtime and
+        "#ifdef PTE_GP" in read("lkm/kpm/module.c") and "#define KP_LKM_PTE_GP 0UL" in read("lkm/kpm/module.c"),
     "LKM hook executable pages clear BTI guard and verify permissions":
         "kp_hook_init_mm" in runtime and
         "pte_lockptr(kp_hook_init_mm, pmd)" in hook_update_exec and
