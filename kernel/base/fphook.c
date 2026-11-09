@@ -501,7 +501,7 @@ int fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after)
     for (i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
         if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY) {
             hook_engine_unlock(flags);
-            return -EBUSY;
+            return 0;
         }
     }
     rc = fp_unhook_locked(chain->hook.fp_addr, (void *)chain->hook.replace_addr,
