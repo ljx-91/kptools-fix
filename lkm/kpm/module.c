@@ -1196,10 +1196,10 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	}
 	{
 		unsigned long flags;
-		/* Keep the image registered while the failure exit callback runs,
-		 * so CFI range checks and nested kallsyms iteration remain valid. */
+		/* Keep the image registered while failure cleanup runs. */
 		spin_lock_irqsave(&module_lock, flags);
 		mod->state = KP_MODULE_EXITING;
+		mod->exit_called = true;
 		spin_unlock_irqrestore(&module_lock, flags);
 	}
 	set_load_error(info, "module init failed");
@@ -1210,6 +1210,12 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	{
 		unsigned long flags;
 		spin_lock_irqsave(&module_lock, flags);
+		if (mod->hook_refs || mod->active_calls) {
+			spin_unlock_irqrestore(&module_lock, flags);
+			logke("failed KPM init left hook refs; retaining image %s\n", mod->info.name);
+			rc = -EBUSY;
+			goto out;
+		}
 		list_del_init(&mod->list);
 		mod->state = KP_MODULE_DEAD;
 		spin_unlock_irqrestore(&module_lock, flags);
@@ -1231,15 +1237,12 @@ long kp_unload_module(const char *name, void __user *reserved)
 {
 	struct kp_module *mod;
 	unsigned long flags;
-	long rc;
+	long rc = 0;
 
 	if (!name)
 		return -EINVAL;
 	logkfe("name: %s\n", name);
 
-	/* get() and the LIVE -> UNLOADING transition share module_lock. If a
-	 * callback is active, keep the module hidden and ask the caller to retry;
-	 * this also makes self-unload fail without waiting on its own reference. */
 	spin_lock_irqsave(&module_lock, flags);
 	mod = kp_find_module_locked(name);
 	if (!mod) {
@@ -1252,7 +1255,7 @@ long kp_unload_module(const char *name, void __user *reserved)
 	}
 	if (mod->state == KP_MODULE_LIVE)
 		mod->state = KP_MODULE_UNLOADING;
-	if (mod->state != KP_MODULE_UNLOADING) {
+	if (mod->state != KP_MODULE_UNLOADING && mod->state != KP_MODULE_EXITING) {
 		spin_unlock_irqrestore(&module_lock, flags);
 		return -ENOENT;
 	}
@@ -1260,16 +1263,23 @@ long kp_unload_module(const char *name, void __user *reserved)
 		spin_unlock_irqrestore(&module_lock, flags);
 		return -EBUSY;
 	}
-	/* EXITING prevents a second unload while keeping the image visible to
-	 * CFI range checks during the module's own exit callback. */
-	mod->state = KP_MODULE_EXITING;
-	spin_unlock_irqrestore(&module_lock, flags);
-
-	rc = kp_call_exit(mod->exit, reserved);
-	spin_lock_irqsave(&module_lock, flags);
+	if (!mod->exit_called) {
+		mod->state = KP_MODULE_EXITING;
+		mod->exit_called = true;
+		spin_unlock_irqrestore(&module_lock, flags);
+		rc = kp_call_exit(mod->exit, reserved);
+		spin_lock_irqsave(&module_lock, flags);
+	}
+	if (mod->active_calls || mod->hook_refs) {
+		spin_unlock_irqrestore(&module_lock, flags);
+		logkw("KPM %s retained: active=%u hook_refs=%u; retry after hook removal\n",
+		      name, mod->active_calls, mod->hook_refs);
+		return -EBUSY;
+	}
 	list_del_init(&mod->list);
 	mod->state = KP_MODULE_DEAD;
 	spin_unlock_irqrestore(&module_lock, flags);
+
 	if (mod->args)
 		kvfree(mod->args);
 	if (kp_set_memory_nx && mod->start) {
