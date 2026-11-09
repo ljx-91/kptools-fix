@@ -962,9 +962,17 @@ long notify_modules_event(const char *event, const char *args, void *__user rese
             module_lock_release(flags); kfree(snapshot); continue;
         }
         n = 0;
-        list_for_each_entry(pos, &modules.list, list) {
-            if (pos->state != KP_MODULE_LIVE || !pos->event || !*pos->event) continue;
-            pos->active_calls++; snapshot[n++] = pos;
+        {
+            bool overflow = false;
+            list_for_each_entry(pos, &modules.list, list) {
+                if (pos->state != KP_MODULE_LIVE || !pos->event || !*pos->event) continue;
+                if (pos->active_calls == UINT_MAX) { overflow = true; break; }
+                pos->active_calls++; snapshot[n++] = pos;
+            }
+            if (overflow) {
+                for (i = 0; i < n; i++) snapshot[i]->active_calls--;
+                module_lock_release(flags); kfree(snapshot); return -EOVERFLOW;
+            }
         }
         module_lock_release(flags);
         break;
