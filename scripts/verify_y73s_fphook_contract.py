@@ -16,18 +16,17 @@ checks = {
     "CFI resolver rejects .cfi_jt jump-table stub": "suffix[3] == '_' && suffix[4] == 'j' && suffix[5] == 't'" in start,
     "synchronize_rcu wrapper calls synchronize_rcu target": "static inline void synchronize_rcu(void)" in rcu and "kfunc_call(synchronize_rcu);" in rcu,
     "synchronize_rcu wrapper no longer maps to tasks rude barrier": "kfunc_call(rcu_barrier_tasks_rude)" not in rcu[rcu.index("static inline void synchronize_rcu(void)"):rcu.index("static inline unsigned long get_completed_synchronize_rcu")],
-    "fp_hook returns hotpatch status": "return hotpatch((void **)addrs, values, 2);" in src,
-    "fp_unhook returns hotpatch status": "return hotpatch((void **)addrs, values, 2);" in src and
-        "int fp_unhook(uintptr_t fp_addr, void *backup)" in src,
-    "public declarations return status": "int fp_hook(uintptr_t fp_addr, void *replace, void **backup);" in hdr and
-        "int fp_unhook(uintptr_t fp_addr, void *backup);" in hdr,
-    "origin backup saved before patch": src.index("*backup = (void *)original;") <
-        src.index("return hotpatch((void **)addrs, values, 2);"),
-    "chain preparation failure frees allocation": "if (err) {\n            hook_mem_free(chain);\n            return err;" in src,
-    "uncertain install retains chain": "patch rollback uncertain" in src and
-        "return -HOOK_PATCH_UNCERTAIN;" in src,
-    "restore failure retains chain": "if (rc) {\n        logkv(\"Unwrap func pointer:" in src and
-        "retaining chain memory" in src,
+    "fp_hook uses atomic pointer exchange": "return hotpatch_exchange64((void *)fp_addr, (uint64_t)replace, (uint64_t *)backup);" in src,
+    "fp_unhook uses compare-and-restore": "return hotpatch_cmpxchg64((void *)fp_addr, (uint64_t)expected, (uint64_t)backup);" in src and
+        "int fp_unhook(uintptr_t fp_addr, void *expected, void *backup)" in src,
+    "public declarations expose atomic restore contract": "int fp_hook(uintptr_t fp_addr, void *replace, void **backup);" in hdr and
+        "int fp_unhook(uintptr_t fp_addr, void *expected, void *backup);" in hdr,
+    "function-pointer backup is captured by atomic exchange": "hotpatch_exchange64((void *)fp_addr, (uint64_t)replace, (uint64_t *)backup)" in src,
+    "chain preparation failure frees allocation": "if (err) goto fail;" in src and
+        "fail:\n    hook_mem_free(chain);" in src,
+    "uncertain install retains chain": "if (patch_rc == -EUCLEAN)" in src and
+        "hook_mem_publish(chain);" in src and "return -HOOK_PATCH_UNCERTAIN;" in src,
+    "restore failure retains chain": "if (!rc)\n        hook_mem_retire(chain);" in src,
     "SELinux SID published after context string": acc.index("all_allow_sctx[sizeof(all_allow_sctx) - 1] =") <
         acc.index("WRITE_ONCE(all_allow_sid, sid);"),
     "SELinux SID consumers use READ_ONCE": "set_security_override(new, READ_ONCE(all_allow_sid))" in acc and
