@@ -491,7 +491,8 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
 
         uint64_t value = uint_unpack(img + offset, 8, info->is_be);
         if (value == r_addend) continue;
-        *(uint64_t *)(img + offset) = value + r_addend;
+        uint64_t relocated_value = value + r_addend;
+        memcpy(img + offset, &relocated_value, sizeof(relocated_value));
         apply_num++;
     }
     if (apply_num) apply_num--;
