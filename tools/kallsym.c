@@ -613,17 +613,25 @@ static int find_num_syms(kallsym_t *info, char *img, int32_t imglen)
     info->kallsyms_num_syms_offset = 0;
 
     int32_t approx_end = info->kallsyms_names_offset;
-    // int32_t num_syms_elem_size = get_num_syms_elem_size(info);
-    int32_t num_syms_elem_size = 4;
-
+    const int32_t num_syms_elem_size = 4;
     int32_t approx_num_syms = info->_approx_addresses_or_offsets_num;
 
-    for (int32_t cand = approx_end; cand > approx_end - 4096; cand -= num_syms_elem_size) {
+    if (!info || !img || imglen < num_syms_elem_size ||
+        approx_end < 0 || approx_end > imglen - num_syms_elem_size ||
+        approx_num_syms <= 0 || approx_num_syms > KSYM_MAX_SYMS) {
+        tools_logw("invalid kallsyms_num_syms search range or approximate count\\n");
+        return -1;
+    }
+
+    int32_t lower = approx_end > 4096 ? approx_end - 4096 : 0;
+    for (int32_t cand = approx_end;
+         cand >= lower && cand <= imglen - num_syms_elem_size;
+         cand -= num_syms_elem_size) {
         int nsyms = (int)int_unpack(img + cand, num_syms_elem_size, info->is_be);
-        if (!nsyms) continue;
+        if (nsyms <= 0 || nsyms > KSYM_MAX_SYMS) continue;
         if (approx_num_syms > nsyms && approx_num_syms - nsyms > NSYMS_MAX_GAP) continue;
         if (nsyms > approx_num_syms && nsyms - approx_num_syms > NSYMS_MAX_GAP) continue;
-        // find
+
         info->kallsyms_num_syms = nsyms;
         info->kallsyms_num_syms_offset = cand;
         break;
@@ -632,28 +640,30 @@ static int find_num_syms(kallsym_t *info, char *img, int32_t imglen)
     if (!info->kallsyms_num_syms_offset || !info->kallsyms_num_syms) {
 #if KP_STRICT_KALLSYMS
         tools_logw("cannot verify exact kallsyms_num_syms (approximate count 0x%08x); "
-                   "rejecting this address-table candidate and retrying\n",
+                   "rejecting this address-table candidate and retrying\\n",
                    approx_num_syms);
         return -1;
 #else
+        if (approx_num_syms <= NSYMS_MAX_GAP) return -1;
         info->kallsyms_num_syms = approx_num_syms - NSYMS_MAX_GAP;
-        tools_logw("can't find kallsyms_num_syms, try: 0x%08x\n", info->kallsyms_num_syms);
+        tools_logw("can't find kallsyms_num_syms, try: 0x%08x\\n", info->kallsyms_num_syms);
 #endif
     } else {
-        tools_logi("kallsyms_num_syms offset: 0x%08x, value: 0x%08x\n", info->kallsyms_num_syms_offset,
-                   info->kallsyms_num_syms);
+        tools_logi("kallsyms_num_syms offset: 0x%08x, value: 0x%08x\\n",
+                   info->kallsyms_num_syms_offset, info->kallsyms_num_syms);
     }
 
     if (info->arch == X86_64 && info->has_relative_base) {
         int32_t begin = info->kallsyms_num_syms_offset - 32;
         if (begin < 0) begin = 0;
-        for (int32_t pos = info->kallsyms_num_syms_offset - 8; pos >= begin; pos -= 8) {
+        for (int32_t pos = info->kallsyms_num_syms_offset - 8;
+             pos >= begin && pos <= imglen - 8; pos -= 8) {
             uint64_t value = uint_unpack(img + pos, 8, info->is_be);
             if ((value & 0xffff000000000000ull) == 0xffff000000000000ull) {
                 info->kallsyms_relative_base = value;
                 info->kernel_base = value;
-                tools_logi("kallsyms_relative_base offset: 0x%08x, value: 0x%llx\n", pos,
-                           (unsigned long long)value);
+                tools_logi("kallsyms_relative_base offset: 0x%08x, value: 0x%llx\\n",
+                           pos, (unsigned long long)value);
                 break;
             }
         }
