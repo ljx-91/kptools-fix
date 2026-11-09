@@ -1133,6 +1133,7 @@ int32_t get_symbol_index_offset(kallsym_t *info, char *img, int32_t index)
 }
 int is_symbol_exists(kallsym_t *info, char *img, const char *symbol)
 {
+    if (!info || !img || !symbol) return 0;
     char decomp[KSYM_SYMBOL_LEN] = { '\0' };
     char type = 0;
     int32_t pos = info->kallsyms_names_offset;
@@ -1147,6 +1148,7 @@ int is_symbol_exists(kallsym_t *info, char *img, const char *symbol)
 
 int get_symbol_offset_and_size(kallsym_t *info, char *img, char *symbol, int32_t *size)
 {
+    if (!info || !img || !symbol || !size) return -1;
     char decomp[KSYM_SYMBOL_LEN] = { '\0' };
     char type = 0;
     *size = 0;
@@ -1157,10 +1159,12 @@ int get_symbol_offset_and_size(kallsym_t *info, char *img, char *symbol, int32_t
         if (decompress_symbol_name(info, img, &pos, &type, decomp)) return -1;
         if (!strcmp(decomp, symbol)) {
             int32_t offset = get_symbol_index_offset(info, img, i);
+            if (offset < 0) return -1;
             int32_t next_offset = offset;
             for (int32_t j = i + 1; j < info->kallsyms_num_syms; j++) {
                 next_offset = get_symbol_index_offset(info, img, j);
-                if (next_offset != offset) {
+                if (next_offset < 0 || next_offset < offset) return -1;
+                if (next_offset > offset) {
                     *size = next_offset - offset;
                     break;
                 }
@@ -1175,15 +1179,17 @@ int get_symbol_offset_and_size(kallsym_t *info, char *img, char *symbol, int32_t
 
 int get_symbol_offset(kallsym_t *info, char *img, char *symbol)
 {
+    if (!info || !img || !symbol) return -1;
     char decomp[KSYM_SYMBOL_LEN] = { '\0' };
     char type = 0;
     char **tokens = info->kallsyms_token_table;
     int32_t pos = info->kallsyms_names_offset;
     for (int32_t i = 0; i < info->kallsyms_num_syms; i++) {
         memset(decomp, 0, sizeof(decomp));
-        decompress_symbol_name(info, img, &pos, &type, decomp);
+        if (decompress_symbol_name(info, img, &pos, &type, decomp)) return -1;
         if (!strcmp(decomp, symbol)) {
             int32_t offset = get_symbol_index_offset(info, img, i);
+            if (offset < 0) return -1;
             tools_logi("%s: type: %c, offset: 0x%08x\n", symbol, type, offset);
             return offset;
         }
@@ -1194,6 +1200,7 @@ int get_symbol_offset(kallsym_t *info, char *img, char *symbol)
 
 int dump_all_symbols(kallsym_t *info, char *img)
 {
+    if (!info || !img) return -1;
     char symbol[KSYM_SYMBOL_LEN] = { '\0' };
     char type = 0;
     char **tokens = info->kallsyms_token_table;
@@ -1202,6 +1209,7 @@ int dump_all_symbols(kallsym_t *info, char *img)
         memset(symbol, 0, sizeof(symbol));
         if (decompress_symbol_name(info, img, &pos, &type, symbol)) return -1;
         int32_t offset = get_symbol_index_offset(info, img, i);
+        if (offset < 0) return -1;
         fprintf(stdout, "0x%08x %c %s\n", offset, type, symbol);
     }
     return 0;
@@ -1320,14 +1328,16 @@ int extract_ikconfig(char *img, int32_t imglen, char **out, int32_t *outlen)
 int on_each_symbol(kallsym_t *info, char *img, void *userdata,
                    int32_t (*fn)(int32_t index, char type, const char *symbol, int32_t offset, void *userdata))
 {
+    if (!info || !img || !fn) return -1;
     char symbol[KSYM_SYMBOL_LEN] = { '\0' };
     char type = 0;
     char **tokens = info->kallsyms_token_table;
     int32_t pos = info->kallsyms_names_offset;
     for (int32_t i = 0; i < info->kallsyms_num_syms; i++) {
         memset(symbol, 0, sizeof(symbol));
-        decompress_symbol_name(info, img, &pos, &type, symbol);
+        if (decompress_symbol_name(info, img, &pos, &type, symbol)) return -1;
         int32_t offset = get_symbol_index_offset(info, img, i);
+        if (offset < 0) return -1;
         int rc = fn(i, type, symbol, offset, userdata);
         if (rc) return rc;
     }
