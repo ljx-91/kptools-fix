@@ -905,14 +905,6 @@ long notify_modules_event(const char *event, const char *args, void *__user rese
 }
 KP_EXPORT_SYMBOL(notify_modules_event);
 
-struct module *find_module(const char *name)
-{
-    struct module *mod; unsigned long flags;
-    flags = module_lock_acquire();
-    mod = find_module_locked(name);
-    module_lock_release(flags);
-    return mod; /* Legacy borrowed pointer; callers must provide external lifetime. */
-}
 
 int get_module_nums(void)
 {
