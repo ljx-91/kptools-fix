@@ -4,12 +4,15 @@
 #include <linux/compiler.h>
 #include <linux/uaccess.h>
 #include <linux/list.h>
+#include <linux/mm.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/vmalloc.h>
 #include <asm/cacheflush.h>
+#include <asm/pgtable.h>
+#include <asm/tlbflush.h>
 
 #include "../include/kp_lkm.h"
 #include <hook.h>
@@ -63,6 +66,18 @@ static void (*kp_hook_module_memfree)(void *region);
 static void (*kp_hook_flush_icache_all)(void);
 static int (*kp_hook_set_memory_x)(unsigned long addr, int numpages);
 
+static struct mm_struct *kp_hook_init_mm;
+
+#ifndef PTE_PXN
+#define KP_HOOK_PTE_PXN (1UL << 53)
+#define KP_HOOK_PTE_UXN (1UL << 54)
+#define KP_HOOK_PTE_GP  (1UL << 50)
+#else
+#define KP_HOOK_PTE_PXN PTE_PXN
+#define KP_HOOK_PTE_UXN PTE_UXN
+#define KP_HOOK_PTE_GP  PTE_GP
+#endif
+
 enum kp_hook_alloc_backend {
 	KP_HOOK_ALLOC_NONE = 0,
 	KP_HOOK_ALLOC_MODULE,
@@ -73,35 +88,88 @@ static enum kp_hook_alloc_backend kp_hook_alloc_backend;
 
 /* Raw resolved allocator calls are no_sanitize/noinline to avoid an invalid
  * CFI type-hash read when optional kernel symbols are absent. */
+/* Normalize executable hook pages before publishing any trampoline.
+ * Clearing GP is required because KPM-generated relocated code has no BTI
+ * landing pads; PTE updates are serialized by the kernel page-table lock. */
+__attribute__((no_sanitize("cfi")))
+static int kp_hook_make_exec(void *region, unsigned long size)
+{
+	unsigned long base = (unsigned long)region;
+	unsigned long end, addr;
+
+	if (!kp_hook_init_mm || !region || !size ||
+	    (base & (PAGE_SIZE - 1)) || size > ULONG_MAX - base)
+		return -EINVAL;
+	end = base + size;
+	if (kp_hook_set_memory_x)
+		kp_hook_set_memory_x(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
+
+	for (addr = base; addr < end; addr += PAGE_SIZE) {
+		pgd_t *pgd = pgd_offset(kp_hook_init_mm, addr);
+		p4d_t *p4d;
+		pud_t *pud;
+		pmd_t *pmd;
+		pte_t *pte;
+		spinlock_t *ptl;
+		pteval_t v;
+
+		if (pgd_none(*pgd) || pgd_bad(*pgd))
+			return -EFAULT;
+		p4d = p4d_offset(pgd, addr);
+		if (p4d_none(*p4d) || p4d_bad(*p4d))
+			return -EFAULT;
+		pud = pud_offset(p4d, addr);
+		if (pud_none(*pud) || pud_bad(*pud) || pud_sect(*pud))
+			return -EFAULT;
+		pmd = pmd_offset(pud, addr);
+		if (pmd_none(*pmd) || pmd_bad(*pmd) || pmd_sect(*pmd))
+			return -EFAULT;
+		ptl = pte_lockptr(kp_hook_init_mm, pmd);
+		spin_lock(ptl);
+		pte = pte_offset_kernel(pmd, addr);
+		if (!pte || !pte_present(*pte)) {
+			spin_unlock(ptl);
+			return -EFAULT;
+		}
+		v = pte_val(*pte) & ~(KP_HOOK_PTE_PXN | KP_HOOK_PTE_UXN | KP_HOOK_PTE_GP);
+		set_pte_at(kp_hook_init_mm, addr, pte, __pte(v));
+		if (pte_val(*pte) & (KP_HOOK_PTE_PXN | KP_HOOK_PTE_UXN | KP_HOOK_PTE_GP)) {
+			spin_unlock(ptl);
+			return -EACCES;
+		}
+		spin_unlock(ptl);
+		flush_tlb_kernel_range(addr, addr + PAGE_SIZE);
+	}
+	return 0;
+}
+
+static void kp_hook_exec_free(void *region);
+
 __attribute__((no_sanitize("cfi"), __noinline__))
 static void *kp_hook_exec_alloc(unsigned long size)
 {
 	void *p = NULL;
-	unsigned long pages;
+	unsigned long alloc_size;
 
 	if (!size || size > ULONG_MAX - (PAGE_SIZE - 1))
 		return NULL;
-	pages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	alloc_size = PAGE_ALIGN(size);
 	switch (kp_hook_alloc_backend) {
 	case KP_HOOK_ALLOC_MODULE:
-		p = kp_hook_module_alloc(size);
-		if (p && kp_hook_set_memory_x((unsigned long)p, pages)) {
-			kp_hook_module_memfree(p);
-			p = NULL;
-		}
+		p = kp_hook_module_alloc(alloc_size);
 		break;
 	case KP_HOOK_ALLOC_EXECMEM:
-		p = kp_hook_execmem_alloc(0 /* EXECMEM_MODULE_TEXT */, size);
+		p = kp_hook_execmem_alloc(0 /* EXECMEM_MODULE_TEXT */, alloc_size);
 		break;
 	case KP_HOOK_ALLOC_VMALLOC:
-		p = vmalloc(size);
-		if (p && kp_hook_set_memory_x((unsigned long)p, pages)) {
-			vfree(p);
-			p = NULL;
-		}
+		p = vmalloc(alloc_size);
 		break;
 	default:
 		break;
+	}
+	if (p && kp_hook_make_exec(p, alloc_size)) {
+		kp_hook_exec_free(p);
+		p = NULL;
 	}
 	return p;
 }
@@ -141,13 +209,18 @@ int kp_hook_runtime_init(void)
 	kp_hook_execmem_free = (void *)kp_resolve_symbol("execmem_free");
 	kp_hook_flush_icache_all = (void *)kp_resolve_symbol("flush_icache_all");
 	kp_hook_set_memory_x = (int (*)(unsigned long, int))kp_resolve_symbol("set_memory_x");
+	kp_hook_init_mm = (struct mm_struct *)kp_resolve_symbol("init_mm");
+	if (!kp_hook_init_mm) {
+		logke("init_mm unavailable; cannot verify executable Hook memory permissions\n");
+		return -ENOSYS;
+	}
 	/* Select a matched allocator/free pair. Never pass memory from one
 	 * executable allocator to another backend's free routine. */
 	if (kp_hook_module_alloc && kp_hook_module_memfree && kp_hook_set_memory_x)
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_MODULE;
 	else if (kp_hook_execmem_alloc && kp_hook_execmem_free)
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_EXECMEM;
-	else if (kp_hook_set_memory_x)
+	else
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_VMALLOC;
 	else {
 		logke("no matched executable-memory allocator/free backend\\n");
