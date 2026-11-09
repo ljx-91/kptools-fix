@@ -676,6 +676,7 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
 
 static int32_t find_approx_addresses_or_offset(kallsym_t *info, char *img, int32_t imglen)
 {
+    if (!info || !img || imglen <= 0) return -1;
     int32_t ret = 0;
     if ((info->arch == ARM64 || info->arch == X86_64) && info->is_64) {
         /*
