@@ -30,6 +30,19 @@ def need(pattern, src, message):
 
 def main():
     src = (ROOT / "tools/patch.c").read_text(encoding="utf-8")
+    kallsym_src = (ROOT / "tools/kallsym.c").read_text(encoding="utf-8")
+    offsets = body(kallsym_src, "static int find_approx_offsets(")
+    need(r"elem_size\s*!=\s*4.*?elem_size\s*!=\s*8", offsets,
+         "relative kallsyms scan must accept only supported entry widths")
+    need(r"cand\s*<\s*0\s*\|\|\s*cand\s*>\s*imglen\s*-\s*elem_size", offsets,
+         "relative kallsyms backward scan must validate its starting range")
+    need(r"while\s*\(cand\s*>=\s*0", offsets,
+         "relative kallsyms backward scans must stop before image underflow")
+    need(r"cand\s*<=\s*imglen\s*-\s*elem_size", offsets,
+         "relative kallsyms forward scan must read only complete entries")
+    if "for (;; cand -= elem_size)" in offsets:
+        raise AssertionError("unbounded kallsyms_offsets backward scan reintroduced")
+
     preset = body(src, "preset_t *get_preset(")
     need(r"min_preset_size", preset, "preset search must require a complete minimum header")
     need(r"tail\s*>=\s*min_preset_size", preset, "preset candidate must fit inside input")
