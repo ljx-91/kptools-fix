@@ -1230,15 +1230,21 @@ cache visibility.
 - Extended `scripts/verify_lkm_kpm_contract.py` to require the kernel-wide
   flush call, the missing-symbol fail-closed guard, and use of the shared helper
   for trampoline writes.
-- The updated verifier and source were re-fetched from the selected branch
-  after their commits. This is source inspection only; the Python verifier has
-  not yet been executed by a confirmed Actions run, and no LKM target-KDIR
-  compile or device runtime test is claimed.
+- The first run at `85357e1` failed because the verifier's local-only
+  instruction-cache pattern also matched the explanatory comment. The source
+  comment was clarified in `3d6c290`; no production behavior changed in that
+  follow-up.
+- The corrected verifier ran successfully in GitHub Actions run
+  [42634528446](https://github.com/ljx-91/kptools-fix/actions/runs/42634528446):
+  both the LKM KPM source-contract audit and host kptools build/package jobs
+  passed. This is a source-contract/host build result, not an LKM target-KDIR
+  compile or device runtime test.
 
 Changes committed on `y73s-cred-layout-guards-20261108`:
 - `5e68fd7`: use kernel-wide I-cache flush for KPM publication.
 - `6c760ba`: add I-cache publication contract assertions.
 - `88e01c4`, `64db78c`: correct the new verifier matcher.
+- `3d6c290`: remove an explanatory-comment false positive from the matcher.
 
 The repository remains not certified for device use or untrusted KPM loading
 until target-kernel compilation and runtime validation are completed.
