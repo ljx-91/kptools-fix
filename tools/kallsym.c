@@ -361,14 +361,6 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
         }
     }
 
-    if (info->kernel_base) {
-        tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 ", try: %" PRIx64 "\n", kernel_va, info->kernel_base);
-        kernel_va = info->kernel_base;
-    } else {
-        info->kernel_base = kernel_va;
-        tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 "\n", kernel_va);
-    }
-
     if (rela_num < ARM64_RELO_MIN_NUM) {
         tools_logw("can't find arm64 relocation table\n");
         return 0;
@@ -402,6 +394,14 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
     if (rela_num < ARM64_RELO_MIN_NUM) {
         tools_logw("ARM64 relocation table is shorter than the required minimum\n");
         return 0;
+    }
+
+    if (info->kernel_base) {
+        tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 ", try: %" PRIx64 "\n", kernel_va, info->kernel_base);
+        kernel_va = info->kernel_base;
+    } else {
+        info->kernel_base = kernel_va;
+        tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 "\n", kernel_va);
     }
 
     tools_logi("arm64 relocation table range: [0x%08x, 0x%08x), count: 0x%08x\n", cand_start, cand_end, rela_num);
