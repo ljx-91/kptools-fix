@@ -244,7 +244,8 @@ static int find_token_table(kallsym_t *info, char *img, int32_t imglen, void *op
         return -1;
     }
 
-    offset = (int32_t)(pos + 2 - img);
+    /* pos still points at the final scanned NUL; the table starts next. */
+    offset = (int32_t)(pos + 1 - img);
     if (offset < 0 || offset > imglen - 4) {
         tools_loge("kallsyms token_table offset is outside the image\n");
         return -1;
