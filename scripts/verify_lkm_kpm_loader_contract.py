@@ -49,8 +49,8 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
                       if line == "CFLAGS_hook/hook_engine.o += -fno-sanitize=shadow-call-stack"]
     if len(bti_flag_lines) != 1 or len(scs_flag_lines) != 1:
         raise AssertionError("BTI/SCS compiler flags must appear only once as guarded build directives")
-    need("CFLAGS_hook/hook_engine.o += -fno-lto", kbuild,
-         "hook engine must remain outside LTO due its distinct branch-protection ABI")
+    if "CFLAGS_hook/hook_engine.o += -fno-lto" not in kbuild:
+        raise AssertionError("hook engine must remain outside LTO due its distinct branch-protection ABI")
 
     header = body(module, "static int elf_header_check(")
     for token in ("ELFCLASS64", "ELFDATA2LSB", "EI_VERSION",
