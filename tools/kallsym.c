@@ -807,7 +807,7 @@ static int decompress_symbol_name(kallsym_t *info, char *img, int32_t *pos_to_ne
             return -1;
 
         size_t token_remaining = info->image_size - (size_t)(token_addr - image_base);
-        char *token_end = (char *)memchr(token, '\\0', token_remaining);
+        char *token_end = (char *)memchr(token, '\0', token_remaining);
         if (!token_end) return -1;
         size_t token_len = (size_t)(token_end - token);
         if (!token_len) return -1;
@@ -823,7 +823,7 @@ static int decompress_symbol_name(kallsym_t *info, char *img, int32_t *pos_to_ne
             size_t append_len = token_len - skip;
             if (append_len > KSYM_SYMBOL_LEN - 1 - used) return -1;
             memcpy(out_symbol + used, token + skip, append_len);
-            out_symbol[used + append_len] = '\\0';
+            out_symbol[used + append_len] = '\0';
         }
     }
 
@@ -1285,7 +1285,7 @@ int analyze_kallsym_info(kallsym_t *info, char *img, int32_t imglen, enum arch_t
 
     char *copied_img = (char *)malloc((size_t)imglen);
     if (!copied_img) {
-        tools_loge("failed to allocate kallsyms analysis image\\n");
+        tools_loge("failed to allocate kallsyms analysis image\n");
         return -1;
     }
     memcpy(copied_img, img, (size_t)imglen);
