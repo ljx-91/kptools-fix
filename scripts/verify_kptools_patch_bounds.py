@@ -90,6 +90,8 @@ def main():
          "ARM64 RELA trailing-zero scan must stay inside the candidate range")
     need(r"if\s*\(ro\s*\|\|\s*ri\s*\|\|\s*ra\)", rela,
          "zero-addend RELA entries must not be mistaken for empty padding")
+    need(r"memcpy\(img\s*\+\s*offset,\s*&relocated_value,\s*sizeof\(relocated_value\)\)", rela,
+         "RELA target writes must avoid unaligned typed pointer stores")
     need(r"offset64\s*>=\s*\(uint64_t\)max_offset", rela,
          "ARM64 relocation target must be range-checked before narrowing")
     if rela.find("info->kernel_base = kernel_va") < rela.find("ARM64 relocation table is shorter"):
@@ -107,7 +109,7 @@ def main():
          "symbol decompressor must validate the input cursor")
     need(r"len\s*>\s*limit\s*-\s*pos", decoder,
          "symbol decompressor must bound compressed name bytes")
-    need(r"memchr\(token,\s*'\\0',\s*token_remaining\)", decoder,
+    need(r"memchr\(token,\s*'\0',\s*token_remaining\)", decoder,
          "symbol decompressor must validate token string termination")
     need(r"append_len\s*>\s*KSYM_SYMBOL_LEN\s*-\s*1\s*-\s*used", decoder,
          "symbol decompressor must bound expanded output")
