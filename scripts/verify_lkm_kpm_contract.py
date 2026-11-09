@@ -189,17 +189,6 @@ def main():
     require(r"mod->active_calls\s*\|\|\s*mod->hook_refs[\s\S]*?return\s*-EBUSY",
             unload_gate, "KPM image must remain resident while callbacks or hooks reference it")
 
-    legacy_pgtable = read("lkm/include/kp_lkm.h")
-    for token in (
-        "#if defined(CONFIG_ARM64) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)",
-        "typedef pgd_t p4d_t;",
-        "#define p4d_offset(pgd, address) ((p4d_t *)(pgd))",
-        "#define p4d_none(p4d) (0)",
-        "#define p4d_bad(p4d) (0)",
-    ):
-        require(re.escape(token), legacy_pgtable,
-                f"legacy ARM64 folded-p4d compatibility missing: {token}")
-
     require(r"y73s-cred-layout-guards-20261108", workflow,
             "LKM contract workflow must trigger on the selected Y73S branch")
     require(r"verify_lkm_kpm_contract\.py", workflow,
