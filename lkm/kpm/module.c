@@ -65,19 +65,24 @@ static int (*kp_set_memory_nx)(unsigned long addr, int numpages);
 /* init_mm (resolved at runtime, not exported on GKI). */
 static struct mm_struct *kp_kpm_init_mm;
 
+enum kp_exec_backend {
+	KP_EXEC_BACKEND_NONE,
+	KP_EXEC_BACKEND_MODULE,
+	KP_EXEC_BACKEND_EXECMEM,
+	KP_EXEC_BACKEND_VMALLOC,
+};
+static enum kp_exec_backend kp_exec_backend;
+
 /* Clear the Guarded-Page bit (BTI enable), Privileged-eXecute-Never and
- * User-eXecute-Never for a range of virtual addresses.  KPM code is bare-metal
- * compiled without bti c landing pads, but GKI kernels set PTE_GP on module_alloc
- * pages, and module_alloc may return PXN pages (NX) that set_memory_x() fails to
- * flip on some builds.  Clearing PXN/UXN makes the image executable and clearing
- * GP disables BTI so every indirect call (BLR) from KPM code works. */
-static void kp_clear_bti_gp(unsigned long base, unsigned long size)
+ * User-eXecute-Never. Fail closed if any page cannot be inspected or made
+ * executable: the KPM must never enter init on an NX/BTI-incompatible image. */
+static int kp_clear_bti_gp(unsigned long base, unsigned long size)
 {
 	unsigned long addr, end;
 
-	if (!kp_kpm_init_mm)
-		return;
-
+	if (!kp_kpm_init_mm || !base || !size ||
+	    size > ULONG_MAX - base)
+		return -ENOSYS;
 	end = base + size;
 	for (addr = base; addr < end; addr += PAGE_SIZE) {
 		pgd_t *pgd = pgd_offset(kp_kpm_init_mm, addr);
@@ -85,33 +90,33 @@ static void kp_clear_bti_gp(unsigned long base, unsigned long size)
 		pud_t *pud;
 		pmd_t *pmd;
 		pte_t *pte;
+		pteval_t v;
 
 		if (pgd_none(*pgd) || pgd_bad(*pgd))
-			continue;
+			return -EFAULT;
 		p4d = p4d_offset(pgd, addr);
 		if (p4d_none(*p4d) || p4d_bad(*p4d))
-			continue;
+			return -EFAULT;
 		pud = pud_offset(p4d, addr);
-		if (pud_none(*pud) || pud_bad(*pud))
-			continue;
-		if (pud_sect(*pud))
-			continue; /* huge page, skip — KPM pages are 4K */
+		if (pud_none(*pud) || pud_bad(*pud) || pud_sect(*pud))
+			return -EFAULT;
 		pmd = pmd_offset(pud, addr);
-		if (pmd_none(*pmd) || pmd_bad(*pmd))
-			continue;
-		if (pmd_sect(*pmd))
-			continue;
+		if (pmd_none(*pmd) || pmd_bad(*pmd) || pmd_sect(*pmd))
+			return -EFAULT;
 		pte = pte_offset_kernel(pmd, addr);
 		if (!pte || !pte_present(*pte))
-			continue;
+			return -EFAULT;
 
-		pteval_t v = pte_val(*pte);
+		v = pte_val(*pte);
 		if (v & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) {
 			v &= ~(KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP);
 			set_pte(pte, __pte(v));
 			flush_tlb_kernel_range(addr, addr + PAGE_SIZE);
 		}
+		if (pte_val(*pte) & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP))
+			return -EACCES;
 	}
+	return 0;
 }
 
 /* Runtime-resolved kernel functions and raw KPM callbacks cannot participate
@@ -122,22 +127,39 @@ static void kp_clear_bti_gp(unsigned long base, unsigned long size)
 __attribute__((no_sanitize("cfi"), __noinline__))
 static void *kp_malloc_exec(unsigned long size)
 {
-	if (kp_module_alloc)
+	if (!size || size > ULONG_MAX - (PAGE_SIZE - 1))
+		return NULL;
+	switch (kp_exec_backend) {
+	case KP_EXEC_BACKEND_MODULE:
 		return kp_module_alloc(size);
-	if (kp_execmem_alloc)
+	case KP_EXEC_BACKEND_EXECMEM:
 		return kp_execmem_alloc(0 /* EXECMEM_MODULE_TEXT */, size);
-	return vmalloc(size);
+	case KP_EXEC_BACKEND_VMALLOC:
+		return vmalloc(size);
+	default:
+		return NULL;
+	}
 }
 
 __attribute__((no_sanitize("cfi"), __noinline__))
 static void kp_free_exec(void *region)
 {
-	if (kp_module_memfree)
+	if (!region)
+		return;
+	switch (kp_exec_backend) {
+	case KP_EXEC_BACKEND_MODULE:
 		kp_module_memfree(region);
-	else if (kp_execmem_free)
+		break;
+	case KP_EXEC_BACKEND_EXECMEM:
 		kp_execmem_free(region);
-	else
+		break;
+	case KP_EXEC_BACKEND_VMALLOC:
 		vfree(region);
+		break;
+	default:
+		WARN_ON_ONCE(1);
+		break;
+	}
 }
 
 __attribute__((no_sanitize("cfi")))
