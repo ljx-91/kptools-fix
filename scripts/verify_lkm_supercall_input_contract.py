@@ -28,6 +28,8 @@ def body(source, signature):
 kpm = read("lkm/kpm/kpm.c")
 dispatch = read("lkm/supercall/dispatch.c")
 sucompat = read("lkm/supercall/sucompat_hook.c")
+lkm_module = read("lkm/kpm/module.c")
+kpimg_module = read("kernel/patch/module/module.c")
 copy = body(kpm, "static long kp_copy_user_string(")
 
 checks = {
@@ -65,6 +67,11 @@ checks = {
     "KPM list and info validate output buffers":
         "!names || len <= 0" in body(kpm, "long kp_kpm_list_sc(") and
         "!out_info || out_len <= 0" in body(kpm, "long kp_kpm_info_sc("),
+    "LKM and KPIMG control handlers validate output length and pointer":
+        "outlen < 0 || (outlen && !out_msg)" in
+        body(lkm_module, "long kp_module_control0(") and
+        "outlen < 0 || (outlen && !out_msg)" in
+        body(kpimg_module, "long module_control0("),
     "execve filename uses bounded copy before string comparisons":
         "kp_copy_user_string(filename, sizeof(filename), ufilename)" in
         body(sucompat, "static long kp_execve_handler(") and
