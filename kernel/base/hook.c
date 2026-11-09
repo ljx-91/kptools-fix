@@ -393,12 +393,6 @@ static void hook_chain_reap_slots_locked(void *chain, int fp)
     }
 }
 
-static void hook_chain_reap_slots(void *chain, int fp)
-{
-    unsigned long flags = hook_engine_lock();
-    hook_chain_reap_slots_locked(chain, fp);
-    hook_engine_unlock(flags);
-}
 
 static inline void hook_chain_reader_enter(void *chain, int fp)
 {
@@ -542,6 +536,7 @@ _transit4(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3)
         hook_chain4_callback func = hook_chain->afters[i];
         hook_invoke_callback(func, &fargs, hook_chain->udata[i], after_allowed[i]);
     }
+    hook_chain_unpin_callbacks(hook_chain, 0, before_refs, after_refs);
     hook_chain_reader_exit(hook_chain, 0);
     return fargs.ret;
 }
@@ -592,6 +587,7 @@ _transit8(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t a
         hook_chain8_callback func = hook_chain->afters[i];
         hook_invoke_callback(func, &fargs, hook_chain->udata[i], after_allowed[i]);
     }
+    hook_chain_unpin_callbacks(hook_chain, 0, before_refs, after_refs);
     hook_chain_reader_exit(hook_chain, 0);
     return fargs.ret;
 }
@@ -647,6 +643,7 @@ _transit12(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t 
         hook_chain12_callback func = hook_chain->afters[i];
         hook_invoke_callback(func, &fargs, hook_chain->udata[i], after_allowed[i]);
     }
+    hook_chain_unpin_callbacks(hook_chain, 0, before_refs, after_refs);
     hook_chain_reader_exit(hook_chain, 0);
     return fargs.ret;
 }
