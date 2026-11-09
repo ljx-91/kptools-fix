@@ -1246,7 +1246,7 @@ static int correct_addresses_or_offsets(kallsym_t *info, char *img, int32_t imgl
         info->is_kallsysms_all_yes = 1;
     } else {
         info->is_kallsysms_all_yes = 0;
-        tools_logw("no linux_banner match; trying strict vector validation\\n");
+        tools_logw("no linux_banner match; trying strict vector validation\n");
         rc = correct_addresses_or_offsets_by_vectors(info, img, imglen);
     }
     if (rc) return rc;
@@ -1258,13 +1258,13 @@ static int correct_addresses_or_offsets(kallsym_t *info, char *img, int32_t imgl
     int32_t end = info->_approx_addresses_or_offsets_end;
     if ((elem_size != 4 && elem_size != 8) || start < 0 ||
         end > imglen || end < start || info->kallsyms_num_syms <= 0) {
-        tools_loge("invalid resolved kallsyms table range\\n");
+        tools_loge("invalid resolved kallsyms table range\n");
         return -1;
     }
 
     int32_t coverage = (end - start) / elem_size;
     if (coverage < info->kallsyms_num_syms) {
-        tools_logw("resolved symbol table only covers 0x%08x entries, but names table has 0x%08x entries\\n",
+        tools_logw("resolved symbol table only covers 0x%08x entries, but names table has 0x%08x entries\n",
                    coverage, info->kallsyms_num_syms);
         return -1;
     }
