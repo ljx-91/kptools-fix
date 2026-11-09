@@ -5,6 +5,8 @@
 #include <stdint.h>
 
 int hotpatch(void *addrs[], uint32_t values[], int cnt);
+int hotpatch_exchange64(void *addr, uint64_t desired, uint64_t *original);
+int hotpatch_cmpxchg64(void *addr, uint64_t expected, uint64_t desired);
 
 /* Permit the pre-rest_init, single-CPU boot path to use stop_machine's
  * documented pre-initialization fallback while local IRQs are masked. */
