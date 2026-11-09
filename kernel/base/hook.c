@@ -943,13 +943,14 @@ static void hook_chain_remove_locked(hook_chain_t *chain, void *before, void *af
 int hook_chain_remove(hook_chain_t *chain, void *before, void *after)
 {
     unsigned long flags;
-    if (!chain) return;
+    int busy;
+    if (!chain) return -EINVAL;
     flags = hook_engine_lock();
     hook_chain_remove_locked(chain, before, after);
+    busy = __atomic_load_n(&chain->active_readers, __ATOMIC_SEQ_CST) != 0;
+    hook_chain_reap_slots_locked(chain, 0);
     hook_engine_unlock(flags);
-    hook_chain_reap_slots(chain, 0);
-    logkv("Wrap chain remove: %llx, %llx, %llx\n",
-          chain->hook.func_addr, (uint64_t)before, (uint64_t)after);
+    return busy ? -EBUSY : 0;
 }
 KP_EXPORT_SYMBOL(hook_chain_remove);
 
