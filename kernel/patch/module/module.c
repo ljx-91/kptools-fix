@@ -780,6 +780,11 @@ long unload_module(const char *name, void *__user reserved)
     if (mod->state != KP_MODULE_UNLOADING && mod->state != KP_MODULE_EXITING) {
         module_lock_release(flags); return -ENOENT;
     }
+    /* EXITING with exit_called=false is owned by the thread currently
+     * executing the exit callback outside module_lock. */
+    if (mod->state == KP_MODULE_EXITING && !mod->exit_called) {
+        module_lock_release(flags); return -EBUSY;
+    }
     if (mod->active_calls) { module_lock_release(flags); return -EBUSY; }
     if (!mod->exit_called) {
         mod->state = KP_MODULE_EXITING;
