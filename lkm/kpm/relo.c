@@ -12,6 +12,8 @@
 #include <linux/errno.h>
 #include <linux/printk.h>
 #include <linux/types.h>
+#include <linux/string.h>
+#include <linux/vmalloc.h>
 
 enum kp_aarch64_reloc_op {
 	RELOC_OP_NONE,
@@ -50,6 +52,14 @@ static int reloc_data(enum kp_aarch64_reloc_op op, void *place, u64 val, int len
 		pr_err("Invalid length (%d) for data relocation\n", len);
 		return -EINVAL;
 	}
+	/* Extract the upper value bits (including the sign bit) and
+	 * shift them to bit 0. */
+	sval = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
+
+	/* Overflow if the value is not representable in len bits. */
+	if ((u64)(sval + 1) > 2)
+		return -ERANGE;
+
 	switch (len) {
 	case 16:
 		*(s16 *)place = sval;
@@ -64,13 +74,6 @@ static int reloc_data(enum kp_aarch64_reloc_op op, void *place, u64 val, int len
 		return -EINVAL;
 	}
 
-	/* Extract the upper value bits (including the sign bit) and
-	 * shift them to bit 0. */
-	sval = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
-
-	/* Overflow if the value is not representable in len bits. */
-	if ((u64)(sval + 1) > 2)
-		return -ERANGE;
 
 	return 0;
 }
@@ -178,6 +181,8 @@ int kp_apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int 
 	u64 val;
 	int ovf;
 	bool overflow_check;
+	void *backup;
+	int ret;
 
 	(void)strtab;
 	(void)me;
@@ -216,6 +221,12 @@ int kp_apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int 
 		if (((unsigned long)target->sh_addr + rel[i].r_offset) & (width == 2 ? 1 : width == 4 ? 3 : width == 8 ? 7 : 3))
 			return -ENOEXEC;
 	}
+
+	backup = vmalloc(target->sh_size ? target->sh_size : 1);
+	if (!backup)
+		return -ENOMEM;
+	if (target->sh_size)
+		memcpy(backup, (void *)target->sh_addr, target->sh_size);
 
 	for (i = 0; i < nrel; i++) {
 		unsigned int type = ELF64_R_TYPE(rel[i].r_info);
@@ -282,14 +293,24 @@ int kp_apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int 
 		case R_AARCH64_CALL26: ovf = reloc_insn_imm(RELOC_OP_PREL, loc, val, 2, 26, KP_INSN_IMM_26); break;
 		default:
 			pr_err("unsupported RELA relocation: %u\\n", type);
-			return -ENOEXEC;
+			ret = -ENOEXEC;
+			goto rollback;
 		}
 		if (overflow_check && ovf == -ERANGE) {
 			pr_err("overflow in relocation type %u val %llx\\n", type, val);
-			return -ENOEXEC;
+			ret = -ENOEXEC;
+			goto rollback;
 		}
-		if (ovf < 0)
-			return ovf;
+		if (ovf < 0) {
+			ret = ovf;
+			goto rollback;
+		}
 	}
+	vfree(backup);
 	return 0;
-}
+
+rollback:
+	if (target->sh_size)
+		memcpy((void *)target->sh_addr, backup, target->sh_size);
+	vfree(backup);
+	return ret;}
