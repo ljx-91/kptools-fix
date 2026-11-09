@@ -121,62 +121,111 @@ static int dump_kernel_config(kallsym_t *info, char *img, int32_t imglen)
 
 static int find_token_table(kallsym_t *info, char *img, int32_t imglen, void *opt)
 {
-    char nums_syms[20] = { '\0' };
-    for (int32_t i = 0; i < 10; i++)
-        nums_syms[i * 2] = '0' + i;
-
-    // We just check first 10 letters, not all letters are guaranteed to appear,
-    // In fact, the previous numbers may not always appear too.
-    char letters_syms[20] = { '\0' };
-    for (int32_t i = 0; i < 10; i++)
-        letters_syms[i * 2] = 'a' + i;
-
-    char *pos = img;
+    char nums_syms[20] = { '\\0' };
+    char letters_syms[20] = { '\\0' };
+    char *imgend;
+    char *pos;
     char *num_start = NULL;
-    char *imgend = img + imglen;
-    for (; pos < imgend; pos = num_start + 1) {
+    char *token_pos;
+    int32_t offset;
+
+    if (!info || !img || imglen <= (int32_t)(sizeof(nums_syms) + 2)) {
+        tools_loge("invalid image for kallsyms token table\\n");
+        return -1;
+    }
+    imgend = img + imglen;
+
+    for (int32_t i = 0; i < 10; i++) {
+        nums_syms[i * 2] = '0' + i;
+        letters_syms[i * 2] = 'a' + i;
+    }
+
+    /*
+     * Locate the numeric tokens, then verify the expected alphabetic
+     * sequence without ever probing beyond the supplied image.
+     */
+    pos = img;
+    while (pos < imgend) {
+        char *num_end;
+        char *letter;
+        int32_t zero_count = 0;
+
         num_start = (char *)memmem(pos, imgend - pos, nums_syms, sizeof(nums_syms));
         if (!num_start) {
-            tools_loge("find token_table error\n");
+            tools_loge("find kallsyms token_table error\\n");
             return -1;
         }
-        char *num_end = num_start + sizeof(nums_syms);
-        if (!*num_end || !*(num_end + 1)) continue;
 
-        char *letter = num_end;
-        for (int32_t i = 0; letter < imgend && i < 'a' - '9' - 1; letter++) {
-            if (!*letter) i++;
+        num_end = num_start + sizeof(nums_syms);
+        if (imgend - num_end < 2 || !*num_end || !*(num_end + 1)) {
+            pos = num_start + 1;
+            continue;
         }
-        if (letter != (char *)memmem(letter, sizeof(letters_syms), letters_syms, sizeof(letters_syms))) continue;
+
+        letter = num_end;
+        while (letter < imgend && zero_count < 'a' - '9' - 1) {
+            if (!*letter) zero_count++;
+            letter++;
+        }
+        if (zero_count != 'a' - '9' - 1 ||
+            imgend - letter < (ptrdiff_t)sizeof(letters_syms) ||
+            memcmp(letter, letters_syms, sizeof(letters_syms))) {
+            pos = num_start + 1;
+            continue;
+        }
         break;
     }
 
-    // backward to start
-    pos = num_start;
-    for (int32_t i = 0; pos > img && i < '0' + 1; pos--) {
-        if (!*pos) i++;
+    if (!num_start || num_start >= imgend) {
+        tools_loge("find kallsyms token_table error\\n");
+        return -1;
     }
-    int32_t offset = pos + 2 - img;
 
-    // align
+    /*
+     * Walk back over the preceding token terminators. The historical
+     * layout includes a two-byte gap before the aligned token table.
+     */
+    pos = num_start;
+    int32_t preceding_terminators = 0;
+    while (pos > img && preceding_terminators < '0' + 1) {
+        --pos;
+        if (!*pos) preceding_terminators++;
+    }
+    if (preceding_terminators != '0' + 1) {
+        tools_loge("kallsyms token_table start is not bounded by the image\\n");
+        return -1;
+    }
+
+    offset = (int32_t)(pos + 2 - img);
+    if (offset < 0 || offset > imglen - 4) {
+        tools_loge("kallsyms token_table offset is outside the image\\n");
+        return -1;
+    }
     offset = align_ceil(offset, 4);
+    if (offset < 0 || offset >= imglen) {
+        tools_loge("aligned kallsyms token_table offset is outside the image\\n");
+        return -1;
+    }
 
     info->kallsyms_token_table_offset = offset;
+    tools_logi("kallsyms_token_table offset: 0x%08x\\n", offset);
 
-    tools_logi("kallsyms_token_table offset: 0x%08x\n", offset);
-
-    // rebuild token_table
-    pos = img + info->kallsyms_token_table_offset;
+    token_pos = img + offset;
     for (int32_t i = 0; i < KSYM_TOKEN_NUMS; i++) {
-        info->kallsyms_token_table[i] = pos;
-        while (*(pos++)) {
-        };
+        char *token_end;
+        if (token_pos >= imgend) {
+            tools_loge("kallsyms token_table is truncated at token %d\\n", i);
+            return -1;
+        }
+        token_end = (char *)memchr(token_pos, '\\0', imgend - token_pos);
+        if (!token_end) {
+            tools_loge("kallsyms token %d has no in-image terminator\\n", i);
+            return -1;
+        }
+        info->kallsyms_token_table[i] = token_pos;
+        token_pos = token_end + 1;
     }
-    // tools_logi("token table: ");
-    // for (int32_t i = 0; i < KSYM_TOKEN_NUMS; i++) {
-    //   printf("%s ", info->kallsyms_token_table[i]);
-    // }
-    // printf("\n");
+
     return 0;
 }
 
@@ -184,34 +233,56 @@ static int find_token_index(kallsym_t *info, char *img, int32_t imglen, void *op
 {
     uint16_t le_index[KSYM_TOKEN_NUMS] = { 0 };
     uint16_t be_index[KSYM_TOKEN_NUMS] = { 0 };
+    int32_t start;
+    int32_t offset;
 
-    int32_t start = info->kallsyms_token_table_offset;
-    int32_t offset = start;
-
-    // build kallsyms_token_index according to kallsyms_token_table
-    for (int32_t i = 0; i < KSYM_TOKEN_NUMS; i++) {
-        uint16_t token_index = offset - start;
-        le_index[i] = u16le(token_index);
-        be_index[i] = u16be(token_index);
-        while (img[offset++]) {
-        };
-    }
-    // find kallsyms_token_index
-    char *lepos = (char *)memmem(img, imglen, le_index, sizeof(le_index));
-    char *bepos = (char *)memmem(img, imglen, be_index, sizeof(be_index));
-
-    if (!lepos && !bepos) {
-        tools_loge("kallsyms_token_index error\n");
+    if (!info || !img || imglen <= 0) {
+        tools_loge("invalid image for kallsyms token_index\\n");
         return -1;
     }
-    tools_logi("endian: %s\n", lepos ? "little" : "big");
+    start = info->kallsyms_token_table_offset;
+    if (start < 0 || start >= imglen) {
+        tools_loge("kallsyms token_table start is outside the image\\n");
+        return -1;
+    }
+    offset = start;
 
+    /* Build both endian forms, validating every NUL-terminated token. */
+    for (int32_t i = 0; i < KSYM_TOKEN_NUMS; i++) {
+        char *token_end;
+        uint32_t token_offset;
+        if (offset < start || offset >= imglen) {
+            tools_loge("kallsyms token_table is truncated at token %d\\n", i);
+            return -1;
+        }
+        token_offset = (uint32_t)(offset - start);
+        if (token_offset > UINT16_MAX) {
+            tools_loge("kallsyms token_table exceeds 16-bit token_index range\\n");
+            return -1;
+        }
+        le_index[i] = u16le((uint16_t)token_offset);
+        be_index[i] = u16be((uint16_t)token_offset);
+        token_end = (char *)memchr(img + offset, '\\0', imglen - offset);
+        if (!token_end) {
+            tools_loge("kallsyms token %d has no in-image terminator\\n", i);
+            return -1;
+        }
+        offset = (int32_t)(token_end - img) + 1;
+    }
+
+    char *lepos = (char *)memmem(img, imglen, le_index, sizeof(le_index));
+    char *bepos = (char *)memmem(img, imglen, be_index, sizeof(be_index));
+    if (!lepos && !bepos) {
+        tools_loge("kallsyms_token_index error\\n");
+        return -1;
+    }
+
+    tools_logi("endian: %s\\n", lepos ? "little" : "big");
     char *pos = lepos ? lepos : bepos;
     info->is_be = lepos ? 0 : 1;
-
-    info->kallsyms_token_index_offset = pos - img;
-
-    tools_logi("kallsyms_token_index offset: 0x%08x\n", info->kallsyms_token_index_offset);
+    info->kallsyms_token_index_offset = (int32_t)(pos - img);
+    tools_logi("kallsyms_token_index offset: 0x%08x\\n",
+               info->kallsyms_token_index_offset);
     return 0;
 }
 
