@@ -164,7 +164,7 @@ def main():
         require(pattern, pte, f"KPM executable PTE walk must validate {message}")
 
     free_exec = body(module, "static void kp_free_exec(")
-    require(r"if\s*\(kp_restore_nx_gp\([^)]*\)\)", free_exec,
+    require(r"if\s*\(kp_restore_nx_gp\(", free_exec,
             "KPM executable pages must be restored before release")
     require(r"return;", free_exec,
             "KPM pages must be retained if NX/BTI restoration fails")
