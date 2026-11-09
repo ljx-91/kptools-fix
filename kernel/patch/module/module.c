@@ -671,10 +671,21 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
         mod->state = KP_MODULE_LIVE; module_lock_release(flags);
         logkfi("[%s] succeed with [%s]\n", mod->info.name, args ? args : ""); goto out;
     }
-    mod->state = KP_MODULE_EXITING; mod->exit_called = true;
+    mod->state = KP_MODULE_EXITING;
     module_lock_release(flags);
-    if (mod->exit) (*mod->exit)(reserved);
+    if (mod->exit) {
+        long exit_rc = (*mod->exit)(reserved);
+        if (exit_rc == -EBUSY) {
+            flags = module_lock_acquire();
+            mod->state = KP_MODULE_UNLOADING;
+            mod->exit_called = false;
+            module_lock_release(flags);
+            rc = -EBUSY;
+            goto out;
+        }
+    }
     flags = module_lock_acquire();
+    mod->exit_called = true;
     if (mod->hook_refs || mod->active_calls) {
         module_lock_release(flags);
         logke("[%s] init failed; retaining image with hook_refs=%u active=%u\n",
@@ -710,10 +721,17 @@ long unload_module(const char *name, void *__user reserved)
     }
     if (mod->active_calls) { module_lock_release(flags); return -EBUSY; }
     if (!mod->exit_called) {
-        mod->state = KP_MODULE_EXITING; mod->exit_called = true;
+        mod->state = KP_MODULE_EXITING;
         module_lock_release(flags);
         if (mod->exit) rc = (*mod->exit)(reserved);
         flags = module_lock_acquire();
+        if (rc == -EBUSY) {
+            mod->state = KP_MODULE_UNLOADING;
+            mod->exit_called = false;
+            module_lock_release(flags);
+            return -EBUSY;
+        }
+        mod->exit_called = true;
     }
     if (mod->active_calls || mod->hook_refs) {
         module_lock_release(flags);
