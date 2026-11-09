@@ -28,6 +28,12 @@
 #include "module.h"
 #include "relo.h"
 
+/* Values match the stable Linux GFP_KERNEL mask used by the target kernels.
+ * The freestanding KPIMG header subset leaves these convenience macros out. */
+#ifndef GFP_KERNEL
+#define GFP_KERNEL 0x0cc0u
+#endif
+
 #define SZ_128M 0x08000000
 
 #define ALIGN_MASK(x, mask) (((x) + (mask)) & ~(mask))
