@@ -968,28 +968,33 @@ KP_EXPORT_SYMBOL(hook_wrap);
 
 void hook_unwrap_remove(void *func, void *before, void *after, int remove)
 {
+    uint64_t origin;
+    hook_chain_t *chain;
+    unsigned long flags;
+    int i, rc;
+
     if (is_bad_address(func)) return;
-    uint64_t faddr = (uint64_t)func;
-    uint64_t origin = branch_func_addr(faddr);
+    origin = branch_func_addr((uint64_t)func);
     if (is_bad_address((void *)origin)) return;
-    hook_chain_t *chain = (hook_chain_t *)hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
+    chain = (hook_chain_t *)hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
     if (!chain) return;
+
     hook_chain_remove(chain, before, after);
     if (!remove) return;
-    // todo:
-    for (int i = 0; i < HOOK_CHAIN_NUM; i++) {
-        if (chain->states[i] != CHAIN_ITEM_STATE_EMPTY) return;
-    }
-    {
-        int rc = hook_uninstall(&chain->hook);
-        if (rc) {
-            /* Keep chain/trampoline storage alive while origin text may reference it. */
-            logkv("Unwrap func: %llx restore failed: %d; retaining chain memory\\n",
-                  (uint64_t)func, rc);
+    hook_chain_reap_slots(chain, 0);
+
+    flags = hook_engine_lock();
+    for (i = 0; i < HOOK_CHAIN_NUM; i++) {
+        if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY) {
+            hook_engine_unlock(flags);
             return;
         }
     }
-    hook_mem_retire(chain);
-    logkv("Unwrap func: %llx\n", (uint64_t)func);
+    rc = hook_uninstall(&chain->hook);
+    if (!rc)
+        hook_mem_retire(chain);
+    hook_engine_unlock(flags);
+    if (rc)
+        logkv("Unwrap func: %llx restore failed: %d; retaining chain memory\\n", (uint64_t)func, rc);
 }
 KP_EXPORT_SYMBOL(hook_unwrap_remove);
