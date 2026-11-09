@@ -630,9 +630,15 @@ int kp_hook_owner_register(unsigned long addr, void **owner)
     if (!owner) return -EINVAL;
     *owner = NULL; flags = module_lock_acquire();
     list_for_each_entry(pos, &modules.list, list) {
-        unsigned long start = (unsigned long)pos->start, end = start + pos->text_size;
-        if (end < start || addr < start || addr >= end) continue;
+        unsigned long start = (unsigned long)pos->start;
+        unsigned long image_end = start + pos->size;
+        unsigned long text_end = start + pos->text_size;
+        if (image_end < start || text_end < start ||
+            addr < start || addr >= image_end) continue;
+        /* Never mistake a pointer into KPM data/rodata for a kernel callback. */
+        if (addr >= text_end) { rc = -EINVAL; break; }
         if (pos->state != KP_MODULE_LOADING && pos->state != KP_MODULE_LIVE) { rc = -EBUSY; break; }
+        if (pos->hook_refs == UINT_MAX) { rc = -EOVERFLOW; break; }
         pos->hook_refs++; *owner = pos; rc = 1; break;
     }
     module_lock_release(flags); return rc;
