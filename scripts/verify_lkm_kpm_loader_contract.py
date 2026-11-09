@@ -102,7 +102,12 @@ def main():
     need(r"spin_lock_irqsave", put, "module reference release lock")
     need(r"active_calls--", put, "active callback reference release")
 
+    exit_call = body(module, "static long kp_call_exit(")
+    need(r"fn\\s*\\?\\s*\\(\\*fn\\)", exit_call,
+         "optional exit callback must be null-safe")
     unload = body(module, "long kp_unload_module(")
+    need(r"KP_MODULE_EXITING\\s*&&\\s*!mod->exit_called", unload,
+         "concurrent unload must not run the exit callback twice")
     for pattern, message in [
         (r"KP_MODULE_UNLOADING", "unload state transition"),
         (r"active_calls", "unload active-call check"),
