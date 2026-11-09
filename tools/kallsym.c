@@ -136,7 +136,7 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
     if (end == cursor || *end != '.' || minor > UINT8_MAX) return 0;
     cursor = end + 1;
 
-    if (!isdigit((unsigned char)*cursor)) return -1;
+    if (!isdigit((unsigned char)*cursor)) return 0;
     unsigned long patch = strtoul(cursor, &end, 10);
     if (end == cursor || (*end && *end != '+' && *end != '-')) return 0;
 
