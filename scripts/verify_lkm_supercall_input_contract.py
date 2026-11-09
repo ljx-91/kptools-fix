@@ -60,7 +60,7 @@ checks = {
     "feature-control name rejects overlong user input":
         "(size_t)len >= sizeof(name)" in body(dispatch, "long kp_control_feature_sc(") and
         "return -ENAMETOOLONG;" in body(dispatch, "long kp_control_feature_sc(") and
-        "name[len] = '\\0';" in body(dispatch, "long kp_control_feature_sc("),
+        "name[len] = 0;" in body(dispatch, "long kp_control_feature_sc("),
     "KPM list and info validate output buffers":
         "!names || len <= 0" in body(kpm, "long kp_kpm_list_sc(") and
         "!out_info || out_len <= 0" in body(kpm, "long kp_kpm_info_sc("),
