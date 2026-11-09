@@ -133,8 +133,11 @@ def main():
     require(r"patch_rc == -EUCLEAN", hook_fn,
             "uncertain rollback must retain trampoline storage")
     unhook_fn = function_body(hook_c, "void unhook(void *func)")
-    require(r"if \(rc\).*?return;", unhook_fn,
-            "unhook must retain trampoline memory when restore fails")
+    before(unhook_fn, "hook_mem_claim_retire(hook)", "hook_uninstall(hook)",
+           "unhook must reserve the registry entry before restoring text")
+    require(r"if \(!rc\)\\s*hook_mem_retire\(hook\);\\s*else\\s*hook_mem_cancel_retire\(hook\);",
+            unhook_fn, "failed unhook must cancel retirement and retain the live trampoline")
+
 
     # Worst case: six instruction slots * eight emitted words, plus jump-back.
     hook_h = source("kernel/include/hook.h")
@@ -209,8 +212,10 @@ def main():
             "hook_wrap() must report ordinary patch failure")
     require(r"hook_uninstall\(&chain->hook\)", unwrap_fn,
             "hook_unwrap_remove() must check the underlying restore operation")
-    require(r"if\s*\(rc\).*?return;", unwrap_fn,
-            "hook_unwrap_remove() must retain chain storage when restore fails")
+    before(unwrap_fn, "hook_mem_claim_retire(chain)", "hook_uninstall(&chain->hook)",
+           "hook_unwrap_remove() must reserve the registry entry before restoring text")
+    require(r"if\s*\(!rc\)\s*hook_mem_retire\(chain\);\s*else\s*hook_mem_cancel_retire\(chain\);",
+            unwrap_fn, "failed chain restore must cancel retirement and retain the live trampoline")
     if "hook_chain_install(chain)" in wrap_fn or "hook_chain_uninstall(chain)" in unwrap_fn:
         raise AssertionError("unchecked hook-chain patch helper reintroduced")
 
