@@ -174,7 +174,7 @@ def main():
          "ARM64 instruction-window scan must use wide offset arithmetic")
     need(r"insn_offset\s*>\s*\(int64_t\)imglen\s*-\s*4", insn_window,
          "ARM64 instruction-window scan must bound every 4-byte read")
-    arm64_stub = body(kallsym_src, "static int arm64_verify_pid_vnr(")
+    arm64_stub = body(kallsym_src, "static int arm64_verify_pid_vnr(kallsym_t *info, char *img, int32_t imglen,\n                                int32_t offset, int wide)\n{")
     need(r"int64_t\s+target", arm64_stub,
          "CFI branch target arithmetic must not overflow 32-bit offsets")
     need(r"target\s*\+\s*4\s*<=\s*imglen", arm64_stub,
