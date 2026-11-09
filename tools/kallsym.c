@@ -1100,7 +1100,8 @@ static int arm64_verify_pid_vnr(kallsym_t *info, char *img, int32_t imglen,
 
 static int correct_addresses_or_offsets_by_vectors(kallsym_t *info, char *img, int32_t imglen)
 {
-    if (!info || !img || imglen <= 0 || info->image_size != imglen ||
+    if (!info || !img || imglen <= 0 || info->arch != ARM64 ||
+        info->image_size != imglen ||
         info->kallsyms_markers_offset <= 0 ||
         info->kallsyms_markers_offset > imglen) return -1;
 
