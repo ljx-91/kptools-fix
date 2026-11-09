@@ -32,8 +32,10 @@ checks = {
     "SELinux SID consumers use READ_ONCE": "set_security_override(new, READ_ONCE(all_allow_sid))" in acc and
         "if (ssid == all_allow_sid)" not in acc and
         "if (all_allow_sid != SECSID_NULL)" not in acc,
-    "retired hook slots are not reused": "warp->using = 2;" in hmem and
-        "if ((wrap->using == 1 || wrap->using == 3) && wrap->addr == origin_addr)" in hmem,
+    "retired hook slots are not reused":
+        "if (warp->using == 1 || warp->using == 4)" in hmem and
+        "__atomic_store_n(&warp->using, 2, __ATOMIC_RELEASE)" in hmem and
+        "if (wrap->using == 2)" in hmem and "continue;" in hmem,
     "inline hook retirement on successful restore": "hook_mem_retire(hook);" in hook and
         "hook_mem_retire(chain);" in hook,
     "function-pointer chain retirement on successful restore": "hook_mem_retire(chain);" in src,
