@@ -32,6 +32,18 @@ typedef long (*mod_ctl1call_t)(void *a1, void *a2, void *a3);
 typedef long (*mod_exitcall_t)(void *reserved);
 typedef long (*mod_eventcall_t)(const char *event, const char *args, void *reserved);
 
+/*
+ * Explicit lifetime pins for KPM-owned asynchronous work (kthreads, timers,
+ * workqueues, callbacks registered with external subsystems). Pin when the
+ * work is published; unpin only after it is cancelled/drained. The worker
+ * should acquire a transient call reference before entering callback logic
+ * and release it on every exit path.
+ */
+int kp_kpm_owner_pin(unsigned long callback_addr, void **owner);
+void kp_kpm_owner_unpin(void *owner);
+int kp_kpm_owner_call_get(void *owner);
+void kp_kpm_owner_call_put(void *owner);
+
 #define KPM_INIT(fn) \
     static mod_initcall_t __kpm_initcall_##fn __attribute__((__used__)) __attribute__((__section__(".kpm.init"))) = fn
 
