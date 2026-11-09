@@ -1,99 +1,94 @@
 # KernelPatch LKM (DDK-built .ko)
 
-KernelPatch as a loadable kernel module, built with Android's Driver
-Development Kit (DDK), for kernels where loading a `.ko` is possible. This is
-an alternative delivery path to the image-patched `kpimg` — it does not touch
-the kernel image or repack `boot.img`.
+KernelPatch as an out-of-tree Linux loadable module. This is an alternative
+delivery path to the image-patched KPIMG; it does not modify or repack
+`boot.img`.
 
-## Status (framework)
+## Implementation status
 
-This is a **framework/skeleton**. It currently:
+The repository contains an LKM framework with the following implemented
+components:
 
-- loads via `insmod` and logs a banner
-- resolves non-exported symbols at runtime (`sys_call_table`, `init_mm`, ...)
-- scans `/data/app` for the trusted APatch manager APK (certificate-verified
-  via the v2 signing block) and records its uid from `packages.list`
-- hooks syscall 45 (`truncate`) as the KP supercall channel
-- authenticates supercalls by **manager uid** (no superkey needed)
-- answers `SUPERCALL_HELLO`, `KERNELPATCH_VER`, `KERNEL_VER`
-- grants root on `SUPERCALL_SU` via `prepare_kernel_cred(NULL)` +
-  `commit_creds()`
+- module entry, runtime symbol resolution, syscall-table discovery and
+  syscall patching;
+- trusted APatch manager APK verification and manager UID discovery;
+- supercall dispatch for version, SU profile/UID operations, KStorage and KPM
+  management;
+- KPM ELF loading, symbol resolution, relocation processing, executable-page
+  permission checks, module listing/info/control and unload handling;
+- ARM64 inline and function-pointer Hook chains, text-patch rollback checks,
+  callback owner references and KPM unload guards;
+- manager sucompat interception and SELinux context selection.
 
-Not implemented yet (TODO): `SUPERCALL_SU_TASK`, kpm loader, kstorage,
-allowlist persistence, SELinux scontext translabel (`commit_su` in
-`kernel/patch/common/accctl.c`), inline-hook infra, x86_64.
+This is not a release certification. In particular, the LKM objects have not
+yet been compiled in this branch against the exact vivo Y73s Android 10 /
+Linux 4.14.141 kernel build tree and configuration. The source-level CI
+contracts do not replace a target-KDIR build, lockdep/KASAN testing, or runtime
+stress testing. The LKM Hook backend also intentionally retains retired
+executable trampoline regions because a safe cross-CPU reclamation protocol
+has not yet been established.
 
-## Prerequisites (device)
-
-- kernel with `CONFIG_MODULES=y` (GKI 5.10 has it)
-- module loading not forced-signed: `CONFIG_MODULE_SIG_FORCE=n`, or a kernel
-  that accepts unsigned modules (typical for rootable/test builds). If the
-  kernel enforces signatures, sign the `.ko` or disable the check.
+The LKM feature-control supercall remains a stub, and x86_64 is not supported
+by this ARM64 implementation.
 
 ## Build
 
-### CI
+### What repository CI currently validates
 
-Push to the `lkm/**` path (or run `workflow_dispatch`) — `.github/workflows/
-build-lkm.yml` builds `android12-5.10` and `android13-5.10` in the
-`ghcr.io/ylarod/ddk-min` container and uploads the `.ko` artifact.
+- `.github/workflows/build-y73s-kptools-host.yml`: host kptools build/package
+  and LKM/KPM source-contract checks. It does **not** compile
+  `kernelpatch.ko`.
+- `.github/workflows/build-y73s-kpimg-gcc.yml`: Arm GNU GCC KPIMG build and
+  KPIMG-side audit suite. It does **not** compile the LKM objects.
 
-### Locally
+There is currently no `build-lkm.yml` workflow in this repository. Do not
+interpret a green host/KPIMG workflow as proof that the LKM module builds for
+the target kernel.
 
-With the [`ddk`](https://github.com/5ec1cff/ddk) toolchain configured:
+### Locally with a configured DDK/KDIR
 
-```sh
-ddk build android12-5.10 ODIR="$(pwd)/out" -e CONFIG_KP_LKM=m
-```
-
-Or inside the DDK container / a configured kernel tree (`KDIR` set):
+With the DDK toolchain and a compatible configured kernel tree:
 
 ```sh
 cd lkm
 CONFIG_KP_LKM=m CC=clang make
 ```
 
-## Test (root via APatch)
+Or use the DDK CLI with a supported kernel target, for example:
 
-1. Push and load the module:
+```sh
+ddk build android12-5.10 ODIR="$(pwd)/out" -e CONFIG_KP_LKM=m
+```
 
-   ```sh
-   adb push android12-5.10_kernelpatch.ko /data/local/tmp/
-   adb shell
-   su 0 insmod /data/local/tmp/android12-5.10_kernelpatch.ko
-   dmesg | grep kernelpatch-lkm   # banner + "LKM ready"
-   ```
+The android12-5.10 example is a generic DDK build target, not the vivo Y73s
+Linux 4.14 target. A successful build against it would not establish Y73s
+compatibility.
 
-2. Install the APatch manager app (`me.bmax.apatch`) and log in as the
-   manager. The module's scan runs in a workqueue right after load and should
-   find the manager APK; check:
+## Target validation requirements
 
-   ```sh
-   dmesg | grep -i "trusted manager"
-   # "trusted manager crowned: me.bmax.apatch uid=10xxx"
-   ```
+Before considering the LKM usable on a device:
 
-3. Request root from the manager UI, or from a shell as the manager app:
+1. Build against the exact target kernel source, generated headers, config,
+   toolchain and ABI.
+2. Resolve all compile/link errors and verify the resulting module metadata.
+3. Run malformed-KPM input tests and concurrency/lifecycle stress tests in a
+   disposable kernel test environment.
+4. Verify Hook install/uninstall, permission transitions, KPM load/unload and
+   callback teardown under lockdep and memory-safety instrumentation where
+   available.
 
-   ```sh
-   # inside the manager app's shell / via the APatch UI "root" action
-   ```
-
-   `SUPERCALL_SU` grants the caller root. If the manager is not detected,
-   re-scan with:
-
-   ```sh
-   su 0 rmmod kernelpatch && su 0 insmod /data/local/tmp/android12-5.10_kernelpatch.ko
-   ```
+No device-side test, Fastboot operation, 9008 operation, or partition write is
+performed by the repository CI described above.
 
 ## Layout
 
 ```
 lkm/
-  Kbuild / Makefile / Kconfig    # DDK module build
-  include/                       # kp_lkm.h, ktypes.h shim (for scdefs.h), sha256.h
-  core/init.c                    # module entry, stack_chk_guard workaround
-  infra/                         # symbol_resolver, patch_memory, syscall_table, sha256
-  manager/                       # apk_sign (cert verify), manager (scan + uid + auth)
-  supercall/                     # supercall (hooked entry), dispatch, su
+  Kbuild / Makefile / Kconfig
+  core/       module entry and subsystem initialization
+  infra/      symbol resolver, text patching, syscall table, hashing
+  manager/    trusted APatch manager APK verification and discovery
+  hook/       shared Hook engine and LKM executable-memory backend
+  kpm/        KPM ELF loader, relocations, symbol table and supercalls
+  supercall/  SU, KStorage, dispatch and sucompat handling
 ```
