@@ -151,12 +151,12 @@ def main():
     names_candidate = body(kallsym_src, "static int verify_names_candidate(")
     need(r"len\s*>\s*info->kallsyms_markers_offset\s*-\s*pos", names_candidate,
          "compressed names candidate must use subtraction-based bounds checks")
-    need(r"marker_offset\s*\+\s*info->kallsyms_markers_offset", names_candidate,
+    need(r"info->kallsyms_markers_offset\s*\+\s*marker_offset", names_candidate,
          "names candidate must validate marker-table reads against image extent")
     names_search = body(kallsym_src, "static int find_names(")
     need(r"int64_t\s+guess_end", names_search,
          "names search window arithmetic must use a wide intermediate")
-    need(r"marker_bytes\s*>\s*0", names_search,
+    need(r"marker_bytes\s*<=\s*0", names_search,
          "names search must validate marker-table extent")
 
     insn_window = body(kallsym_src, "static int arm64_verify_pid_vnr_window(")
