@@ -1062,7 +1062,7 @@ int hook_unwrap_remove(void *func, void *before, void *after, int remove)
     for (i = 0; i < HOOK_CHAIN_NUM; i++) {
         if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY) {
             hook_engine_unlock(flags);
-            return -EBUSY;
+            return 0;
         }
     }
     rc = hook_mem_claim_retire(chain);
