@@ -1151,9 +1151,9 @@ Validated source HEAD:
   - LKM supercall input contracts: success
   - host kptools build/package: success
 
-The matching KPIMG workflow run 42625300566 was still in progress when this
-section was prepared. It is not needed to validate the LKM-only source
-contract, but must be checked before reporting the full branch CI state.
+The matching KPIMG workflow run 42625300566 also completed successfully:
+Arm GNU GCC 14.2 KPIMG build and audit suite: success. This is a separate
+KPIMG build and does not compile the LKM objects against the Y73s target KDIR.
 
 ### Remaining limitations
 
