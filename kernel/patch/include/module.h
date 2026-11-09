@@ -78,7 +78,6 @@ long load_module_path_event(const char *path, const char *args, const char *even
 long module_control0(const char *name, const char *ctl_args, char *__user out_msg, int outlen);
 long module_control1(const char *name, void *a1, void *a2, void *a3);
 long unload_module(const char *name, void *__user reserved);
-struct module *find_module(const char *name);
 long notify_modules_event(const char *event, const char *args, void *__user reserved);
 
 int get_module_nums();
