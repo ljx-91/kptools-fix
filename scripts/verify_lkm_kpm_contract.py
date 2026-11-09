@@ -126,7 +126,7 @@ def main():
     init = body(module, "int kp_kpm_init(")
     require(r"!kp_flush_icache_all_fn", init,
             "KPM loader must fail closed when flush_icache_all is unavailable")
-    require(r"kp_flush_kpm_icache\\(words,\\s*KP_CALLBACK_TRAMP_SLOT_SIZE\\)", module,
+    require(r"kp_flush_kpm_icache\(words,\s*KP_CALLBACK_TRAMP_SLOT_SIZE\)", module,
             "callback trampoline writes must use the shared I-cache flush helper")
 
     registry = body(module, "static struct kp_module *kp_module_get(")
