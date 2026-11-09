@@ -19,7 +19,7 @@
 ## 2. 分支与最近 CI
 
 - 分支：[y73s-cred-layout-guards-20261108](https://github.com/ljx-91/kptools-fix/tree/y73s-cred-layout-guards-20261108)
-- 当前 HEAD：[b06048a](https://github.com/ljx-91/kptools-fix/commit/b06048a867e802e566e0f79f6d0f8a7b6a59f74a)
+- 最近代码与契约提交：[8d3422d](https://github.com/ljx-91/kptools-fix/commit/8d3422d33f828bd423ba8575f1cc472c5f9a80e8)（本次状态文档更新后 HEAD 会继续前移）
 
 | 工作流 | Run | 结果 | 证明范围 |
 |---|---:|---|---|
@@ -110,3 +110,49 @@
 外部参考：
 - KernelPatch Y73S 4.14.141 issue #189：`https://github.com/bmax121/KernelPatch/issues/189`
 - Strict Kallsyms PR #208：`https://github.com/bmax121/KernelPatch/pull/208`
+
+
+## 8. 2026-11-10：Kallsyms 输入边界与 ARM64 RELA 扫描加固
+
+本轮继续审计 `tools/kallsym.c`，重点处理畸形/截断内核镜像输入下的越界读取、越界写入和错误基址状态：
+
+### Token Table / Token Index
+
+- 数字 Token 搜索后，检查剩余镜像长度再读取后续字节。
+- 字母 Token 序列使用有界比较；不足完整 20 字节时拒绝候选。
+- 回扫 Token Table 前缀时要求找到完整的历史终止符数量，否则拒绝。
+- 重建 256 个 Token 时，逐项使用镜像范围内的 NUL 搜索；缺失终止符即失败。
+- 生成 Token Index 时再次验证每个 Token 的边界，并拒绝超出 16 位索引范围的偏移。
+
+### 名称解压和符号索引
+
+- `kallsym_t` 增加已验证的 `image_size`，在分析入口保存镜像长度。
+- `decompress_symbol_name()` 检查名称游标、markers 终点、压缩长度、Token 指针、Token 终止符和解压后输出容量。
+- 符号遍历/查询调用者在解压失败时停止，不再继续使用空或部分解码结果。
+- `get_symbol_index_offset()` 检查索引范围和完整地址项覆盖；绝对地址转换拒绝低于基址或超过有符号 32 位偏移范围的结果。
+- 分析镜像的临时副本分配失败时立即返回，不再对空指针执行 `memcpy`。
+
+### ARM64 RELA 与地址表扫描
+
+- RELA 候选不足最小项数时，在回扫前直接退出。
+- 候选起止范围经过验证；尾部全零项回扫不能越过候选起点。
+- 将尾部空项判断改为“三个字段全零”；合法的零 addend 项不再被误删。
+- 只有候选 RELA 表通过长度/范围检查后才提交 `kernel_base`；无表或无有效基址时不再把 `UINT64_MAX` 留作伪基址。
+- relocation 目标先以 64 位差值验证，再缩窄成 32 位镜像偏移。
+- 绝对地址表尾部扫描只读取完整的 4/8 字节元素；相对偏移表按 Linux KALLSYMS ABI 限定为 32 位项。Linux Kconfig 文档说明 base-relative 表使用 32-bit entries，4.14 的 `kernel/kallsyms.c` 也按 `int` 读取 offsets。
+
+### 提交与验证
+
+- 本轮源码修复及回归契约已推送到本分支，相关提交包括：
+  - `7655f8d`、`66609de`、`c8023ec`：Token Table/Index 与符号计数扫描边界。
+  - `c27903d`、`5d58f49`、`cb0330f`、`d4464a6`：ARM64 RELA 候选范围、零 addend 和基址状态。
+  - `3321fc5`、`60c87e6`、`4353735`：绝对/相对地址表扫描边界。
+  - `e17fddf`、`42d2517`、`17c8a8d`、`e0d3e03`、`89833ca`：解压边界、image_size、符号索引及失败传播。
+  - `969d0a9`、`d0b8f10`、`8769b19`、`1e77033`、`10f74af`、`bb29161`、`fb8cdee`、`8d3422d`：源码契约和正则断言修正。
+- `build-y73s-kptools-host.yml` 已在 `tools/**` 和 `scripts/**` 变更时触发，因此这些提交会进入 Host 契约工作流。
+- **CI 状态：** 当前 GitHub 状态查询未返回可确认的 checks/run 记录；本轮契约尚不能标记为 CI 通过。必须等到实际 Actions 运行结果或本地执行记录。
+- **目标 KDIR、Linux 4.14.141 .ko 编译、KPM fuzz/load/unload 和真机验证仍未完成。**
+
+外部 ABI 依据：
+- Linux `CONFIG_KALLSYMS_BASE_RELATIVE` 说明：<https://cateee.net/lkddb/web-lkddb/KALLSYMS_BASE_RELATIVE.html>
+- Linux v4.14 Kallsyms 实现：<https://kernel.googlesource.com/pub/scm/linux/kernel/git/stable/linux-stable.git/+/refs/tags/v4.14.264/kernel/kallsyms.c>
