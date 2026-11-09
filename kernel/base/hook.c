@@ -317,15 +317,13 @@ static __noinline hook_err_t relo_ignore(hook_t *hook, uint64_t inst_addr, uint3
 
 static uint32_t can_b_rel(uint64_t src_addr, uint64_t dst_addr)
 {
-    /* A64 B uses a signed imm26 scaled by four: [-128 MiB, +128 MiB-4]. */
-    int64_t delta;
+    /* A64 B uses a signed imm26 scaled by four: [-128 MiB, +128 MiB-4].
+     * Compare unsigned distances directly; converting a large uint64_t
+     * difference to int64_t and negating it can overflow. */
     if ((src_addr & 0x3) || (dst_addr & 0x3)) return 0;
-    if (dst_addr >= src_addr) {
-        uint64_t diff = dst_addr - src_addr;
-        return diff <= 0x07fffffcULL;
-    }
-    delta = -(int64_t)(src_addr - dst_addr);
-    return delta >= -0x08000000LL;
+    if (dst_addr >= src_addr)
+        return dst_addr - src_addr <= 0x07fffffcULL;
+    return src_addr - dst_addr <= 0x08000000ULL;
 }
 
 int32_t branch_relative(uint32_t *buf, uint64_t src_addr, uint64_t dst_addr)
