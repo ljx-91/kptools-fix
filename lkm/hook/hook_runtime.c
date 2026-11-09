@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* LKM backends required by kernel/base/hook.c. */
 #include <linux/errno.h>
+#include <linux/compiler.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
@@ -333,19 +334,36 @@ void hook_mem_free(void *payload)
 
 int hotpatch(void *addrs[], uint32_t values[], int count)
 {
-	int i, start, rc;
+	uint32_t original[64];
+	int i, j, rc, rollback_rc = 0;
 
-	for (start = 0; start < count; start = i) {
-		for (i = start + 1; i < count; i++) {
-			if ((char *)addrs[i] != (char *)addrs[start] +
-						 (i - start) * sizeof(values[0]))
-				break;
-		}
-		rc = kp_patch_text(addrs[start], &values[start],
-				   (i - start) * sizeof(values[0]),
+	if (!addrs || !values || count <= 0 || count > ARRAY_SIZE(original))
+		return -EINVAL;
+
+	/* Snapshot and validate the complete patch set before the first write.
+	 * A 4-byte aligned A64 instruction cannot straddle a PAGE_SIZE boundary. */
+	for (i = 0; i < count; i++) {
+		if (!addrs[i] || ((uintptr_t)addrs[i] & 3))
+			return -EINVAL;
+		for (j = 0; j < i; j++)
+			if (addrs[j] == addrs[i])
+				return -EINVAL;
+		original[i] = READ_ONCE(*(volatile uint32_t *)addrs[i]);
+	}
+
+	for (i = 0; i < count; i++) {
+		rc = kp_patch_text(addrs[i], &values[i], sizeof(values[i]),
 				   KP_PATCH_TEXT_FLUSH_DCACHE | KP_PATCH_TEXT_FLUSH_ICACHE);
-		if (rc)
-			return rc;
+		if (rc) {
+			/* Restore the failed word too: the low-level nofault copy may
+			 * have changed a prefix before reporting an error. */
+			for (j = i; j >= 0; j--) {
+				if (kp_patch_text(addrs[j], &original[j], sizeof(original[j]),
+						  KP_PATCH_TEXT_FLUSH_DCACHE | KP_PATCH_TEXT_FLUSH_ICACHE))
+					rollback_rc = -EUCLEAN;
+			}
+			return rollback_rc ? rollback_rc : rc;
+		}
 	}
 	return 0;
 }
