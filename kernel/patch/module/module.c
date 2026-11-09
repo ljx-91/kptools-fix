@@ -941,6 +941,7 @@ long module_control0(const char *name, const char *ctl_args, char *__user out_ms
 {
     struct module *mod; char *args_copy; long rc;
     if (!name || !ctl_args || !*ctl_args) return -EINVAL;
+    if (outlen < 0 || (outlen && !out_msg)) return -EINVAL;
     args_copy = kp_module_strdup(ctl_args, GFP_KERNEL);
     if (!args_copy) return -ENOMEM;
     mod = module_get_live(name);
