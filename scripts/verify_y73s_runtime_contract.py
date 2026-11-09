@@ -128,7 +128,7 @@ def main():
     install = function_body(hook_c, "int hook_install(hook_t *hook)")
     require(r"return hotpatch\(", install, "hook_install must propagate hotpatch status")
     hook_fn = function_body(hook_c, "hook_err_t hook(void *func, void *replace, void **backup)")
-    require(r"int patch_rc = hook_install\(hook\)", hook_fn,
+    require(r"patch_rc\s*=\s*hook_install\(hook\)", hook_fn,
             "hook() must inspect hook_install result")
     require(r"patch_rc == -EUCLEAN", hook_fn,
             "uncertain rollback must retain trampoline storage")
@@ -192,7 +192,7 @@ def main():
     wrap_fn = function_body(hook_c, "hook_err_t hook_wrap(")
     require(r"is_bad_address\(\(void \*\)origin\)", wrap_fn,
             "hook_wrap() must reject failed entry resolution")
-    unwrap_fn = function_body(hook_c, "void hook_unwrap_remove(")
+    unwrap_fn = function_body(hook_c, "int hook_unwrap_remove(")
     require(r"is_bad_address\(\(void \*\)origin\)", unwrap_fn,
             "hook_unwrap_remove() must reject failed entry resolution")
 
