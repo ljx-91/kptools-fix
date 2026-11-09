@@ -35,15 +35,39 @@ static kp_syscall_fn_t kp_orig_execve;
  * module exit (otherwise rmmod leaves a branch into freed module memory). */
 static unsigned long kp_getname_flags_addr;
 
+/*
+ * A full-size strncpy_from_user() result means no NUL was found in range.
+ * Never pass that unterminated buffer to strcmp(), logging, or profile code.
+ */
+static long kp_copy_user_string(char *dst, size_t dst_size,
+				const char __user *src)
+{
+	long len;
+
+	if (!dst || !dst_size || !src)
+		return -EINVAL;
+	len = strncpy_from_user(dst, src, dst_size);
+	if (len < 0)
+		return len;
+	if ((size_t)len >= dst_size) {
+		dst[dst_size - 1] = 0;
+		return -ENAMETOOLONG;
+	}
+	dst[len] = 0;
+	return len;
+}
+
+
+
 /* Parse the -Z <sctx> option from a SUPERCMD argv: "truncate <key> -Z <sctx>".
  * Returns a static buffer (KP's profile.scontext) or NULL if absent. */
-static const char *kp_get_supercmd_sctx(const struct pt_regs *regs)
+static const char *kp_get_supercmd_sctx(const struct pt_regs *regs,
+					char *sctx, size_t sctx_size)
 {
-	static char sctx[SUPERCALL_SCONTEXT_LEN];
 	char __user **uargv = (char __user **)regs->regs[1];
 	int i;
 
-	if (!uargv)
+	if (!uargv || !sctx || !sctx_size)
 		return NULL;
 
 	/* argv layout: [0]=truncate [1]=key [2..]=options. Walk args 2.. */
@@ -51,30 +75,25 @@ static const char *kp_get_supercmd_sctx(const struct pt_regs *regs)
 		char __user *arg;
 		char buf[64];
 
-		if (copy_from_user(&arg, &uargv[i], sizeof(arg)))
+		if (copy_from_user(&arg, &uargv[i], sizeof(arg)) || !arg)
 			break;
-		if (!arg)
-			break;
-		if (strncpy_from_user(buf, arg, sizeof(buf)) <= 0)
+		if (kp_copy_user_string(buf, sizeof(buf), arg) <= 0)
 			break;
 		if (buf[0] != '-')
-			break; /* options end at first non-option */
+			break;
 		if (buf[1] == 'Z') {
 			char __user *sctx_arg;
-			if (copy_from_user(&sctx_arg, &uargv[i + 1], sizeof(sctx_arg)))
+			long len;
+
+			if (copy_from_user(&sctx_arg, &uargv[i + 1], sizeof(sctx_arg)) ||
+			    !sctx_arg)
 				break;
-			if (!sctx_arg)
-				break;
-			if (strncpy_from_user(sctx, sctx_arg, sizeof(sctx)) > 0) {
-				sctx[sizeof(sctx) - 1] = '\0';
-				return sctx;
-			}
-			break;
+			len = kp_copy_user_string(sctx, sctx_size, sctx_arg);
+			return len > 0 ? sctx : NULL;
 		}
 	}
 	return NULL;
 }
-
 /* Grant root and repoint the execve to apd (su only, if installed) or sh.
  * @su_exec: true when the intercepted binary is an actual su invocation (so a
  * -c/-u command must be preserved for apd's root_shell); false for SUPERCMD
@@ -224,34 +243,25 @@ static int kp_hook_getname_flags(void)
 }
 
 /* Default SELinux context */
-static const char *kp_default_sctx(uid_t uid)
+static const char *kp_default_sctx(uid_t uid, char *sctx, size_t sctx_size)
 {
-	static char sctx[SUPERCALL_SCONTEXT_LEN];
 	struct su_profile profile;
 
-	if (kp_su_allow_uid_profile(uid, &profile) == 0 && profile.scontext[0]) {
-		strscpy(sctx, profile.scontext, sizeof(sctx));
+	if (sctx && sctx_size &&
+	    kp_su_allow_uid_profile(uid, &profile) == 0 && profile.scontext[0]) {
+		strscpy(sctx, profile.scontext, sctx_size);
 		return sctx;
 	}
 	return ALL_ALLOW_SCONTEXT_MAGISK;
 }
-
 static long kp_execve_handler(const struct pt_regs *regs)
 {
 	uid_t uid = from_kuid(current_user_ns(), current_uid());
 	char __user *ufilename = (char __user *)regs->regs[0];
 	char filename[SU_PATH_MAX_LEN];
+	char sctx_buf[SUPERCALL_SCONTEXT_LEN];
 	long flen;
 	bool su_ok, mgr_ok;
-
-	/* Debug: log every execve from a su-allowed/manager uid (may be chatty). */
-	if (ufilename && (kp_is_su_allow_uid(uid) || kp_is_manager_uid(uid))) {
-		flen = strncpy_from_user(filename, ufilename, sizeof(filename));
-		if (flen > 0)
-			logki("execve uid=%u path=%s (su_path=%s)\n", uid, filename, kp_su_get_path());
-		else
-			logki("execve uid=%u path=<unreadable> (su_path=%s)\n", uid, kp_su_get_path());
-	}
 
 	/* Only su-allowed / manager uids trigger the interception. */
 	mgr_ok = kp_is_manager_uid(uid);
@@ -261,34 +271,29 @@ static long kp_execve_handler(const struct pt_regs *regs)
 
 	if (!ufilename)
 		goto passthrough;
-	flen = strncpy_from_user(filename, ufilename, sizeof(filename));
+	flen = kp_copy_user_string(filename, sizeof(filename), ufilename);
 	if (flen <= 0)
 		goto passthrough;
+	logki("execve uid=%u path=%s (su_path=%s)\n", uid, filename, kp_su_get_path());
 
-	/* su binary: match any path an app may exec, not just the configured one.
-	 * The manager resets su_path to /system/bin/su at install, but that reset
-	 * (SUPERCALL_SU_RESET_PATH) can be missed if the manager wasn't crowned
-	 * yet, and some apps exec /system/bin/kp or a bare "su"/"kp" via PATH.
-	 * Matching all of them is what makes a granted app actually get root. */
-	const char *su_path = kp_su_get_path();
-	bool is_su_bin = strcmp(filename, su_path) == 0 ||
-			 strcmp(filename, LEGACY_SU_PATH) == 0 ||
-			 strcmp(filename, SU_PATH) == 0;
-	if (!is_su_bin && (strcmp(filename, "su") == 0 || strcmp(filename, "kp") == 0))
-		is_su_bin = true;
-	if (is_su_bin)
-		return kp_redirect_to_sh(regs, filename, uid, true, mgr_ok,
-					 kp_default_sctx(uid));
+	/* su binary: match any path an app may exec, not just the configured one. */
+	{
+		const char *su_path = kp_su_get_path();
+		bool is_su_bin = strcmp(filename, su_path) == 0 ||
+				 strcmp(filename, LEGACY_SU_PATH) == 0 ||
+				 strcmp(filename, SU_PATH) == 0;
+		if (!is_su_bin && (strcmp(filename, "su") == 0 || strcmp(filename, "kp") == 0))
+			is_su_bin = true;
+		if (is_su_bin)
+			return kp_redirect_to_sh(regs, filename, uid, true, mgr_ok,
+						 kp_default_sctx(uid, sctx_buf, sizeof(sctx_buf)));
+	}
 
-	/* SUPERCMD (/system/bin/truncate): the manager builds its root shell as
-	 * "truncate <key> -Z <sctx>", and shell users run "truncate su". Both the
-	 * manager and any su-allowed uid (e.g. shell 2000) may use it. Without
-	 * this the exec falls through to the real truncate ("Needs -s") and apd
-	 * install fails every boot. */
-	if ((su_ok || mgr_ok) && strcmp(filename, SUPERCMD) == 0) {
-		const char *sctx = kp_get_supercmd_sctx(regs);
+	/* SUPERCMD (/system/bin/truncate) is a plain root-shell request. */
+	if (strcmp(filename, SUPERCMD) == 0) {
+		const char *sctx = kp_get_supercmd_sctx(regs, sctx_buf, sizeof(sctx_buf));
 		if (!sctx)
-			sctx = kp_default_sctx(uid);
+			sctx = kp_default_sctx(uid, sctx_buf, sizeof(sctx_buf));
 		return kp_redirect_to_sh(regs, filename, uid, false, mgr_ok, sctx);
 	}
 
@@ -297,7 +302,6 @@ passthrough:
 		return kp_orig_execve(regs);
 	return -ENOSYS;
 }
-
 int kp_sucompat_hook_init(void)
 {
 	int rc = kp_syscall_hook(KP_EXECVE_NR, kp_execve_handler, &kp_orig_execve);
