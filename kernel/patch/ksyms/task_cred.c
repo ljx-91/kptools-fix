@@ -225,6 +225,7 @@ int resolve_cred_offset()
         uninit_bllist();
         return -EINVAL;
     }
+    int resolve_rc = 0;
 
     // cap_inheritable, cap_permitted, cap_effective
     kernel_cap_t effective, inheritable, permitted;
@@ -287,6 +288,16 @@ int resolve_cred_offset()
         break;
     }
     log_boot("    securebits offset: %x\n", cred_offset.securebits_offset);
+    /* Do not use unresolved offsets in the cap_ambient preparation writes. */
+    if (cred_offset.cap_effective_offset < 0 ||
+        cred_offset.cap_inheritable_offset < 0 ||
+        cred_offset.cap_permitted_offset < 0 ||
+        cred_offset.cap_bset_offset < 0 ||
+        cred_offset.securebits_offset < 0) {
+        log_boot("    capability/securebits layout incomplete; skipping ambient probe\\n");
+        resolve_rc = -EINVAL;
+        goto cleanup;
+    }
 
     // euid, uid, egid, gid
     for (int i = 0; i < CRED_MAX_SIZE; i += sizeof(uint32_t)) {
@@ -405,7 +416,6 @@ int resolve_cred_offset()
     }
     log_boot("    cap_ambient offset: %x\n", cred_offset.cap_ambient_offset);
 
-    int resolve_rc = 0;
     if (cred_offset.cap_effective_offset < 0 ||
         cred_offset.cap_inheritable_offset < 0 ||
         cred_offset.cap_permitted_offset < 0 ||
@@ -420,6 +430,7 @@ int resolve_cred_offset()
         resolve_rc = -EINVAL;
     }
 
+cleanup:
     revert_current(backup);
 
     vfree(cred);

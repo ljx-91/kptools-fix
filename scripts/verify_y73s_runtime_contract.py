@@ -299,6 +299,13 @@ def main():
     require(r"return -EOPNOTSUPP;", task_su_fn,
             "cross-task credential mutation must remain unsupported")
 
+    resolve_cred_fn = function_body(taskcred_c, "int resolve_cred_offset(")
+    before(resolve_cred_fn, "if (cred_offset.cap_effective_offset < 0",
+           "*(kernel_cap_t *)((uintptr_t)new_cred + cred_offset.cap_effective_offset)",
+           "capability offsets must be validated before cap_ambient pointer arithmetic")
+    require(r"goto cleanup;.*?cleanup:\s*revert_current\(backup\);.*?vfree\(cred\);.*?uninit_bllist\(\);",
+            resolve_cred_fn, "failed early credential-layout probe must restore current and free scratch buffers")
+
     require(r"cred_size\s*\?\s*cred_size\(new_cred\)\s*:\s*0", taskcred_c,
             "cap_ambient scan must fail closed when slab object size is unavailable")
     require(r"if\s*\(ambient_scan_len\s*>\s*CRED_MAX_SIZE\)\s*ambient_scan_len\s*=\s*CRED_MAX_SIZE;",
