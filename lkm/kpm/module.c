@@ -498,9 +498,27 @@ static int simplify_symbols(struct kp_module *mod, struct kp_load_info *info)
 			break;
 		}
 		default:
-			secbase = info->sechdrs[sym[i].st_shndx].sh_addr;
+		{
+			Elf_Shdr *symsh = &info->sechdrs[sym[i].st_shndx];
+
+			/* ET_REL symbol values are offsets within their defining
+			 * section. Reject out-of-section values and extents before
+			 * converting them to runtime addresses. */
+			if (sym[i].st_value > symsh->sh_size ||
+			    sym[i].st_size > symsh->sh_size - sym[i].st_value) {
+				logke("symbol %s exceeds its defining section\\n", name);
+				set_load_error(info, "ELF symbol extent exceeds its defining section");
+				return -ENOEXEC;
+			}
+			secbase = symsh->sh_addr;
+			if (sym[i].st_value > ULONG_MAX - secbase) {
+				logke("symbol %s address overflows\\n", name);
+				set_load_error(info, "ELF symbol runtime address overflows");
+				return -ENOEXEC;
+			}
 			sym[i].st_value += secbase;
 			break;
+		}
 		}
 	}
 	return ret;
