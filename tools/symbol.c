@@ -160,10 +160,14 @@ static int32_t get_map_anchor_offset(kallsym_t *kallsym, char *img_buf, int imgl
 // todo
 void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *map_start, int32_t *max_size, bool is_gki)
 {
+    if (!kallsym || !image_buf || imglen <= 0 || !map_start || !max_size) {
+        tools_loge_exit("invalid map selection inputs\n");
+    }
+
     const char *selected = 0;
     int32_t addr = get_map_anchor_offset(kallsym, image_buf, imglen, &selected);
-    if (!addr) {
-        tools_loge_exit("no usable map anchor symbol\n");
+    if (addr <= 0 || addr >= imglen || (addr & 3)) {
+        tools_loge_exit("invalid or unaligned map anchor: %d\n", addr);
     }
     tools_logi("select map anchor: %s, offset: 0x%08x\n", selected, addr);
 
@@ -178,13 +182,33 @@ void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *m
 #else
     int32_t hole_size = MAP_MAX_SIZE;
 #endif
-    if (!is_gki){
-        // For non-GKI kernels, we can directly use the area starting from a cold text symbol for mapping.
-        *map_start = align_ceil(addr, 16);
+    if (hole_size <= 0 || (int64_t)hole_size * 2 > imglen) {
+        tools_loge_exit("invalid map hole size %d for image length %d\n", hole_size, imglen);
+    }
+
+    if (!is_gki) {
+        // Non-GKI kernels use the area immediately after a cold text symbol.
+        int64_t aligned_start = ((int64_t)addr + 15) & ~15LL;
+        if (aligned_start + hole_size > imglen) {
+            tools_loge_exit("non-GKI map hole exceeds image: start=0x%llx size=0x%x image=0x%x\n",
+                            (unsigned long long)aligned_start, hole_size, imglen);
+        }
+        *map_start = (int32_t)aligned_start;
         *max_size = hole_size;
         return;
     }
+
+    // PAC scanning may inspect a second window when the first window has an
+    // unmatched instruction.  Validate the complete two-window range first.
+    if ((int64_t)addr + (int64_t)hole_size * 2 > imglen) {
+        tools_loge_exit("GKI PAC scan exceeds image: anchor=0x%x size=0x%x image=0x%x\n",
+                        addr, hole_size, imglen);
+    }
     *map_start = align_floor(addr, 16);
+    if ((int64_t)*map_start + hole_size > imglen) {
+        tools_loge_exit("GKI map hole exceeds image: start=0x%x size=0x%x image=0x%x\n",
+                        *map_start, hole_size, imglen);
+    }
     *max_size = hole_size;
 
 #define NOP 0xD503201F
@@ -197,35 +221,42 @@ void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *m
     uint32_t count = 0;
     uint32_t asmbit = sizeof(uint32_t);
     bool is_first_pac = false;
-    for (uint32_t i = 0; i < *max_size; i += asmbit) {
-        uint32_t insn = *(uint32_t *)(image_buf + addr + i);
+    for (uint32_t i = 0; i < (uint32_t)*max_size; i += asmbit) {
+        uint32_t insn;
+        memcpy(&insn, image_buf + addr + i, sizeof(insn));
         if (!is_first_pac && insn == PAC && i < asmbit * 5) {
             is_first_pac = true;
         }
-        if ((insn & 0xFFFFFD1F) == 0xD503211F) {
+        if ((insn & PAC_MASK) == PAC_PATTERN) {
             pos = i;
             count++;
-            *(uint32_t *)(image_buf + addr + pos) = NOP;
+            uint32_t nop = NOP;
+            memcpy(image_buf + addr + pos, &nop, sizeof(nop));
         }
     }
 
     if (!is_first_pac) {
-        tools_logi("no first pac instruction found \n");
+        tools_logi("no first pac instruction found\n");
     }
 
     if (count % 2 != 0) {
-        tools_logi("pac verify not pair  pos: %x  count: %d\n", pos, count);
+        tools_logi("pac verify not pair pos: %x count: %d\n", pos, count);
 
         uint32_t second_pos = 0;
-        for (uint32_t j = *max_size; j < *max_size * 2; j += asmbit) {
-            uint32_t insn = *(uint32_t *)(image_buf + addr + j);
-            if ((insn & 0xFFFFFD1F) == 0xD503211F) {
+        for (uint32_t j = (uint32_t)*max_size; j < (uint32_t)*max_size * 2; j += asmbit) {
+            uint32_t insn;
+            memcpy(&insn, image_buf + addr + j, sizeof(insn));
+            if ((insn & PAC_MASK) == PAC_PATTERN) {
                 second_pos = j;
                 break;
             }
         }
-        tools_logi("second_pos: %x \n", second_pos);
-        *(uint32_t *)(image_buf + addr + second_pos) = NOP;
+        if (!second_pos) {
+            tools_loge_exit("unpaired PAC instruction has no matching instruction in second map window\n");
+        }
+        tools_logi("second_pos: %x\n", second_pos);
+        uint32_t nop = NOP;
+        memcpy(image_buf + addr + second_pos, &nop, sizeof(nop));
     }
 
 #undef NOP
