@@ -162,6 +162,7 @@ def main():
 
     exec_alloc = body(module, "static void *kp_malloc_exec(")
     exec_free = body(module, "static void kp_free_exec(")
+    restore_perm = body(module, "static int kp_restore_nx_gp(")
     permissions = body(module, "static int kp_clear_bti_gp(")
     kpm_init = body(module, "int kp_kpm_init(void)")
     need(r"switch\s*\(kp_exec_backend\)", exec_alloc,
@@ -186,6 +187,16 @@ def main():
          "verify KPM image permissions before init")
     need(r"if\s*\(rc\).*?goto free;", load,
          "permission verification failure must prevent KPM init")
+    need(r"kp_update_bti_gp\(base,\s*size,\s*false\)", restore_perm,
+         "KPM release must restore NX/BTI PTE bits")
+    need(r"kp_set_memory_nx", restore_perm,
+         "KPM release must invoke set_memory_nx when available")
+    need(r"kp_restore_nx_gp\(\(unsigned long\)region,\s*size\)", exec_free,
+         "KPM image free must verify NX/BTI restoration")
+    need(r"return;", exec_free,
+         "KPM image must be leaked rather than freed if NX restoration fails")
+    need(r"kp_free_exec\(mod->start,\s*mod->size\)", module,
+         "KPM free paths must restore the complete image range")
     if module.count("enum kp_exec_backend {") != 1:
         raise AssertionError("KPM executable backend enum must be defined exactly once")
     need(r"KP_EXEC_BACKEND_MODULE", exec_alloc, "matched module allocator backend")
