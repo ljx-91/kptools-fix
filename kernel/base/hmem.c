@@ -45,7 +45,7 @@ int hook_mem_add(uint64_t start, int32_t size)
         return -EBUSY;
     end = start + (uint64_t)size;
     hook_locks_ready = true;
-    for (uint64_t i = start; i + sizeof(uint64_t) <= end; i += sizeof(uint64_t))
+    for (uint64_t i = start; i <= end - sizeof(uint64_t); i += sizeof(uint64_t))
         *(uint64_t *)i = 0;
     mem_region_start = start;
     mem_region_end = end;
