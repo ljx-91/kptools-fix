@@ -189,3 +189,36 @@
 - 已对当前源码执行 8 项关键结构断言（无 banner fallback、版本元数据复位、names/vector 函数存在、names 边界、ARM64 无符号地址语义、RELA 回扫和失败回滚），8/8 符合预期。这是源码结构检查，不是 C 编译或 Actions 成功证明。
 - 目标 Linux 4.14.141 KDIR 编译、真实 `.ko` modpost、KPM fuzz/load/unload 和真机启动仍未完成。
 
+
+
+## 10. 2026-11-10：使用资料库原始 Y73s Boot 做离线行为核对
+
+本轮从资料库重新取得原始 `boot.img`，只在工作目录副本中解包和分析，没有修改资料库原件，也没有连接设备。
+
+### 输入一致性
+
+- 文件大小：100,663,296 bytes。
+- SHA-256：`c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`，与 2026-11-08 原始 Boot 离线报告一致。
+- Android Boot Header v2，page size 2048。
+- gzip 内核解压为 47,517,708 bytes，和既有记录一致。
+
+### 真实 Kallsyms / ARM64 fallback 基线
+
+使用资料库中已有的旧版 kptools（KPIMG 版本标识 d09）对解包副本执行只读 `-d` 分析，得到：
+
+- Linux 4.14.141+ / ARM64，kernel base 最终为 `0xffffff8008080000`。
+- `kallsyms_addresses` 最终定位到 `0x01c1c700`，`kallsyms_num_syms=0x1a5b9`。
+- names table 中没有 `linux_banner` 符号（`CONFIG_KALLSYMS_ALL=n`），但存在 `vectors`（index `0x12`）和 `pid_vnr`（index `0xd165`）。
+- `vectors` 地址相对 kernel base 为 `0x2800`；后一个符号相对地址差为 `0x7d8`。
+- `pid_vnr` 相对地址为 `0x01912460`。入口是 B veneer 指令 `0x17a025ec`，跳转到 `0x0011bc10`，目标指令 `0xd5384108`，对应 SP_EL0 读取路径。
+- 独立离线解析 RELA 表范围 `[0x02554218, 0x02af9c60)`，按目标 base 计算并应用 246,723 项后，确认前三个地址项确实相同（`0xffffff8008081000`），与 strict ARM64 vector alias guard 的假设一致。
+
+### 对当前分支修复的意义
+
+- 明确验证 Y73s 必须保留“names table 找不到 `linux_banner` 时转入 ARM64 vector fallback”的路径。因此 `find_linux_banner()` 在无 banner 时安全返回 0，而不是让 `base_funcs` 提前中止；`correct_addresses_or_offsets()` 再尝试 vector fallback。
+- 当前分支 vector fallback 的 64 位无符号地址差、前三项 alias 检查、pid_vnr CFI/B veneer 跳转和 SP_EL0 指令验证，均与这份真实镜像的已知值吻合。
+- 这是一项基于真实镜像数据的离线行为核对；使用的旧 kptools 二进制不是本轮最新源码构建，独立 Python RELA/vector 计算也不是新 C 程序执行。因此不能把它描述成“最新源码已通过真实镜像端到端测试”。
+- 最新源码仍需 Host CI 实际构建确认；目标 Linux 4.14.141 KDIR、.ko 编译、KPM 动态测试和真机验证仍未完成。
+- 全程没有 Fastboot、刷写、分区写入或设备启动操作。
+
+资料库依据：原始 Boot 离线记录、原始 Boot 注入记录和既有 Kallsyms 日志。
