@@ -34,10 +34,10 @@ long kp_control_feature_sc(const char __user *uname, int state)
 	if (!len)
 		return -EINVAL;
 	if ((size_t)len >= sizeof(name)) {
-		name[sizeof(name) - 1] = '\\0';
+		name[sizeof(name) - 1] = 0;
 		return -ENAMETOOLONG;
 	}
-	name[len] = '\\0';
+	name[len] = 0;
 
 	/* No LKM-side features are togglable yet. */
 	(void)state;
