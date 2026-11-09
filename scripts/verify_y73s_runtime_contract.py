@@ -102,16 +102,17 @@ def main():
             "old image virtual copy range must reject overflow")
     require(r"sctlr_el1\s*>\s*~\(uint64_t\)0\s*-\s*all_size", paging,
             "destination virtual copy range must reject overflow")
-    require(r"data->start_img_size\s*&\s*\(sizeof\(uint64_t\)\s*-\s*1\)", paging,
-            "word-copy source offset must be naturally aligned")
-    require(r"for\s*\(off\s*=\s*0;\s*\(uint64_t\)data->start_img_size\s*-\s*off\s*>=\s*sizeof\(uint64_t\)", paging,
-            "start image copy must process only complete words before the byte tail")
-    require(r"for\s*\(;\s*off\s*<\s*\(uint64_t\)data->start_img_size;\s*\+\+off\)", paging,
-            "start image copy must handle its final bytes without overread")
-    require(r"off\s*=\s*0;\s*for\s*\(;\s*\(uint64_t\)data->extra_size\s*-\s*off\s*>=\s*sizeof\(uint64_t\)", paging,
-            "extra payload copy must restart its offset at zero")
-    require(r"for\s*\(;\s*off\s*<\s*\(uint64_t\)data->extra_size;\s*\+\+off\)", paging,
-            "extra payload copy must handle its final bytes without overread")
+    copy_range = function_body(map_c, "static void __noinline copy_map_range(")
+    require(r"if\s*\(!\(\(dst\s*\|\s*src\)\s*&\s*\(sizeof\(uint64_t\)\s*-\s*1\)\)\)", copy_range,
+            "word copies must require naturally aligned source and destination")
+    require(r"for\s*\(;\s*size\s*-\s*off\s*>=\s*sizeof\(uint64_t\);\s*off\s*\+=\s*sizeof\(uint64_t\)\)", copy_range,
+            "copy helper must only read complete 64-bit words")
+    require(r"for\s*\(;\s*off\s*<\s*size;\s*\+\+off\)", copy_range,
+            "copy helper must copy any trailing bytes")
+    require(r"copy_map_range\(sctlr_el1,\s*paging_init_va,\s*\(uint64_t\)data->start_img_size\)", paging,
+            "start image must use the bounded copy helper")
+    require(r"copy_map_range\(sctlr_el1\s*\+\s*data->start_size,\s*paging_init_va\s*\+\s*data->start_img_size,\s*\(uint64_t\)data->extra_size\)", paging,
+            "extra payload must use the bounded copy helper")
     require(r"\(\(start_f\)sctlr_el1\)", paging,
             "relocated image entry must use the validated destination virtual address")
     require(r"memblock_mark_nomap_f[^;]*\)\(start_pa,\s*all_size\)\)\s*__builtin_trap\(\);",

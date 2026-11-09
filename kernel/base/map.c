@@ -49,6 +49,17 @@ static inline uint64_t phys_to_lm(map_data_t *data, uint64_t phys)
     return phys + data->linear_voffset;
 }
 
+static void __noinline copy_map_range(uint64_t dst, uint64_t src, uint64_t size)
+{
+    uint64_t off = 0;
+    if (!((dst | src) & (sizeof(uint64_t) - 1))) {
+        for (; size - off >= sizeof(uint64_t); off += sizeof(uint64_t))
+            *(uint64_t *)(dst + off) = *(uint64_t *)(src + off);
+    }
+    for (; off < size; ++off)
+        *(uint8_t *)(dst + off) = *(uint8_t *)(src + off);
+}
+
 static uint64_t map_phys_alloc(map_data_t *data, uint64_t size, uint64_t align)
 {
     if (!size || !align || (align & (align - 1))) return 0;
@@ -693,8 +704,7 @@ void __noinline _paging_init()
     if (start_pa > ~(uint64_t)0 - data->kimage_voffset) __builtin_trap();
     sctlr_el1 = start_pa + data->kimage_voffset;
     if (sctlr_el1 > ~(uint64_t)0 - all_size ||
-        (sctlr_el1 & (page_size - 1)) || (paging_init_va & (page_size - 1)) ||
-        ((uint64_t)data->start_img_size & (sizeof(uint64_t) - 1)))
+        (sctlr_el1 & (page_size - 1)) || (paging_init_va & (page_size - 1)))
         __builtin_trap();
 
     uint64_t off;
@@ -707,21 +717,11 @@ void __noinline _paging_init()
     for (off = sctlr_el1; off < sctlr_el1 + all_size; off += sizeof(uint64_t))
         *(uint64_t *)off = 0;
 
-    /* Copy complete words, then copy any remaining bytes without overread. */
-    for (off = 0; (uint64_t)data->start_img_size - off >= sizeof(uint64_t);
-         off += sizeof(uint64_t))
-        *(uint64_t *)(sctlr_el1 + off) = *(uint64_t *)(paging_init_va + off);
-    for (; off < (uint64_t)data->start_img_size; ++off)
-        *(uint8_t *)(sctlr_el1 + off) = *(uint8_t *)(paging_init_va + off);
-
-    off = 0;
-    for (; (uint64_t)data->extra_size - off >= sizeof(uint64_t);
-         off += sizeof(uint64_t))
-        *(uint64_t *)(sctlr_el1 + data->start_size + off) =
-            *(uint64_t *)(paging_init_va + data->start_img_size + off);
-    for (; off < (uint64_t)data->extra_size; ++off)
-        *(uint8_t *)(sctlr_el1 + data->start_size + off) =
-            *(uint8_t *)(paging_init_va + data->start_img_size + off);
+    /* The helper handles unaligned extra offsets and any partial final word. */
+    copy_map_range(sctlr_el1, paging_init_va, (uint64_t)data->start_img_size);
+    copy_map_range(sctlr_el1 + data->start_size,
+                   paging_init_va + data->start_img_size,
+                   (uint64_t)data->extra_size);
 
     flush_icache_all();
 
