@@ -105,6 +105,12 @@ def main():
     require(r"int apply_relocate\([\s\S]*?return\s*-ENOEXEC", relo,
             "unsupported REL helper must fail closed")
 
+    unload = function_body(module, "long unload_module(")
+    require(r"if\s*\(mod->exit\)\s*rc\s*=", unload,
+            "optional KPM exit callback must be checked before invocation")
+    require(r"KP_MODULE_EXITING\s*&&\s*!mod->exit_called", unload,
+            "concurrent unload must not invoke the exit callback twice")
+
     host_header = function_body(host, "int get_kpm_info(")
     for token in ("EI_CLASS", "e_shstrndx", "elf_range_valid",
                   "SHT_STRTAB", "elf_string_valid"):
