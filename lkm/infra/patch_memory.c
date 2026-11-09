@@ -49,9 +49,9 @@
 #define kp_flush_icache(start, end) __flush_icache_range((start), (end))
 #endif
 
+struct cpumask;
 typedef int (*kp_stop_machine_fn_t)(int (*fn)(void *), void *data,
 				      const struct cpumask *cpus);
-struct cpumask;
 static kp_stop_machine_fn_t kp_patch_stop_machine;
 
 /* Resolve the physical address of a kernel VA through init_mm's page tables.
