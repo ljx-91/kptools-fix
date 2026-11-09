@@ -306,7 +306,7 @@ hook_err_t hook_chain_add(hook_chain_t *chain, void *before, void *after, void *
  * @param before 
  * @param after 
  */
-void hook_chain_remove(hook_chain_t *chain, void *before, void *after);
+int hook_chain_remove(hook_chain_t *chain, void *before, void *after);
 
 /**
  * @brief Wrap a function with before and after function. 
@@ -333,7 +333,7 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
  * @param after 
  * @param remove 
  */
-void hook_unwrap_remove(void *func, void *before, void *after, int remove);
+int hook_unwrap_remove(void *func, void *before, void *after, int remove);
 
 static inline void hook_unwrap(void *func, void *before, void *after)
 {
@@ -386,7 +386,7 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
  * @param before 
  * @param after 
  */
-void fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after);
+int fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after);
 
 /**
  * 
