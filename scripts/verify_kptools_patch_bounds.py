@@ -96,6 +96,34 @@ def main():
     need(r"kernel_va\s*==\s*max_va", rela,
          "ARM64 RELA scanner must reject a candidate without a resolved kernel base")
 
+    decoder = body(kallsym_src, "static int decompress_symbol_name(")
+    need(r"info->image_size\\s*<=\\s*0", decoder,
+         "symbol decompressor must require a validated image extent")
+    need(r"info->kallsyms_markers_offset\\s*>\\s*info->image_size", decoder,
+         "symbol decompressor must cap names at the markers boundary")
+    need(r"pos\\s*<\\s*0\\s*\\|\\|\\s*pos\\s*>=\\s*limit", decoder,
+         "symbol decompressor must validate the input cursor")
+    need(r"len\\s*>\\s*limit\\s*-\\s*pos", decoder,
+         "symbol decompressor must bound compressed name bytes")
+    need(r"memchr\\(token,\\s*'\\\\0',\\s*token_remaining\\)", decoder,
+         "symbol decompressor must validate token string termination")
+    need(r"append_len\\s*>\\s*KSYM_SYMBOL_LEN\\s*-\\s*1\\s*-\\s*used", decoder,
+         "symbol decompressor must bound expanded output")
+    index_offset = body(kallsym_src, "int32_t get_symbol_index_offset(")
+    need(r"index\\s*<\\s*0.*?index\\s*>=\\s*info->kallsyms_num_syms", index_offset,
+         "symbol address lookup must validate symbol indexes")
+    need(r"info->image_size\\s*-\\s*elem_size", index_offset,
+         "symbol address lookup must validate image coverage")
+    analyze = body(kallsym_src, "int analyze_kallsym_info(")
+    need(r"info->image_size\\s*=\\s*imglen", analyze,
+         "Kallsyms analysis must retain the validated image size")
+    need(r"if\\s*\\(!copied_img\\)", analyze,
+         "Kallsyms analysis must reject allocation failure")
+    for call in ("get_symbol_offset_and_size(", "get_symbol_offset(", "dump_all_symbols(", "on_each_symbol("):
+        fn = body(kallsym_src, "int " + call)
+        if "decompress_symbol_name(info, img, &pos" not in fn or "return -1;" not in fn:
+            raise AssertionError(f"{call} must propagate bounded decoder failures")
+
     preset = body(src, "preset_t *get_preset(")
     need(r"min_preset_size", preset, "preset search must require a complete minimum header")
     need(r"tail\s*>=\s*min_preset_size", preset, "preset candidate must fit inside input")
