@@ -940,7 +940,7 @@ static void hook_chain_remove_locked(hook_chain_t *chain, void *before, void *af
     }
 }
 
-void hook_chain_remove(hook_chain_t *chain, void *before, void *after)
+int hook_chain_remove(hook_chain_t *chain, void *before, void *after)
 {
     unsigned long flags;
     if (!chain) return;
@@ -1016,39 +1016,38 @@ fail:
 }
 KP_EXPORT_SYMBOL(hook_wrap);
 
-void hook_unwrap_remove(void *func, void *before, void *after, int remove)
+int hook_unwrap_remove(void *func, void *before, void *after, int remove)
 {
     uint64_t origin;
     hook_chain_t *chain;
     unsigned long flags;
     int i, rc;
 
-    if (is_bad_address(func)) return;
+    if (is_bad_address(func)) return -HOOK_BAD_ADDRESS;
     origin = branch_func_addr((uint64_t)func);
-    if (is_bad_address((void *)origin)) return;
+    if (is_bad_address((void *)origin)) return -HOOK_BAD_ADDRESS;
     chain = (hook_chain_t *)hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
-    if (!chain) return;
+    if (!chain) return -ENOENT;
 
-    hook_chain_remove(chain, before, after);
-    if (!remove) return;
+    if (hook_chain_remove(chain, before, after) == -EBUSY)
+        return -EBUSY;
+    if (!remove) return 0;
     hook_chain_reap_slots(chain, 0);
 
     flags = hook_engine_lock();
 if (hook_get_mem_from_origin_type(origin, INLINE_CHAIN) != chain) {
         hook_engine_unlock(flags);
-        return;
+        return -ENOENT;
     }
     for (i = 0; i < HOOK_CHAIN_NUM; i++) {
         if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY) {
             hook_engine_unlock(flags);
-            return;
+            return -EBUSY;
         }
     }
     rc = hook_uninstall(&chain->hook);
     if (!rc)
         hook_mem_retire(chain);
     hook_engine_unlock(flags);
-    if (rc)
-        logkv("Unwrap func: %llx restore failed: %d; retaining chain memory\\n", (uint64_t)func, rc);
-}
+    return rc;
 KP_EXPORT_SYMBOL(hook_unwrap_remove);
