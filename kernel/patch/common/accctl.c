@@ -144,7 +144,7 @@ int set_all_allow_sctx(const char *sctx)
     int rc = security_secctx_to_secid(sctx, strlen(sctx), &sid);
     if (!rc && sid != SECSID_NULL) {
         strncpy(all_allow_sctx, sctx, sizeof(all_allow_sctx) - 1);
-        all_allow_sctx[sizeof(all_allow_sctx) - 1] = '\\0';
+        all_allow_sctx[sizeof(all_allow_sctx) - 1] = '\0';
         /* Publish the completed context only after its string is ready. */
         dsb(ish);
         WRITE_ONCE(all_allow_sid, sid);
