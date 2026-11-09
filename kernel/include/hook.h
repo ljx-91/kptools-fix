@@ -331,11 +331,13 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
  * @param func 
  * @param before 
  * @param after 
- * @param remove 
+ * @param remove
+ * @return 0 when retired; -EBUSY while a transit reader still holds the slot.
+ * Keep callback data alive and retry until the function returns 0.
  */
 int hook_unwrap_remove(void *func, void *before, void *after, int remove);
 
-static inline void hook_unwrap(void *func, void *before, void *after)
+static inline int hook_unwrap(void *func, void *before, void *after)
 {
     return hook_unwrap_remove(func, before, after, 1);
 }
