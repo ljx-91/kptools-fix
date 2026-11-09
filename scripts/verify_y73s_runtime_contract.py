@@ -204,8 +204,8 @@ def main():
             "unhook() must reject a null or invalid original function")
     require(r"is_bad_address\(\(void \*\)origin\)", unhook_fn,
             "unhook() must reject failed entry resolution")
-    require(r"hook_install\(&chain->hook\)", wrap_fn,
-            "hook_wrap() must call and check the underlying patch operation")
+    require(r"patch_rc\s*=\s*hook_install\(hook\)", wrap_fn,
+            "hook_wrap() must inspect the underlying patch operation status")
     require(r"patch_rc == -EUCLEAN", wrap_fn,
             "hook_wrap() must retain chain storage after uncertain rollback")
     require(r"err = -HOOK_PATCH_FAILED", wrap_fn,
