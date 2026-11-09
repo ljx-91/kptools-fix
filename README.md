@@ -43,3 +43,10 @@ Linux 3.18 - 6.6 (theoretically)
 ## License
 
 KernelPatch is licensed under the **GNU General Public License (GPL) 2.0** (<https://www.gnu.org/licenses/old-licenses/gpl-2.0.html>).
+
+## Vivo Y73s 定向分支
+
+本仓库的 Y73s 定向实验分支及当前验证状态见：
+[README_Y73S_CN.md](README_Y73S_CN.md) → [Y73S_STATUS_CN.md](Y73S_STATUS_CN.md)。
+
+CI 构建通过不代表目标内核 LKM 编译或真机启动已通过；请以状态文档中的验证边界为准。
