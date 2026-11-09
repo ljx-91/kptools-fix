@@ -223,21 +223,6 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
     for (i = 0; i < relhdr->sh_size / sizeof(*rel); i++) {
         unsigned int type = ELF64_R_TYPE(rel[i].r_info);
         unsigned int symno = ELF64_R_SYM(rel[i].r_info);
-        unsigned int width;
-
-        switch (type) {
-        case R_ARM_NONE:
-        case R_AARCH64_NONE: width = 0; break;
-        case R_AARCH64_ABS64:
-        case R_AARCH64_PREL64: width = 8; break;
-        case R_AARCH64_ABS16:
-        case R_AARCH64_PREL16: width = 2; break;
-        default: width = 4; break;
-        }
-        if (symno >= symhdr->sh_size / sizeof(Elf64_Sym)) return -ENOEXEC;
-        if (rel[i].r_offset > targethdr->sh_size ||
-            width > targethdr->sh_size - rel[i].r_offset) return -ENOEXEC;
-        if (width && (rel[i].r_offset & (width - 1))) return -ENOEXEC;
 
         /* loc corresponds to P in the AArch64 ELF document. */
         loc = (void *)targethdr->sh_addr + rel[i].r_offset;
@@ -382,7 +367,10 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
             goto rollback;
         }
 
-        if (overflow_check && ovf == -ERANGE) goto overflow;
+        if (ovf < 0) {
+            ret = (overflow_check && ovf == -ERANGE) ? -ENOEXEC : ovf;
+            goto rollback;
+        }
     }
     vfree(backup);
     return 0;
