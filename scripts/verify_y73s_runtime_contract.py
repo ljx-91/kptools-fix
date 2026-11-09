@@ -135,7 +135,7 @@ def main():
     unhook_fn = function_body(hook_c, "void unhook(void *func)")
     before(unhook_fn, "hook_mem_claim_retire(hook)", "hook_uninstall(hook)",
            "unhook must reserve the registry entry before restoring text")
-    require(r"if \(!rc\)\\s*hook_mem_retire\(hook\);\\s*else\\s*hook_mem_cancel_retire\(hook\);",
+    require(r"if \(!rc\)\s*hook_mem_retire\(hook\);\s*else\s*hook_mem_cancel_retire\(hook\);",
             unhook_fn, "failed unhook must cancel retirement and retain the live trampoline")
 
 
