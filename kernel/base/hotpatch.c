@@ -11,6 +11,8 @@
 #include <pgtable.h>
 #include <linux/vmalloc.h>
 #include <linux/stop_machine.h>
+#include <linux/spinlock.h>
+#include <kp_spinlock.h>
 #include <uapi/asm-generic/errno.h>
 
 static uintptr_t table_pa_mask = 0;
@@ -19,6 +21,7 @@ static void *alias_page = 0;
 static uintptr_t *alias_entry = 0;
 static uintptr_t alias_pte = 0;
 static bool hotpatch_early_boot = false;
+static DEFINE_SPINLOCK(hotpatch_ptr_lock);
 
 void hotpatch_set_early_boot(int enabled)
 {
@@ -167,7 +170,8 @@ static int hotpatch_ptr64_run(struct hotpatch_ptr64_t *patch)
 {
     uintptr_t va, *entry, original_pte;
     uint64_t old, seen;
-    int rc = 0;
+    unsigned long flags;
+    int rc = 0, attempts = 0;
 
     if (!patch || !patch->addr || ((uintptr_t)patch->addr & 7))
         return -EINVAL;
@@ -176,6 +180,7 @@ static int hotpatch_ptr64_run(struct hotpatch_ptr64_t *patch)
     if (!entry)
         return -EFAULT;
 
+    flags = kp_private_spin_lock(&hotpatch_ptr_lock);
     original_pte = *entry;
     modify_entry_kernel(va, entry, (original_pte | PTE_DBM) & ~PTE_RDONLY);
     dsb(ishst);
@@ -199,12 +204,17 @@ static int hotpatch_ptr64_run(struct hotpatch_ptr64_t *patch)
                 break;
             }
             old = seen;
+            if (++attempts >= 16) {
+                rc = -EAGAIN;
+                break;
+            }
         }
     }
 
     modify_entry_kernel(va, entry, original_pte);
     __flush_dcache_area((void *)va, sizeof(uint64_t));
     dsb(ishst);
+    kp_private_spin_unlock(&hotpatch_ptr_lock, flags);
     return rc;
 }
 
