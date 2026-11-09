@@ -1047,172 +1047,191 @@ static int correct_addresses_or_offsets_by_banner(kallsym_t *info, char *img, in
     return 0;
 }
 
-static int arm64_verify_pid_vnr_window(kallsym_t *info, char *img, int32_t imglen, int32_t offset, int back, int fwd,
-                                       int generic_sp)
+static int arm64_verify_pid_vnr_window(kallsym_t *info, char *img, int32_t imglen,
+                                       int32_t offset, int back, int fwd, int generic_sp)
 {
+    if (!info || !img || imglen <= 0 || offset < 0) return -1;
     for (int i = -back; i < fwd; i++) {
-        int32_t insn_offset = offset + i * 4;
-        if (insn_offset < 0 || insn_offset + 4 > imglen) continue;
-        uint32_t insn = uint_unpack(img + insn_offset, 4, 0);
+        int64_t insn_offset = (int64_t)offset + (int64_t)i * 4;
+        if (insn_offset < 0 || insn_offset > (int64_t)imglen - 4) continue;
+        uint32_t insn = (uint32_t)uint_unpack(img + insn_offset, 4, 0);
         enum aarch64_insn_encoding_class enc = aarch64_get_insn_class(insn);
-        if (enc == AARCH64_INSN_CLS_BR_SYS) {
-            if (aarch64_insn_extract_system_reg(insn) == AARCH64_INSN_SPCLREG_SP_EL0) {
-                tools_logi("pid_vnr verfied sp_el0, insn: 0x%x (off %+d)\n", insn, i);
-                info->current_type = SP_EL0;
-                return 0;
-            }
+        if (enc == AARCH64_INSN_CLS_BR_SYS &&
+            aarch64_insn_extract_system_reg(insn) == AARCH64_INSN_SPCLREG_SP_EL0) {
+            tools_logi("pid_vnr verified sp_el0, insn: 0x%x (off %+d)\n", insn, i);
+            info->current_type = SP_EL0;
+            return 0;
         }
-        if (generic_sp && i >= 0) {
-            if (enc == AARCH64_INSN_CLS_DP_IMM) {
-                u32 rn = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
-                if (rn == AARCH64_INSN_REG_SP) {
-                    tools_logi("pid_vnr verfied sp, insn: 0x%x\n", insn);
-                    info->current_type = SP;
-                    return 0;
-                }
+        if (generic_sp && i >= 0 && enc == AARCH64_INSN_CLS_DP_IMM) {
+            u32 rn = aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, insn);
+            if (rn == AARCH64_INSN_REG_SP) {
+                tools_logi("pid_vnr verified sp, insn: 0x%x\n", insn);
+                info->current_type = SP;
+                return 0;
             }
         }
     }
     return -1;
 }
 
-static int arm64_verify_pid_vnr(kallsym_t *info, char *img, int32_t imglen, int32_t offset, int wide)
+
+static int arm64_verify_pid_vnr(kallsym_t *info, char *img, int32_t imglen,
+                                int32_t offset, int wide)
 {
-    // Clang CFI kernels export the public name as a single-instruction jump
-    // stub ("b <name>.cfi"); the real body, where 'current' is loaded, is the
-    // branch target. Follow the stub so the check runs on the function body.
-    if (offset >= 0 && offset + 4 <= imglen) {
+    if (!info || !img || imglen <= 0 || offset < 0) return -1;
+
+    /* Clang CFI may expose a one-instruction branch stub; follow it safely. */
+    if ((int64_t)offset + 4 <= imglen) {
         uint32_t first = (uint32_t)uint_unpack(img + offset, 4, 0);
         if (aarch64_insn_is_b(first)) {
-            int32_t target = offset + aarch64_get_branch_offset(first);
+            int64_t target = (int64_t)offset + aarch64_get_branch_offset(first);
             if (target >= 0 && target + 4 <= imglen) {
-                tools_logi("pid_vnr is CFI stub, follow branch to offset 0x%08x\n", target);
-                offset = target;
+                tools_logi("pid_vnr is CFI stub, follow branch to offset 0x%08llx\n",
+                           (unsigned long long)target);
+                offset = (int32_t)target;
             }
         }
     }
-    // strict pass: 'current' loaded in the first instructions of the entry
+
     if (!wide) return arm64_verify_pid_vnr_window(info, img, imglen, offset, 0, 6, 1);
-    // wide pass: LTO/ICF folded kernels may point the kallsyms entry into
-    // the middle of the surviving function, so 'current' (mrs sp_el0) can
-    // sit right before the entry or further in; only the sp_el0 system
-    // register read is a strong enough signal to scan a wider window with
     return arm64_verify_pid_vnr_window(info, img, imglen, offset, 4, 12, 0);
 }
 
+
 static int correct_addresses_or_offsets_by_vectors(kallsym_t *info, char *img, int32_t imglen)
 {
-    // vectors .align 11
-    // todo: tramp_vectors .align 11
+    if (!info || !img || imglen <= 0 || info->image_size != imglen ||
+        info->kallsyms_markers_offset <= 0 ||
+        info->kallsyms_markers_offset > imglen) return -1;
+
     int32_t pos = info->kallsyms_names_offset;
-    int32_t index = 0, vector_index = 0, pid_vnr_index = 0;
+    if (pos < 0 || pos >= info->kallsyms_markers_offset) return -1;
+
+    int32_t index = 0;
+    int32_t vector_index = -1;
+    int32_t pid_vnr_index = -1;
     char symbol[KSYM_SYMBOL_LEN] = { '\0' };
     while (pos < info->kallsyms_markers_offset) {
         memset(symbol, 0, sizeof(symbol));
-        int32_t ret = decompress_symbol_name(info, img, &pos, NULL, symbol);
-        if (ret) return ret;
+        if (decompress_symbol_name(info, img, &pos, NULL, symbol)) return -1;
 
-        if (!vector_index && !strcmp(symbol, "vectors")) {
-            vector_index = index;
-        } else if (!pid_vnr_index && !strcmp(symbol, "pid_vnr")) {
-            pid_vnr_index = index;
-        }
-        if (vector_index && pid_vnr_index) {
-            tools_logi("names table vector index: 0x%08x, pid_vnr index: 0x%08x\n", vector_index, pid_vnr_index);
-            break;
-        }
+        if (vector_index < 0 && !strcmp(symbol, "vectors")) vector_index = index;
+        if (pid_vnr_index < 0 && !strcmp(symbol, "pid_vnr")) pid_vnr_index = index;
+        if (vector_index >= 0 && pid_vnr_index >= 0) break;
         index++;
     }
 
-    if (pos >= info->kallsyms_markers_offset) {
-        tools_loge("no verify symbol in names table\n");
+    if (pos >= info->kallsyms_markers_offset ||
+        vector_index < 0 || pid_vnr_index < 0 ||
+        vector_index + 1 >= info->kallsyms_num_syms ||
+        pid_vnr_index >= info->kallsyms_num_syms) {
+        tools_loge("no valid vectors/pid_vnr entries in names table\n");
         return -1;
     }
 
-    int32_t elem_size = info->has_relative_base ? get_offsets_elem_size(info) : get_addresses_elem_size(info);
-
-    uint64_t base_cand[3] = { 0 };
-    int base_cand_num = 1;
-
-    if (!info->has_relative_base) {
-        uint64_t base = uint_unpack(img + info->_approx_addresses_or_offsets_offset, elem_size, info->is_be);
-        base_cand[0] = base;
-        if (info->kernel_base) {
-            base_cand[base_cand_num++] = info->kernel_base;
-        }
-        if (info->kernel_base != ELF64_KERNEL_MIN_VA) {
-            base_cand[base_cand_num++] = ELF64_KERNEL_MIN_VA;
-        }
+    int32_t elem_size = info->has_relative_base ?
+        get_offsets_elem_size(info) : get_addresses_elem_size(info);
+    int32_t table_start = info->_approx_addresses_or_offsets_offset;
+    int32_t table_end = info->_approx_addresses_or_offsets_end;
+    if ((elem_size != 4 && elem_size != 8) || table_start < 0 ||
+        table_end > imglen || table_end < table_start ||
+        table_start > table_end - elem_size) {
+        tools_loge("invalid address table range for vector verification\n");
+        return -1;
     }
 
-    int32_t search_start = info->_approx_addresses_or_offsets_offset;
+    uint64_t base_cand[3] = { 0 };
+    int32_t base_cand_num = 1;
+    if (!info->has_relative_base) {
+        base_cand[0] = uint_unpack(img + table_start, elem_size, info->is_be);
+        if (info->kernel_base && info->kernel_base != base_cand[0])
+            base_cand[base_cand_num++] = info->kernel_base;
+        if (info->kernel_base != ELF64_KERNEL_MIN_VA &&
+            ELF64_KERNEL_MIN_VA != base_cand[0] &&
+            (!base_cand_num || base_cand[base_cand_num - 1] != ELF64_KERNEL_MIN_VA))
+            base_cand[base_cand_num++] = ELF64_KERNEL_MIN_VA;
+    }
+
     int32_t max_shift = info->_approx_addresses_or_offsets_num - info->kallsyms_num_syms;
     if (max_shift < 0) max_shift = 0;
-    int32_t search_end = search_start + (max_shift + 1) * elem_size;
-    int32_t pid_vnr_limit = info->_approx_addresses_or_offsets_end - pid_vnr_index * elem_size;
-    if (search_end > pid_vnr_limit) search_end = pid_vnr_limit;
 
-    int break_flag = 0;
-    // pass 0 verifies pid_vnr strictly within its first instructions; pass 1
-    // widens the window for LTO/ICF folded kernels whose pid_vnr entry is
-    // mid-function, only matching the strong sp_el0 system register read
-    for (int pass = 0; pass < 2 && !break_flag; pass++) {
-    for (int i = 0; i < base_cand_num; i++) {
-        uint64_t base = base_cand[i];
-
-        for (pos = search_start; pos < search_end; pos += elem_size) {
+    int64_t search_start = table_start;
+    int64_t search_end = (int64_t)table_start +
+        ((int64_t)max_shift + 1) * elem_size;
+    int64_t pid_limit = (int64_t)table_end - (int64_t)pid_vnr_index * elem_size;
+    int64_t vector_limit = (int64_t)table_end - (int64_t)(vector_index + 1) * elem_size;
+    int64_t alias_limit = (int64_t)table_end - 2LL * elem_size;
+    if (search_end > pid_limit) search_end = pid_limit;
+    if (search_end > vector_limit) search_end = vector_limit;
 #if KP_STRICT_KALLSYMS
-            /*
-             * On the CONFIG_KALLSYMS_ALL=n ARM64 fallback path, the first
-             * three kallsyms entries are aliases at the same address on the
-             * target 4.14 vendor kernel. Requiring this small invariant keeps
-             * a relocation table / unrelated pointer run from looking like
-             * kallsyms. A mismatch rejects this candidate; it never changes
-             * or hard-codes a runtime address.
-             */
-            if (info->arch == ARM64) {
-                if (pos < 0 || pos + 3 * elem_size > info->_approx_addresses_or_offsets_end) continue;
-                uint64_t first = uint_unpack(img + pos, elem_size, info->is_be);
-                if (uint_unpack(img + pos + elem_size, elem_size, info->is_be) != first ||
-                    uint_unpack(img + pos + 2 * elem_size, elem_size, info->is_be) != first) {
-                    continue;
-                }
-            }
+    if (info->arch == ARM64 && search_end > alias_limit) search_end = alias_limit;
 #endif
-            int32_t vector_offset = uint_unpack(img + pos + vector_index * elem_size, elem_size, info->is_be) - base;
-            int32_t vector_next_offset =
-                uint_unpack(img + pos + vector_index * elem_size + elem_size, elem_size, info->is_be) - base;
-            if (vector_next_offset - vector_offset >= 0x600 && (vector_offset & ((1 << 11) - 1)) == 0) {
-                int32_t pid_vnr_offset =
-                    uint_unpack(img + pos + pid_vnr_index * elem_size, elem_size, info->is_be) - base;
-                if (!arm64_verify_pid_vnr(info, img, imglen, pid_vnr_offset, pass)) {
-                    tools_logi("vectors index: %d, offset: 0x%08x\n", vector_index, vector_offset);
-                    tools_logi("pid_vnr offset: 0x%08x\n", pid_vnr_offset);
+    if (search_end <= search_start) {
+        tools_loge("address table has no complete vector verification window\n");
+        return -1;
+    }
+
+    int32_t matched_pos = -1;
+    int break_flag = 0;
+    for (int pass = 0; pass < 2 && !break_flag; pass++) {
+        for (int i = 0; i < base_cand_num && !break_flag; i++) {
+            uint64_t base = base_cand[i];
+            for (int64_t candidate = search_start; candidate < search_end;
+                 candidate += elem_size) {
+#if KP_STRICT_KALLSYMS
+                if (info->arch == ARM64) {
+                    if (candidate < 0 || candidate + 3LL * elem_size > table_end) continue;
+                    uint64_t first = uint_unpack(img + candidate, elem_size, info->is_be);
+                    if (uint_unpack(img + candidate + elem_size, elem_size, info->is_be) != first ||
+                        uint_unpack(img + candidate + 2LL * elem_size, elem_size, info->is_be) != first)
+                        continue;
+                }
+#endif
+                int64_t vector_raw = (int64_t)uint_unpack(
+                    img + candidate + (int64_t)vector_index * elem_size, elem_size, info->is_be);
+                int64_t vector_next_raw = (int64_t)uint_unpack(
+                    img + candidate + (int64_t)(vector_index + 1) * elem_size, elem_size, info->is_be);
+                if (vector_raw < (int64_t)base || vector_next_raw < (int64_t)base) continue;
+
+                uint64_t vector_delta = (uint64_t)(vector_raw - (int64_t)base);
+                uint64_t vector_next_delta = (uint64_t)(vector_next_raw - (int64_t)base);
+                if (vector_delta > INT32_MAX || vector_next_delta > INT32_MAX) continue;
+                int64_t vector_span = (int64_t)vector_next_delta - (int64_t)vector_delta;
+                if (vector_span < 0x600 || (vector_delta & ((1U << 11) - 1))) continue;
+
+                int64_t pid_raw = (int64_t)uint_unpack(
+                    img + candidate + (int64_t)pid_vnr_index * elem_size, elem_size, info->is_be);
+                if (pid_raw < (int64_t)base) continue;
+                uint64_t pid_delta = (uint64_t)(pid_raw - (int64_t)base);
+                if (pid_delta > INT32_MAX) continue;
+
+                if (!arm64_verify_pid_vnr(info, img, imglen, (int32_t)pid_delta, pass)) {
+                    tools_logi("vectors index: %d, offset: 0x%08x\n",
+                               vector_index, (uint32_t)vector_delta);
+                    tools_logi("pid_vnr offset: 0x%08x\n", (uint32_t)pid_delta);
                     info->kernel_base = base;
+                    matched_pos = (int32_t)candidate;
                     break_flag = 1;
                     break;
                 }
             }
         }
-
-        if (break_flag) break;
-    }
     }
 
-    if (pos >= search_end) {
+    if (!break_flag || matched_pos < 0) {
         tools_loge("can't locate vectors after strict kallsyms validation\n");
         return -1;
     }
 
     if (info->has_relative_base) {
-        info->kallsyms_offsets_offset = pos;
-        tools_logi("kallsyms_offsets offset: 0x%08x\n", pos);
+        info->kallsyms_offsets_offset = matched_pos;
+        tools_logi("kallsyms_offsets offset: 0x%08x\n", matched_pos);
     } else {
-        info->kallsyms_addresses_offset = pos;
-        tools_logi("kallsyms_addresses offset: 0x%08x\n", pos);
-        tools_logi("kernel base address: 0x%08llx\n", info->kernel_base);
+        info->kallsyms_addresses_offset = matched_pos;
+        tools_logi("kallsyms_addresses offset: 0x%08x\n", matched_pos);
+        tools_logi("kernel base address: 0x%08llx\n",
+                   (unsigned long long)info->kernel_base);
     }
-
     return 0;
 }
 
