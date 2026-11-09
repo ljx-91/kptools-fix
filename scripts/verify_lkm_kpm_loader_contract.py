@@ -35,10 +35,9 @@ def need(pattern, source, message):
 def main():
     module = read("lkm/kpm/module.c")
     relo = read("lkm/kpm/relo.c")
-    movw = function_body(relo, "static int reloc_insn_movw(")
-    before(movw, "if (sval >= 0)", "imm = ~imm",
-           "signed MOVW must select MOVZ/MOVN from the untruncated signed value")
-    if "(s64)imm >= 0" in movw:
+    need(r"if\s*\(sval\s*>=\s*0\).*?imm\s*=\s*~imm", relo,
+         "signed MOVW must select MOVZ/MOVN from the untruncated signed value")
+    if "(s64)imm >= 0" in relo:
         raise AssertionError("signed MOVW selector must not inspect the truncated 16-bit immediate")
     kbuild = read("lkm/Kbuild")
 
