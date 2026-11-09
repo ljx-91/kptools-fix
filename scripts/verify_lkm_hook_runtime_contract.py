@@ -38,8 +38,23 @@ patch_exchange = function_body(patch_memory, "int kp_patch_exchange64(")
 patch_cmpxchg = function_body(patch_memory, "int kp_patch_cmpxchg64(")
 patch_batch = function_body(patch_memory, "static int kp_patch_text_batch_stop(")
 patch_text_batch = function_body(patch_memory, "int kp_patch_text_batch(")
+hook_make_exec = function_body(runtime, "static int kp_hook_make_exec(")
+hook_exec_alloc = function_body(runtime, "static void *kp_hook_exec_alloc(")
+hook_runtime_init = function_body(runtime, "int kp_hook_runtime_init(void)")
 
 checks = {
+    "LKM hook executable pages clear BTI guard and verify permissions":
+        "kp_hook_init_mm" in runtime and
+        "pte_lockptr(kp_hook_init_mm, pmd)" in hook_make_exec and
+        "set_pte_at(kp_hook_init_mm, addr, pte" in hook_make_exec and
+        "KP_HOOK_PTE_PXN" in hook_make_exec and
+        "KP_HOOK_PTE_UXN" in hook_make_exec and
+        "KP_HOOK_PTE_GP" in hook_make_exec,
+    "LKM hook allocator fails closed when executable page setup fails":
+        "kp_hook_make_exec(p, alloc_size)" in hook_exec_alloc and
+        "kp_hook_exec_free(p);" in hook_exec_alloc and
+        'kp_resolve_symbol("init_mm")' in hook_runtime_init and
+        "return -ENOSYS;" in hook_runtime_init,
     "LKM backend defines hook_mem_retire": "void hook_mem_retire(void *payload)" in runtime,
     "retire unlinks metadata without freeing executable region":
         "list_del(&mem->list);" in runtime and
