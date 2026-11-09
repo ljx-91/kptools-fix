@@ -26,9 +26,10 @@ jobs:
       - name: Verify LKM KPM ELF and relocation contracts
         run: |
           set -eux
-          python3 -m py_compile scripts/verify_lkm_kpm_loader_contract.py scripts/verify_lkm_hook_runtime_contract.py
+          python3 -m py_compile scripts/verify_lkm_kpm_loader_contract.py scripts/verify_lkm_hook_runtime_contract.py scripts/verify_kpm_lifecycle_contract.py
           python3 scripts/verify_lkm_kpm_loader_contract.py
           python3 scripts/verify_lkm_hook_runtime_contract.py
+          python3 scripts/verify_kpm_lifecycle_contract.py
 
   build-kptools:
     runs-on: ubuntu-22.04
