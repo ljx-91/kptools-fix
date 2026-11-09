@@ -931,6 +931,27 @@ void kp_hook_owner_call_put(void *owner)
 	kp_module_put(owner);
 }
 
+/* Public KPM lifetime API for work items and callbacks outside Hook chains. */
+int kp_kpm_owner_pin(unsigned long callback_addr, void **owner)
+{
+	return kp_hook_owner_register(callback_addr, owner);
+}
+
+void kp_kpm_owner_unpin(void *owner)
+{
+	kp_hook_owner_unregister(owner);
+}
+
+int kp_kpm_owner_call_get(void *owner)
+{
+	return kp_hook_owner_call_get(owner);
+}
+
+void kp_kpm_owner_call_put(void *owner)
+{
+	kp_hook_owner_call_put(owner);
+}
+
 /* Hold the owning KPM alive for the complete kernel kallsyms iteration.
  * LOADING is permitted because init may itself iterate kallsyms. UNLOADING
  * is permitted only while an existing active call keeps teardown pending;
