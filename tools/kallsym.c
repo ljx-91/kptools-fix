@@ -400,6 +400,10 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
         tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 ", try: %" PRIx64 "\n", kernel_va, info->kernel_base);
         kernel_va = info->kernel_base;
     } else {
+        if (kernel_va == max_va) {
+            tools_logw("ARM64 relocation entries do not provide a valid kernel base\\n");
+            return 0;
+        }
         info->kernel_base = kernel_va;
         tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 "\n", kernel_va);
     }
