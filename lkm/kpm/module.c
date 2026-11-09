@@ -134,10 +134,11 @@ static int kp_clear_bti_gp(unsigned long base, unsigned long size)
 	return kp_update_bti_gp(base, size, true);
 }
 
+__attribute__((no_sanitize("cfi"), __noinline__))
 static int kp_restore_nx_gp(unsigned long base, unsigned long size)
 {
 	if (kp_set_memory_nx)
-		kp_do_set_memory_nx(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
+		kp_set_memory_nx(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
 	return kp_update_bti_gp(base, size, false);
 }
 
