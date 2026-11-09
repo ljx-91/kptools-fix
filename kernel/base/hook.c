@@ -820,48 +820,86 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
 static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno);
 #endif
 
-hook_err_t hook_chain_add(hook_chain_t *chain, void *before, void *after, void *udata)
+static hook_err_t hook_chain_add_locked(hook_chain_t *chain, void *before, void *after, void *udata)
 {
-    for (int i = 0; i < HOOK_CHAIN_NUM; i++) {
-        if ((before && chain->befores[i] == before) || (after && chain->afters[i] == after)) return -HOOK_DUPLICATED;
+    void *before_owner = NULL, *after_owner = NULL;
+    int rc, i;
 
-        // todo: atomic or lock
-        if (chain->states[i] == CHAIN_ITEM_STATE_EMPTY) {
-            chain->states[i] = CHAIN_ITEM_STATE_BUSY;
-            dsb(ish);
-            chain->udata[i] = udata;
-            chain->befores[i] = before;
-            chain->afters[i] = after;
-            if (i + 1 > chain->chain_items_max) {
-                chain->chain_items_max = i + 1;
-            }
-            dsb(ish);
-            chain->states[i] = CHAIN_ITEM_STATE_READY;
-            logkv("Wrap chain add: %llx, %llx, %llx successed\n", chain->hook.func_addr, (uint64_t)before, (uint64_t)after);
-            return HOOK_NO_ERR;
+    if (!chain || (!before && !after))
+        return -HOOK_BAD_ADDRESS;
+    if (before) {
+        rc = kp_hook_owner_register((unsigned long)before, &before_owner);
+        if (rc < 0) return -EBUSY;
+    }
+    if (after) {
+        rc = kp_hook_owner_register((unsigned long)after, &after_owner);
+        if (rc < 0) {
+            kp_hook_owner_unregister(before_owner);
+            return -EBUSY;
         }
     }
-    logkv("Wrap chain add: %llx, %llx, %llx failed\n", chain->hook.func_addr, (uint64_t)before, (uint64_t)after);
+
+    for (i = 0; i < HOOK_CHAIN_NUM; i++) {
+        int state = __atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST);
+        if (state != CHAIN_ITEM_STATE_EMPTY &&
+            ((before && chain->befores[i] == before) ||
+             (after && chain->afters[i] == after))) {
+            kp_hook_owner_unregister(before_owner);
+            kp_hook_owner_unregister(after_owner);
+            return -HOOK_DUPLICATED;
+        }
+    }
+    for (i = 0; i < HOOK_CHAIN_NUM; i++) {
+        if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY)
+            continue;
+        chain->udata[i] = udata;
+        chain->befores[i] = before;
+        chain->afters[i] = after;
+        chain->before_owners[i] = before_owner;
+        chain->after_owners[i] = after_owner;
+        if (i + 1 > chain->chain_items_max)
+            chain->chain_items_max = i + 1;
+        __atomic_store_n(&chain->states[i], CHAIN_ITEM_STATE_READY, __ATOMIC_SEQ_CST);
+        return HOOK_NO_ERR;
+    }
+    kp_hook_owner_unregister(before_owner);
+    kp_hook_owner_unregister(after_owner);
     return -HOOK_CHAIN_FULL;
+}
+
+hook_err_t hook_chain_add(hook_chain_t *chain, void *before, void *after, void *udata)
+{
+    unsigned long flags = hook_engine_lock();
+    hook_err_t rc = hook_chain_add_locked(chain, before, after, udata);
+    hook_engine_unlock(flags);
+    return rc;
 }
 KP_EXPORT_SYMBOL(hook_chain_add);
 
+static void hook_chain_remove_locked(hook_chain_t *chain, void *before, void *after)
+{
+    int i;
+    for (i = 0; i < HOOK_CHAIN_NUM; i++) {
+        if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_READY)
+            continue;
+        if ((before && chain->befores[i] == before) ||
+            (after && chain->afters[i] == after)) {
+            __atomic_store_n(&chain->states[i], CHAIN_ITEM_STATE_RETIRED, __ATOMIC_SEQ_CST);
+            break;
+        }
+    }
+}
+
 void hook_chain_remove(hook_chain_t *chain, void *before, void *after)
 {
-    for (int i = 0; i < HOOK_CHAIN_NUM; i++) {
-        if (chain->states[i] == CHAIN_ITEM_STATE_READY)
-            if ((before && chain->befores[i] == before) || (after && chain->afters[i] == after)) {
-                chain->states[i] = CHAIN_ITEM_STATE_BUSY;
-                dsb(ish);
-                chain->udata[i] = 0;
-                chain->befores[i] = 0;
-                chain->afters[i] = 0;
-                dsb(ish);
-                chain->states[i] = CHAIN_ITEM_STATE_EMPTY;
-                break;
-            }
-    }
-    logkv("Wrap chain remove: %llx, %llx, %llx\n", chain->hook.func_addr, (uint64_t)before, (uint64_t)after);
+    unsigned long flags;
+    if (!chain) return;
+    flags = hook_engine_lock();
+    hook_chain_remove_locked(chain, before, after);
+    hook_engine_unlock(flags);
+    hook_chain_reap_slots(chain, 0);
+    logkv("Wrap chain remove: %llx, %llx, %llx\n",
+          chain->hook.func_addr, (uint64_t)before, (uint64_t)after);
 }
 KP_EXPORT_SYMBOL(hook_chain_remove);
 
