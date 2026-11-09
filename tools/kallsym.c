@@ -760,6 +760,14 @@ static int find_num_syms(kallsym_t *info, char *img, int32_t imglen)
 
 static int find_markers_internal(kallsym_t *info, char *img, int32_t imglen, int32_t elem_size)
 {
+    if (!info || !img || imglen <= 0 ||
+        (elem_size != 4 && elem_size != 8) ||
+        info->kallsyms_token_table_offset < 0 ||
+        info->kallsyms_token_table_offset > imglen - elem_size) {
+        tools_logw("invalid kallsyms_markers scan range\\n");
+        return -1;
+    }
+
     int32_t cand = info->kallsyms_token_table_offset;
 
     int64_t marker, last_marker = imglen;
@@ -783,7 +791,12 @@ static int find_markers_internal(kallsym_t *info, char *img, int32_t imglen, int
         return -1;
     }
 
-    int32_t marker_end = cand + count * elem_size + elem_size;
+    int64_t marker_end64 = (int64_t)cand + (int64_t)count * elem_size + elem_size;
+    if (cand < 0 || marker_end64 < cand || marker_end64 > imglen) {
+        tools_logw("kallsyms_markers range exceeds the image\\n");
+        return -1;
+    }
+    int32_t marker_end = (int32_t)marker_end64;
 
     // Validate marker values read forward. Each marker is a byte offset into
     // kallsyms_names, which ends at markers_offset (== cand), so every value
