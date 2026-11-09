@@ -83,6 +83,12 @@ checks = {
         "mod->active_calls != UINT_MAX" in body(kpimg, "int kp_hook_owner_call_get("),
     "KPIMG unload waits for async and hook owner pins":
         "mod->active_calls || mod->hook_refs" in body(kpimg, "long unload_module("),
+    "LKM file load checks kernel_read return and final position":
+        "ssize_t read_len = kernel_read" in body(lkm, "long kp_load_module_path(") and
+        "read_len != len || pos != len" in body(lkm, "long kp_load_module_path("),
+    "KPIMG file load checks kernel_read return and final position":
+        "ssize_t read_len = kernel_read" in body(kpimg, "long load_module_path_event(") and
+        "read_len != len || pos != len" in body(kpimg, "long load_module_path_event("),
     "LKM event snapshots roll back references on counter overflow":
         "pos->active_calls == UINT_MAX" in body(lkm, "long kp_notify_modules_event(") and
         "snapshot[i]->active_calls--" in body(lkm, "long kp_notify_modules_event(") and
