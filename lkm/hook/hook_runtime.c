@@ -222,10 +222,6 @@ int kp_hook_runtime_init(void)
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_EXECMEM;
 	else
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_VMALLOC;
-	else {
-		logke("no matched executable-memory allocator/free backend\\n");
-		return -ENOSYS;
-	}
 	logki("KPM hook runtime ready backend=%d module_alloc=%px execmem_alloc=%px set_memory_x=%px\\n",
 	      kp_hook_alloc_backend, kp_hook_module_alloc, kp_hook_execmem_alloc, kp_hook_set_memory_x);
 	return 0;
