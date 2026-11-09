@@ -43,6 +43,7 @@ static int reloc_data(enum kp_aarch64_reloc_op op, void *place, u64 val, int len
 {
 	u64 imm_mask;
 	s64 sval = do_reloc(op, place, val);
+	s64 value = sval;
 
 	if (len == 64)
 		imm_mask = ~0ULL;
@@ -62,13 +63,13 @@ static int reloc_data(enum kp_aarch64_reloc_op op, void *place, u64 val, int len
 
 	switch (len) {
 	case 16:
-		*(s16 *)place = sval;
+		*(s16 *)place = (s16)value;
 		break;
 	case 32:
-		*(s32 *)place = sval;
+		*(s32 *)place = (s32)value;
 		break;
 	case 64:
-		*(s64 *)place = sval;
+		*(s64 *)place = value;
 		break;
 	default:
 		return -EINVAL;
@@ -313,4 +314,5 @@ rollback:
 	if (target->sh_size)
 		memcpy((void *)target->sh_addr, backup, target->sh_size);
 	vfree(backup);
-	return ret;}
+	return ret;
+}
