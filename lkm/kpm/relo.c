@@ -105,7 +105,7 @@ static int reloc_insn_movw(enum kp_aarch64_reloc_op op, void *place, u64 val, in
 		/* For signed MOVW relocations, manipulate the instruction
 		 * encoding depending on whether the immediate is negative. */
 		insn &= ~(3 << 29);
-		if ((s64)imm >= 0) {
+		if (sval >= 0) {
 			/* >=0: MOVZ (opcode 10b). */
 			insn |= 2 << 29;
 		} else {
