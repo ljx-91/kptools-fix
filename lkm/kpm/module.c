@@ -844,6 +844,8 @@ static struct kp_module *kp_module_get(const char *name)
 	mod = kp_find_module_locked(name);
 	if (!mod || mod->state != KP_MODULE_LIVE)
 		mod = NULL;
+	else if (mod->active_calls == UINT_MAX)
+		mod = NULL;
 	else
 		mod->active_calls++;
 	spin_unlock_irqrestore(&module_lock, flags);
@@ -931,9 +933,12 @@ int kp_hook_owner_call_get(void *owner)
 	if (!mod)
 		return 0;
 	spin_lock_irqsave(&module_lock, flags);
-	if (mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING) {
+	if ((mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING) &&
+	    mod->active_calls != UINT_MAX) {
 		mod->active_calls++;
 		rc = 1;
+	} else if (mod->active_calls == UINT_MAX) {
+		rc = -EOVERFLOW;
 	} else {
 		rc = -EBUSY;
 	}
@@ -988,6 +993,8 @@ static struct kp_module *kp_module_get_by_addr(unsigned long addr)
 		start = (unsigned long)pos->start;
 		end = start + pos->text_size;
 		if (end >= start && addr >= start && addr < end) {
+			if (pos->active_calls == UINT_MAX)
+				break;
 			pos->active_calls++;
 			spin_unlock_irqrestore(&module_lock, flags);
 			return pos;
