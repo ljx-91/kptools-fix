@@ -13,8 +13,8 @@
 
 static uint64_t mem_region_start = 0;
 static uint64_t mem_region_end = 0;
-static spinlock_t hook_mem_lock;
-static spinlock_t hook_engine_spinlock;
+static DEFINE_SPINLOCK(hook_mem_lock);
+static DEFINE_SPINLOCK(hook_engine_spinlock);
 static bool hook_locks_ready;
 
 unsigned long hook_engine_lock(void) { return kp_private_spin_lock(&hook_engine_spinlock); }
@@ -44,8 +44,6 @@ int hook_mem_add(uint64_t start, int32_t size)
     if (hook_locks_ready)
         return -EBUSY;
     end = start + (uint64_t)size;
-    spin_lock_init(&hook_mem_lock);
-    spin_lock_init(&hook_engine_spinlock);
     hook_locks_ready = true;
     for (uint64_t i = start; i + sizeof(uint64_t) <= end; i += sizeof(uint64_t))
         *(uint64_t *)i = 0;
