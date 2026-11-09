@@ -60,7 +60,7 @@ static long kp_copy_user_string(char *dst, size_t dst_size,
 
 
 /* Parse the -Z <sctx> option from a SUPERCMD argv: "truncate <key> -Z <sctx>".
- * Returns a static buffer (KP's profile.scontext) or NULL if absent. */
+ * Copies into the caller's stack buffer, or returns NULL if absent/invalid. */
 static const char *kp_get_supercmd_sctx(const struct pt_regs *regs,
 					char *sctx, size_t sctx_size)
 {
@@ -104,24 +104,18 @@ static const char *kp_get_supercmd_sctx(const struct pt_regs *regs,
 static long kp_redirect_to_sh(const struct pt_regs *regs, const char *what, uid_t uid,
 			      bool su_exec, bool manager_exec, const char *sctx)
 {
-	char __user *ufilename = (char __user *)regs->regs[0];
 	char __user **uargv = (char __user **)regs->regs[1];
 	const char *target = KP_SH_PATH;
 	struct file *fp;
 	bool use_apd = false;
+	uintptr_t sp;
+	char __user *new_filename;
 
 	logki("execve %s by uid %u: granting root (sctx=%s)\n", what, uid,
 	      sctx ? sctx : "(kernel)");
 	kp_commit_su(0, sctx);
 
-	/* apd is the full su daemon (handles -c/-s/-u/-l/-p/pty), so a real su
-	 * exec goes to it. SUPERCMD stays on sh: apd's root_shell would parse
-	 * the supercmd's "<key> -Z <sctx>" args with getopts and fail, whereas
-	 * sh (no args) gives the manager its interactive root shell. */
-	/* Keep manager launches on the direct shell path.  APatch uses its own
-	 * SUPERCMD/root-shell bootstrap; sending a manager-owned su exec back to
-	 * apd re-enters userspace dispatch and breaks that bootstrap.  Granted
-	 * applications still need apd so their su arguments are honoured. */
+	/* Keep manager launches on the direct shell path. */
 	if (su_exec && !manager_exec) {
 		fp = filp_open(APD_PATH, O_RDONLY | O_NOFOLLOW, 0);
 		if (!IS_ERR(fp)) {
@@ -132,21 +126,27 @@ static long kp_redirect_to_sh(const struct pt_regs *regs, const char *what, uid_
 	}
 	logki("redirect to %s\n", target);
 
-	/* Overwrite the filename buffer with the target path. */
-	if (copy_to_user(ufilename, target, strlen(target) + 1)) {
-		logkw("failed to overwrite filename buffer\n");
+	/*
+	 * Never overwrite the caller's original filename buffer: it may only
+	 * contain a short string such as "su". Place the replacement string in
+	 * fresh user stack space and redirect syscall argument x0 instead.
+	 */
+	sp = current_user_stack_pointer();
+	sp -= strlen(target) + 1;
+	sp &= ~(uintptr_t)7;
+	new_filename = (char __user *)sp;
+	if (copy_to_user(new_filename, target, strlen(target) + 1)) {
+		logkw("failed to write replacement filename\n");
 		goto passthrough;
 	}
 
 	if (use_apd) {
-		/* apd dispatches on argv[0] ending in "su"/"kp": write a su-style
-		 * name onto the user stack and repoint argv[0] to it. Keep the
-		 * rest of argv intact so apd's root_shell() sees -c/-u/... args. */
-		uintptr_t sp = current_user_stack_pointer();
 		char __user *arg0;
 
+		if (!uargv)
+			goto passthrough;
 		sp -= strlen(LEGACY_SU_PATH) + 1;
-		sp &= 0xFFFFFFFFFFFFFFF8ULL;
+		sp &= ~(uintptr_t)7;
 		arg0 = (char __user *)sp;
 		if (copy_to_user(arg0, LEGACY_SU_PATH, strlen(LEGACY_SU_PATH) + 1)) {
 			logkw("failed to write su argv[0]\n");
@@ -156,20 +156,17 @@ static long kp_redirect_to_sh(const struct pt_regs *regs, const char *what, uid_
 			logkw("failed to rewrite argv[0]\n");
 			goto passthrough;
 		}
-	} else if (su_exec && !manager_exec) {
-		/* No apd but a real su: point the exec at sh and keep argv as-is.
-		 * sh treats "-c <cmd>" naturally, so "su -c id" still runs the
-		 * command instead of dropping it. */
-		(void)uargv;
-	} else {
+	} else if (!su_exec && uargv) {
 		/* Manager and SUPERCMD root shells take no arguments. */
 		char __user *nullp = NULL;
+
 		if (copy_to_user(&uargv[1], &nullp, sizeof(nullp))) {
 			logkw("failed to rewrite argv[1]\n");
 			goto passthrough;
 		}
 	}
 
+	((struct pt_regs *)regs)->regs[0] = (unsigned long)new_filename;
 	return kp_orig_execve(regs);
 
 passthrough:
@@ -177,7 +174,6 @@ passthrough:
 		return kp_orig_execve(regs);
 	return -ENOSYS;
 }
-
 /* ---- getname_flags path-probe redirect -------------------------------- */
 
 static void kp_after_getname_flags(hook_fargs4_t *args, void *udata)
