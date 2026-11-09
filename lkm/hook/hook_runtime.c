@@ -429,7 +429,7 @@ void hook_mem_free(void *payload)
 			if (mem->payload == payload && !mem->ready) {
 			list_del(&mem->list);
 			raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
-			kp_hook_exec_free(mem->region);
+			kp_hook_exec_free(mem->region, mem->region_size);
 			kfree(mem);
 			return;
 		}
