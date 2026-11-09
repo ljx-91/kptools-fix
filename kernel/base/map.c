@@ -684,10 +684,18 @@ void __noinline _paging_init()
     asm volatile("msr sctlr_el1, %[reg]" : : [reg] "r"(sctlr_el1));
 
     // move start memory
+    // Validate both physical-to-virtual translations before using the ranges.
+    if (old_start_pa > ~(uint64_t)0 - data->linear_voffset) __builtin_trap();
     uint64_t old_start_va = phys_to_lm(data, old_start_pa);
+    if (old_start_va > ~(uint64_t)0 - reserve_size) __builtin_trap();
 
     // uint64_t vm_gurad_enough = page_size << 3;
+    if (start_pa > ~(uint64_t)0 - data->kimage_voffset) __builtin_trap();
     uint64_t start_va = start_pa + data->kimage_voffset;
+    if (start_va > ~(uint64_t)0 - all_size ||
+        (start_va & (page_size - 1)) || (old_start_va & (page_size - 1)) ||
+        ((uint64_t)data->start_img_size & (sizeof(uint64_t) - 1)))
+        __builtin_trap();
 
     for (uint64_t off = 0; off < all_size; off += page_size) {
         uint64_t entry = get_or_create_pte(data, start_va + off, start_pa + off, attr_indx);
@@ -695,15 +703,25 @@ void __noinline _paging_init()
     }
     flush_tlb_all();
 
-    for (uint64_t i = start_va; i < start_va + all_size; i += 8) {
+    uint64_t i;
+    for (i = start_va; i < start_va + all_size; i += sizeof(uint64_t))
         *(uint64_t *)i = 0;
-    }
-    for (uint64_t i = 0; i < data->start_img_size; i += 8) {
+
+    /* Copy complete words, then copy any remaining bytes without overread. */
+    for (i = 0; (uint64_t)data->start_img_size - i >= sizeof(uint64_t);
+         i += sizeof(uint64_t))
         *(uint64_t *)(start_va + i) = *(uint64_t *)(old_start_va + i);
-    }
-    for (uint64_t i = 0; i < data->extra_size; i += 8) {
-        *(uint64_t *)(start_va + data->start_size + i) = *(uint64_t *)(old_start_va + data->start_img_size + i);
-    }
+    for (; i < (uint64_t)data->start_img_size; ++i)
+        *(uint8_t *)(start_va + i) = *(uint8_t *)(old_start_va + i);
+
+    i = 0;
+    for (; (uint64_t)data->extra_size - i >= sizeof(uint64_t);
+         i += sizeof(uint64_t))
+        *(uint64_t *)(start_va + data->start_size + i) =
+            *(uint64_t *)(old_start_va + data->start_img_size + i);
+    for (; i < (uint64_t)data->extra_size; ++i)
+        *(uint8_t *)(start_va + data->start_size + i) =
+            *(uint8_t *)(old_start_va + data->start_img_size + i);
 
     flush_icache_all();
 
