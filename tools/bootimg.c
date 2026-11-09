@@ -1430,6 +1430,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
     if (extracted_dtb) free(extracted_dtb);
     if (rest_buf) free(rest_buf);
     if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
+    goto post_write;
 
 write_fail:
     fclose(f_out);
@@ -1439,6 +1440,7 @@ write_fail:
     if (rest_buf_tmp && rest_buf_tmp != rest_buf) free(rest_buf_tmp);
     return -EIO;
 
+post_write:
     if (has_avb) {
         if (!footer_written) return -6;
         // Fail rather than point the footer at a metadata blob that the repack
