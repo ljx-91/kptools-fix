@@ -37,6 +37,7 @@ typedef int8_t chain_item_state;
 #define CHAIN_ITEM_STATE_EMPTY 0
 #define CHAIN_ITEM_STATE_READY 1
 #define CHAIN_ITEM_STATE_BUSY 2
+#define CHAIN_ITEM_STATE_RETIRED 3
 
 #define local_offsetof(TYPE, MEMBER) ((size_t) & ((TYPE *)0)->MEMBER)
 #define local_container_of(ptr, type, member) ({ (type *)((char *)(ptr) - local_offsetof(type, member)); })
@@ -212,10 +213,13 @@ typedef struct _hook_chain
     // must be the first element
     hook_t hook;
     int32_t chain_items_max;
+    unsigned int active_readers;
     chain_item_state states[HOOK_CHAIN_NUM];
     void *udata[HOOK_CHAIN_NUM];
     void *befores[HOOK_CHAIN_NUM];
     void *afters[HOOK_CHAIN_NUM];
+    void *before_owners[HOOK_CHAIN_NUM];
+    void *after_owners[HOOK_CHAIN_NUM];
     uint32_t transit[TRANSIT_INST_NUM];
 } hook_chain_t __attribute__((aligned(8)));
 
@@ -230,10 +234,13 @@ typedef struct _fphook_chain
 {
     fp_hook_t hook;
     int32_t chain_items_max;
+    unsigned int active_readers;
     chain_item_state states[FP_HOOK_CHAIN_NUM];
     void *udata[FP_HOOK_CHAIN_NUM];
     void *befores[FP_HOOK_CHAIN_NUM];
     void *afters[FP_HOOK_CHAIN_NUM];
+    void *before_owners[FP_HOOK_CHAIN_NUM];
+    void *after_owners[FP_HOOK_CHAIN_NUM];
     uint32_t transit[TRANSIT_INST_NUM];
 } fp_hook_chain_t __attribute__((aligned(8)));
 
@@ -241,6 +248,14 @@ static inline int is_bad_address(void *addr)
 {
     return ((uint64_t)addr & 0x8000000000000000) != 0x8000000000000000;
 }
+
+/* Backend-provided lock and KPM callback-owner lifetime hooks. */
+unsigned long hook_engine_lock(void);
+void hook_engine_unlock(unsigned long flags);
+int kp_hook_owner_register(unsigned long addr, void **owner);
+void kp_hook_owner_unregister(void *owner);
+int kp_hook_owner_call_get(void *owner);
+void kp_hook_owner_call_put(void *owner);
 
 int32_t branch_from_to(uint32_t *tramp_buf, uint64_t src_addr, uint64_t dst_addr);
 int32_t branch_relative(uint32_t *buf, uint64_t src_addr, uint64_t dst_addr);
