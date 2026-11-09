@@ -1432,11 +1432,11 @@ long kp_load_module_path(const char *path, const char *args, void __user *reserv
 	memset(data, 0, len);
 
 	loff_t pos = 0;
-	kernel_read(filp, data, len, &pos);
+	ssize_t read_len = kernel_read(filp, data, len, &pos);
 	filp_close(filp, 0);
 	filp = 0;
 
-	if (pos != len) {
+	if (read_len != len || pos != len) {
 		logkfe("read module: %s error\n", path);
 		rc = -EIO;
 		set_kpm_load_result(reserved, rc, "read module file failed");
