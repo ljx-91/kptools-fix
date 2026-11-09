@@ -70,6 +70,7 @@ typedef struct
 {
     enum arch_type arch;
     int32_t is_64;
+    int32_t image_size; /* validated input image extent for bounded decoders */
     int32_t is_be;
 
     struct
