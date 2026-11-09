@@ -275,6 +275,7 @@ static int find_token_table(kallsym_t *info, char *img, int32_t imglen, void *op
         token_pos = token_end + 1;
     }
 
+    info->kallsyms_token_table_image = img;
     return 0;
 }
 
@@ -844,6 +845,34 @@ static int find_markers(kallsym_t *info, char *img, int32_t imglen)
     return rc;
 }
 
+static int get_token_string(kallsym_t *info, uint8_t tokidx,
+                             char **token_out, size_t *token_len_out)
+{
+    if (!info || !token_out || !token_len_out || info->image_size <= 0 ||
+        !info->kallsyms_token_table_image) return -1;
+
+    char *token = info->kallsyms_token_table[tokidx];
+    if (!token) return -1;
+
+    /*
+     * Token pointers are anchored in the caller's original image. Kallsyms
+     * analysis may decode names from a relocated working copy, so bounds
+     * checks must use the token table's backing image, not the decode buffer.
+     */
+    uintptr_t image_base = (uintptr_t)info->kallsyms_token_table_image;
+    uintptr_t token_addr = (uintptr_t)token;
+    if (token_addr < image_base ||
+        token_addr - image_base >= (uintptr_t)info->image_size) return -1;
+
+    size_t remaining = info->image_size - (size_t)(token_addr - image_base);
+    char *token_end = (char *)memchr(token, '\0', remaining);
+    if (!token_end) return -1;
+
+    *token_out = token;
+    *token_len_out = (size_t)(token_end - token);
+    return 0;
+}
+
 static int decompress_symbol_name(kallsym_t *info, char *img, int32_t *pos_to_next,
                                   char *out_type, char *out_symbol)
 {
@@ -866,19 +895,10 @@ static int decompress_symbol_name(kallsym_t *info, char *img, int32_t *pos_to_ne
 
     for (int32_t i = 0; i < len; i++) {
         uint8_t tokidx = (uint8_t)img[pos + i];
-        char *token = info->kallsyms_token_table[tokidx];
-        if (!token) return -1;
-
-        uintptr_t image_base = (uintptr_t)img;
-        uintptr_t token_addr = (uintptr_t)token;
-        if (token_addr < image_base || token_addr - image_base >= (uintptr_t)info->image_size)
+        char *token;
+        size_t token_len;
+        if (get_token_string(info, tokidx, &token, &token_len) || !token_len)
             return -1;
-
-        size_t token_remaining = info->image_size - (size_t)(token_addr - image_base);
-        char *token_end = (char *)memchr(token, '\0', token_remaining);
-        if (!token_end) return -1;
-        size_t token_len = (size_t)(token_end - token);
-        if (!token_len) return -1;
 
         size_t skip = 0;
         if (!i) {
@@ -919,16 +939,9 @@ static int is_symbol_name_pos(kallsym_t *info, char *img, int32_t pos, char *sym
     size_t symidx = 0;
     for (int32_t i = 0; i < len; i++) {
         uint8_t tokidx = (uint8_t)img[pos + i];
-        char *token = info->kallsyms_token_table[tokidx];
-        if (!token) return 0;
-        uintptr_t image_base = (uintptr_t)img;
-        uintptr_t token_addr = (uintptr_t)token;
-        if (token_addr < image_base || token_addr - image_base >= (uintptr_t)info->image_size)
-            return 0;
-        size_t remaining = info->image_size - (size_t)(token_addr - image_base);
-        char *token_end = (char *)memchr(token, '\0', remaining);
-        if (!token_end) return 0;
-        size_t token_len = (size_t)(token_end - token);
+        char *token;
+        size_t token_len;
+        if (get_token_string(info, tokidx, &token, &token_len)) return 0;
         size_t skip = i ? 0 : 1;
         if (token_len < skip) return 0;
         size_t append_len = token_len - skip;
