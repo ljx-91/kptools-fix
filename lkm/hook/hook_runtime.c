@@ -335,39 +335,9 @@ void hook_mem_free(void *payload)
 
 int hotpatch(void *addrs[], uint32_t values[], int count)
 {
-	uint32_t original[64];
-	int i, j, rc, rollback_rc = 0;
-
-	if (!addrs || !values || count <= 0 || count > (int)(sizeof(original) / sizeof(original[0])))
+	if (!addrs || !values || count <= 0 || count > 64)
 		return -EINVAL;
-
-	/* Snapshot and validate the complete patch set before the first write.
-	 * A 4-byte aligned A64 instruction cannot straddle a PAGE_SIZE boundary. */
-	for (i = 0; i < count; i++) {
-		if (!addrs[i] || ((uintptr_t)addrs[i] & 3))
-			return -EINVAL;
-		for (j = 0; j < i; j++)
-			if (addrs[j] == addrs[i])
-				return -EINVAL;
-		if (copy_from_kernel_nofault(&original[i], addrs[i], sizeof(original[i])))
-			return -EFAULT;
-	}
-
-	for (i = 0; i < count; i++) {
-		rc = kp_patch_text(addrs[i], &values[i], sizeof(values[i]),
-				   KP_PATCH_TEXT_FLUSH_DCACHE | KP_PATCH_TEXT_FLUSH_ICACHE);
-		if (rc) {
-			/* Restore the failed word too: the low-level nofault copy may
-			 * have changed a prefix before reporting an error. */
-			for (j = i; j >= 0; j--) {
-				if (kp_patch_text(addrs[j], &original[j], sizeof(original[j]),
-						  KP_PATCH_TEXT_FLUSH_DCACHE | KP_PATCH_TEXT_FLUSH_ICACHE))
-					rollback_rc = -EUCLEAN;
-			}
-			return rollback_rc ? rollback_rc : rc;
-		}
-	}
-	return 0;
+	return kp_patch_text_batch(addrs, values, count);
 }
 
 int hotpatch_exchange64(void *addr, uint64_t desired, uint64_t *original)
