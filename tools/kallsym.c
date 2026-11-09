@@ -462,6 +462,13 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
 
 static int find_approx_addresses(kallsym_t *info, char *img, int32_t imglen)
 {
+    if (!info || !img || imglen <= 0 ||
+        (info->asm_PTR_size != 4 && info->asm_PTR_size != 8) ||
+        imglen < KSYM_MIN_NEQ_SYMS * info->asm_PTR_size) {
+        tools_logw("invalid kallsyms_addresses scan range or element size\\n");
+        return -1;
+    }
+
     int32_t sym_num = 0;
     int32_t elem_size = info->asm_PTR_size;
     uint64_t prev_offset = 0;
@@ -496,7 +503,7 @@ static int find_approx_addresses(kallsym_t *info, char *img, int32_t imglen)
 
     // approximate kallsyms_addresses end
     prev_offset = 0;
-    for (; cand < imglen; cand += elem_size) {
+    for (; cand <= imglen - elem_size; cand += elem_size) {
         uint64_t offset = uint_unpack(img + cand, elem_size, info->is_be);
         if (offset < prev_offset) break;
         prev_offset = offset;
