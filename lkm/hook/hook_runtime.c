@@ -277,6 +277,16 @@ int hotpatch(void *addrs[], uint32_t values[], int count)
 	return 0;
 }
 
+int hotpatch_exchange64(void *addr, uint64_t desired, uint64_t *original)
+{
+	return kp_patch_exchange64(addr, desired, original);
+}
+
+int hotpatch_cmpxchg64(void *addr, uint64_t expected, uint64_t desired)
+{
+	return kp_patch_cmpxchg64(addr, expected, desired);
+}
+
 void flush_icache_all(void)
 {
 	kp_hook_flush_all();
