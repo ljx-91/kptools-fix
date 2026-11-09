@@ -90,5 +90,9 @@ int kp_hook_owner_register(unsigned long addr, void **owner);
 void kp_hook_owner_unregister(void *owner);
 int kp_hook_owner_call_get(void *owner);
 void kp_hook_owner_call_put(void *owner);
+int kp_kpm_owner_pin(unsigned long callback_addr, void **owner);
+void kp_kpm_owner_unpin(void *owner);
+int kp_kpm_owner_call_get(void *owner);
+void kp_kpm_owner_call_put(void *owner);
 
 #endif
