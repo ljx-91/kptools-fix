@@ -2,12 +2,12 @@
 /*
  * Copyright (C) 2023 bmax121. All Rights Reserved.
  *
- * arm64 read-only memory patching via the kernel's own text-patch API.
- * aarch64_insn_patch_text_nosync() handles the rodata write + icache/dcache
- * flush correctly (through its own fixmap / alias path) and does not take
- * stop_machine, so calling it from a syscall/supercall context cannot deadlock
- * with RCU/membarrier tasks on other CPUs. We patch sys_call_table[nr] (a
- * plain 8-byte pointer) and, for KPMs, inline hooks on kernel text.
+ * arm64 read-only memory patching through a serialized FIX_TEXT_POKE0 alias.
+ * Function-pointer slots use atomic 64-bit compare/exchange. Multi-instruction
+ * text changes are preflighted, snapshotted, and applied/rolled back inside
+ * stop_machine so another CPU cannot execute a partially-patched prologue.
+ * If init_mm or stop_machine cannot be resolved, the corresponding patch path
+ * fails closed instead of attempting an unsafe direct write.
  */
 #ifdef __aarch64__
 
