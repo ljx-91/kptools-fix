@@ -656,17 +656,20 @@ static int kp_install_hook(unsigned long func, void *replace, void **backup, con
 #define KP_MAX_FP_HOOKS 8
 static uintptr_t g_fp_slot[KP_MAX_FP_HOOKS];
 static void *g_fp_orig[KP_MAX_FP_HOOKS];
+static void *g_fp_replace[KP_MAX_FP_HOOKS];
 static int g_fp_cnt;
 
 static int kp_install_fp_slot(uintptr_t slot, void *replace, void **backup, const char *name)
 {
-    if (!slot) return -ENOENT;
-    fp_hook(slot, replace, backup);
-    if (g_fp_cnt < KP_MAX_FP_HOOKS) {
-        g_fp_slot[g_fp_cnt] = slot;
-        g_fp_orig[g_fp_cnt] = *backup;
-        g_fp_cnt++;
-    }
+    int rc;
+    if (!slot || !replace || !backup) return -EINVAL;
+    if (g_fp_cnt >= KP_MAX_FP_HOOKS) return -ENOSPC;
+    rc = fp_hook(slot, replace, backup);
+    if (rc) return rc;
+    g_fp_slot[g_fp_cnt] = slot;
+    g_fp_orig[g_fp_cnt] = *backup;
+    g_fp_replace[g_fp_cnt] = replace;
+    g_fp_cnt++;
     logkfi("selinux_hide: fp-hooked (data) %s @ slot %llx -> %llx\n", name, (unsigned long)slot,
            (unsigned long)replace);
     return 0;
@@ -697,9 +700,10 @@ static void kp_uninstall_hooks(void)
     }
     g_hooked_cnt = 0;
     for (int i = g_fp_cnt - 1; i >= 0; i--) {
-        if (g_fp_slot[i]) fp_unhook(g_fp_slot[i], g_fp_orig[i]);
+        if (g_fp_slot[i]) fp_unhook(g_fp_slot[i], g_fp_replace[i], g_fp_orig[i]);
         g_fp_slot[i] = 0;
         g_fp_orig[i] = NULL;
+        g_fp_replace[i] = NULL;
     }
     g_fp_cnt = 0;
 
