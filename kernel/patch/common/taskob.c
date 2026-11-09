@@ -33,8 +33,9 @@ extern int kp_task_ext_identity(struct task_struct *task,
 /*
  * task_ext per-task slot table.
  *
- * Slot identity is immutable after publication; policy flags are mutable and
- * accessed with READ_ONCE/WRITE_ONCE. Slots are deliberately not recycled:
+ * Slot identity (task pointer, PID/TGID and kernel-stack allocation) is immutable
+ * after publication; policy flags are mutable and accessed with READ_ONCE/WRITE_ONCE.
+ * Slots are deliberately not recycled:
  * lock-free readers (including SELinux hooks) may still hold a returned ext
  * pointer after lookup. Reusing a slot from do_exit would create a use-after-
  * reuse race. The bounded table fails closed when exhausted.

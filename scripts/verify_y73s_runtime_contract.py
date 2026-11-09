@@ -302,7 +302,6 @@ def main():
     require(r"return -EOPNOTSUPP;", task_su_fn,
             "cross-task credential mutation must remain unsupported")
 
-    taskob_c = source("kernel/patch/common/taskob.c")
     task_identity_fn = function_body(taskcred_c, "int kp_task_ext_identity(")
     require(r"task_struct_offset\.stack_offset\s*<\s*0", task_identity_fn,
             "task extension identity must validate the runtime task stack offset")
