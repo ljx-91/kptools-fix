@@ -879,11 +879,25 @@ int kp_hook_owner_register(unsigned long addr, void **owner)
 	spin_lock_irqsave(&module_lock, flags);
 	list_for_each_entry(pos, &modules.list, list) {
 		unsigned long start = (unsigned long)pos->start;
-		unsigned long end = start + pos->text_size;
-		if (end < start || addr < start || addr >= end)
+		unsigned long image_end = start + pos->size;
+		unsigned long text_end = start + pos->text_size;
+
+		if (image_end < start || text_end < start ||
+		    addr < start || addr >= image_end)
 			continue;
+		/* An address inside a KPM image but outside executable text is
+		 * never a kernel-resident callback and must not be treated as
+		 * ownerless. */
+		if (addr >= text_end) {
+			rc = -EINVAL;
+			break;
+		}
 		if (pos->state != KP_MODULE_LOADING && pos->state != KP_MODULE_LIVE) {
 			rc = -EBUSY;
+			break;
+		}
+		if (pos->hook_refs == UINT_MAX) {
+			rc = -EOVERFLOW;
 			break;
 		}
 		pos->hook_refs++;
