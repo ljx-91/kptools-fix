@@ -23,6 +23,7 @@
 #include <linux/vmalloc.h>
 #include <linux/rcupdate.h>
 #include <linux/rculist.h>
+#include <kp_spinlock.h>
 
 #include "module.h"
 #include "relo.h"
@@ -583,119 +584,149 @@ static int elf_header_check(struct load_info *info)
 
 struct module modules = { 0 };
 static spinlock_t module_lock;
+static unsigned long module_lock_acquire(void) { return kp_private_spin_lock(&module_lock); }
+static void module_lock_release(unsigned long flags) { kp_private_spin_unlock(&module_lock, flags); }
+static struct module *find_module_locked(const char *name)
+{
+    struct module *pos;
+    if (!name) return NULL;
+    list_for_each_entry(pos, &modules.list, list)
+        if (!strcmp(name, pos->info.name)) return pos;
+    return NULL;
+}
+int kp_hook_owner_register(unsigned long addr, void **owner)
+{
+    struct module *pos; unsigned long flags; int rc = 0;
+    if (!owner) return -EINVAL;
+    *owner = NULL; flags = module_lock_acquire();
+    list_for_each_entry(pos, &modules.list, list) {
+        unsigned long start = (unsigned long)pos->start, end = start + pos->size;
+        if (end < start || addr < start || addr >= end) continue;
+        if (pos->state != KP_MODULE_LOADING && pos->state != KP_MODULE_LIVE) { rc = -EBUSY; break; }
+        pos->hook_refs++; *owner = pos; rc = 1; break;
+    }
+    module_lock_release(flags); return rc;
+}
+void kp_hook_owner_unregister(void *owner)
+{
+    struct module *mod = owner; unsigned long flags;
+    if (!mod) return; flags = module_lock_acquire();
+    if (mod->hook_refs) mod->hook_refs--;
+    module_lock_release(flags);
+}
+int kp_hook_owner_call_get(void *owner)
+{
+    struct module *mod = owner; unsigned long flags; int rc = 0;
+    if (!mod) return 0; flags = module_lock_acquire();
+    if (mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING) { mod->active_calls++; rc = 1; }
+    else rc = -EBUSY;
+    module_lock_release(flags); return rc;
+}
+void kp_hook_owner_call_put(void *owner)
+{
+    struct module *mod = owner; unsigned long flags;
+    if (!mod) return; flags = module_lock_acquire();
+    if (mod->active_calls) mod->active_calls--;
+    module_lock_release(flags);
+}
 
 long load_module_ex(const void *data, int len, const char *args, const char *event, const char *source,
                     void *__user reserved)
 {
     struct load_info load_info = { .len = len, .hdr = data };
     struct load_info *info = &load_info;
+    struct module *mod = NULL;
+    unsigned long flags;
     long rc = 0;
-
-    if (!data || len <= 0) {
-        rc = -EINVAL;
-        set_load_error(info, "invalid module input");
-        goto out;
-    }
-    if ((rc = elf_header_check(info))) goto out;
-    if ((rc = setup_load_info(info))) goto out;
-
-    if (find_module(info->info.name)) {
-        logkfd("%s exist\n", info->info.name);
-        set_load_error(info, "module already exists");
-        rc = -EEXIST;
-        goto out;
-    }
-
-    struct module *mod = (struct module *)vmalloc(sizeof(struct module));
-    if (!mod) {
-        set_load_error(info, "allocate module state failed");
-        rc = -ENOMEM;
-        goto out;
-    }
-    memset(mod, 0, sizeof(struct module));
+    if (!data || len <= 0) { rc = -EINVAL; set_load_error(info, "invalid module input"); goto out; }
+    if ((rc = elf_header_check(info)) || (rc = setup_load_info(info))) goto out;
+    mod = vmalloc(sizeof(*mod));
+    if (!mod) { set_load_error(info, "allocate module state failed"); rc = -ENOMEM; goto out; }
+    memset(mod, 0, sizeof(*mod)); INIT_LIST_HEAD(&mod->list);
     snprintf(mod->load_event, sizeof(mod->load_event), "%s", event ? event : "");
     snprintf(mod->load_source, sizeof(mod->load_source), "%s", source ? source : "embedded");
-
     if (args) {
         mod->args = vmalloc(strlen(args) + 1);
-        if (!mod->args) {
-            set_load_error(info, "allocate module args failed");
-            rc = -ENOMEM;
-            goto free1;
-        }
+        if (!mod->args) { set_load_error(info, "allocate module args failed"); rc = -ENOMEM; goto free_mod; }
         strcpy(mod->args, args);
     }
-
-    if ((rc = layout_sections(mod, info))) {
-        set_load_error(info, "module section layout overflow");
-        goto free;
+    if ((rc = layout_sections(mod, info)) || (rc = layout_symtab(mod, info))) {
+        set_load_error(info, "module layout failed"); goto free_mod;
     }
-    if ((rc = layout_symtab(mod, info))) {
-        set_load_error(info, "module symbol layout overflow");
-        goto free;
-    }
-
-    if ((rc = move_module(mod, info))) {
-        set_load_error(info, "allocate executable module memory failed");
-        goto free;
-    }
-    if ((rc = simplify_symbols(mod, info))) goto free;
-    if ((rc = apply_relocations(mod, info))) {
-        set_load_error(info, "apply relocations failed");
-        goto free;
-    }
-
+    if ((rc = move_module(mod, info))) { set_load_error(info, "module allocation failed"); goto free_mod; }
+    if ((rc = simplify_symbols(mod, info)) || (rc = apply_relocations(mod, info))) goto free_mod;
     flush_icache_all();
 
-    rc = (*mod->init)(mod->args, event, reserved);
-
-    if (!rc) {
-        logkfi("[%s] succeed with [%s] \n", mod->info.name, args);
-        list_add_tail(&mod->list, &modules.list);
-        goto out;
-    } else {
-        set_load_error(info, "module init failed");
-        logkfi("[%s] failed with [%s] error: %d, try exit ...\n", mod->info.name, args, rc);
-        (*mod->exit)(reserved);
+    flags = module_lock_acquire();
+    if (find_module_locked(mod->info.name)) {
+        module_lock_release(flags); set_load_error(info, "module already exists or is loading");
+        rc = -EEXIST; goto free_mod;
     }
+    mod->state = KP_MODULE_LOADING; list_add_tail(&mod->list, &modules.list);
+    module_lock_release(flags);
 
-free:
-    if (mod->args) kvfree(mod->args);
-    kp_free_exec(mod->start);
-free1:
-    kvfree(mod);
+    rc = (*mod->init)(mod->args, event, reserved);
+    flags = module_lock_acquire();
+    if (!rc) {
+        mod->state = KP_MODULE_LIVE; module_lock_release(flags);
+        logkfi("[%s] succeed with [%s]\n", mod->info.name, args ? args : ""); goto out;
+    }
+    mod->state = KP_MODULE_EXITING; mod->exit_called = true;
+    module_lock_release(flags);
+    if (mod->exit) (*mod->exit)(reserved);
+    flags = module_lock_acquire();
+    if (mod->hook_refs || mod->active_calls) {
+        module_lock_release(flags);
+        logke("[%s] init failed; retaining image with hook_refs=%u active=%u\n",
+              mod->info.name, mod->hook_refs, mod->active_calls);
+        rc = -EBUSY; goto out;
+    }
+    list_del_init(&mod->list); mod->state = KP_MODULE_DEAD;
+    module_lock_release(flags);
+free_mod:
+    if (mod) {
+        if (mod->args) kvfree(mod->args);
+        if (mod->start) kp_free_exec(mod->start);
+        kvfree(mod);
+    }
 out:
     set_kpm_load_result(reserved, rc, rc ? load_error(info, "load module failed") : "module loaded");
     return rc;
 }
 
-// todo: lock
+/* Retryable unload: no callback can start after UNLOADING. The exit callback
+ * runs outside the registry lock; hook registrations pin the image until
+ * their chain readers drain and their slots are retired. */
 long unload_module(const char *name, void *__user reserved)
 {
+    struct module *mod; unsigned long flags; long rc = 0;
     if (!name) return -EINVAL;
-    logkfe("name: %s\n", name);
-
-    rcu_read_lock();
-    long rc = 0;
-
-    struct module *mod = find_module(name);
-    if (!mod) {
-        rc = -ENOENT;
-        goto out;
+    flags = module_lock_acquire(); mod = find_module_locked(name);
+    if (!mod) { module_lock_release(flags); return -ENOENT; }
+    if (mod->state == KP_MODULE_LOADING) { module_lock_release(flags); return -EBUSY; }
+    if (mod->state == KP_MODULE_LIVE) mod->state = KP_MODULE_UNLOADING;
+    if (mod->state != KP_MODULE_UNLOADING && mod->state != KP_MODULE_EXITING) {
+        module_lock_release(flags); return -ENOENT;
     }
-    list_del(&mod->list);
-    rc = (*mod->exit)(reserved);
-
+    if (mod->active_calls) { module_lock_release(flags); return -EBUSY; }
+    if (!mod->exit_called) {
+        mod->state = KP_MODULE_EXITING; mod->exit_called = true;
+        module_lock_release(flags);
+        if (mod->exit) rc = (*mod->exit)(reserved);
+        flags = module_lock_acquire();
+    }
+    if (mod->active_calls || mod->hook_refs) {
+        module_lock_release(flags);
+        logkw("KPM %s retained: active=%u hook_refs=%u; retry after hook removal\n",
+              name, mod->active_calls, mod->hook_refs);
+        return -EBUSY;
+    }
+    list_del_init(&mod->list); mod->state = KP_MODULE_DEAD;
+    module_lock_release(flags);
     if (mod->args) kvfree(mod->args);
-    if (mod->ctl_args) kvfree(mod->ctl_args);
-
-    kp_free_exec(mod->start);
+    if (mod->start) kp_free_exec(mod->start);
     kvfree(mod);
-
-    logkfi("name: %s, rc: %d\n", name, rc);
-
-out:
-    rcu_read_unlock();
+    logkfi("name: %s, rc: %ld\n", name, rc);
     return rc;
 }
 
