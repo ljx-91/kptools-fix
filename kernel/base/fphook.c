@@ -306,26 +306,16 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
 
 static int fp_hook_locked(uintptr_t fp_addr, void *replace, void **backup)
 {
-    void *addrs[2];
-    uint32_t values[2];
-    uintptr_t original;
     if (!backup || is_bad_address((void *)fp_addr) || (fp_addr & 7) || !replace)
         return -EINVAL;
-    addrs[0] = (void *)fp_addr;
-    addrs[1] = (void *)(fp_addr + 4);
-    values[0] = (uint32_t)(uintptr_t)replace;
-    values[1] = (uint32_t)((uintptr_t)replace >> 32);
-    original = *(volatile uintptr_t *)fp_addr;
-    *backup = (void *)original;
-    return hotpatch(addrs, values, 2);
+    return hotpatch_exchange64((void *)fp_addr, (uint64_t)replace, (uint64_t *)backup);
 }
 
 int fp_hook(uintptr_t fp_addr, void *replace, void **backup)
 {
     void *owner = NULL;
     unsigned long flags;
-    int rc;
-    int owner_rc;
+    int rc, owner_rc;
     if (!backup || !replace) return -EINVAL;
     owner_rc = kp_hook_owner_register((unsigned long)replace, &owner);
     if (owner_rc < 0) return -EBUSY;
@@ -340,23 +330,17 @@ int fp_hook(uintptr_t fp_addr, void *replace, void **backup)
 }
 KP_EXPORT_SYMBOL(fp_hook);
 
-static int fp_unhook_locked(uintptr_t fp_addr, void *backup)
+static int fp_unhook_locked(uintptr_t fp_addr, void *expected, void *backup)
 {
-    void *addrs[2];
-    uint32_t values[2];
-    if (is_bad_address((void *)fp_addr) || (fp_addr & 7) || !backup)
+    if (is_bad_address((void *)fp_addr) || (fp_addr & 7) || !expected || !backup)
         return -EINVAL;
-    addrs[0] = (void *)fp_addr;
-    addrs[1] = (void *)(fp_addr + 4);
-    values[0] = (uint32_t)(uintptr_t)backup;
-    values[1] = (uint32_t)((uintptr_t)backup >> 32);
-    return hotpatch(addrs, values, 2);
+    return hotpatch_cmpxchg64((void *)fp_addr, (uint64_t)expected, (uint64_t)backup);
 }
 
-int fp_unhook(uintptr_t fp_addr, void *backup)
+int fp_unhook(uintptr_t fp_addr, void *expected, void *backup)
 {
     unsigned long flags = hook_engine_lock();
-    int rc = fp_unhook_locked(fp_addr, backup);
+    int rc = fp_unhook_locked(fp_addr, expected, backup);
     hook_engine_unlock(flags);
     return rc;
 }
@@ -460,7 +444,8 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
     }
     err = fp_chain_add_locked(chain, before, after, udata);
     if (err) {
-        int restore_rc = fp_unhook_locked(chain->hook.fp_addr, (void *)chain->hook.origin_fp);
+        int restore_rc = fp_unhook_locked(chain->hook.fp_addr, (void *)chain->hook.replace_addr,
+                                         (void *)chain->hook.origin_fp);
         if (restore_rc) {
             hook_mem_publish(chain);
             hook_engine_unlock(flags);
@@ -504,7 +489,8 @@ int fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after)
             return -EBUSY;
         }
     }
-    rc = fp_unhook_locked(chain->hook.fp_addr, (void *)chain->hook.origin_fp);
+    rc = fp_unhook_locked(chain->hook.fp_addr, (void *)chain->hook.replace_addr,
+                                         (void *)chain->hook.origin_fp);
     if (!rc)
         hook_mem_retire(chain);
     hook_engine_unlock(flags);
