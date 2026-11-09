@@ -27,6 +27,7 @@ def body(source, signature):
 
 kpm = read("lkm/kpm/kpm.c")
 dispatch = read("lkm/supercall/dispatch.c")
+sucompat = read("lkm/supercall/sucompat_hook.c")
 copy = body(kpm, "static long kp_copy_user_string(")
 
 checks = {
@@ -64,6 +65,27 @@ checks = {
     "KPM list and info validate output buffers":
         "!names || len <= 0" in body(kpm, "long kp_kpm_list_sc(") and
         "!out_info || out_len <= 0" in body(kpm, "long kp_kpm_info_sc("),
+    "execve filename uses bounded copy before string comparisons":
+        "kp_copy_user_string(filename, sizeof(filename), ufilename)" in
+        body(sucompat, "static long kp_execve_handler(") and
+        "if (flen <= 0)" in body(sucompat, "static long kp_execve_handler(") and
+        "strncpy_from_user(" not in body(sucompat, "static long kp_execve_handler("),
+    "SUPERCMD argv and scontext strings are bounded":
+        "kp_copy_user_string(buf, sizeof(buf), arg)" in
+        body(sucompat, "static const char *kp_get_supercmd_sctx(") and
+        "kp_copy_user_string(sctx, sctx_size, sctx_arg)" in
+        body(sucompat, "static const char *kp_get_supercmd_sctx("),
+    "scontext scratch buffers are caller-local, not shared statics":
+        "char sctx_buf[SUPERCALL_SCONTEXT_LEN]" in
+        body(sucompat, "static long kp_execve_handler(") and
+        "static char sctx[" not in sucompat,
+    "execve redirect does not overwrite caller filename memory":
+        "current_user_stack_pointer()" in
+        body(sucompat, "static long kp_redirect_to_sh(") and
+        "((struct pt_regs *)regs)->regs[0]" in
+        body(sucompat, "static long kp_redirect_to_sh(") and
+        "copy_to_user(ufilename" not in
+        body(sucompat, "static long kp_redirect_to_sh("),
 }
 
 for label, ok in checks.items():
