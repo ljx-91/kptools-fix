@@ -100,6 +100,15 @@ checks = {
         "int kp_hook_owner_register(" in read("lkm/kpm/module.c") and
         "hook_refs" in read("kernel/patch/include/module.h") and
         "hook_refs" in read("lkm/kpm/module.h"),
+    "KPM async owner pin API is public and exported in both loaders":
+        "int kp_kpm_owner_pin(unsigned long callback_addr, void **owner);" in
+            read("kernel/include/kpmodule.h") and
+        "KP_EXPORT_SYMBOL(kp_kpm_owner_pin);" in read("kernel/patch/module/module.c") and
+        "kp_kpm_owner_pin" in read("lkm/kpm/symbols.c") and
+        "kp_hook_owner_register(callback_addr, owner)" in
+            read("kernel/patch/module/module.c") and
+        "kp_hook_owner_register(callback_addr, owner)" in read("lkm/kpm/module.c") and
+        "kp_hook_owner_call_get(owner)" in read("lkm/kpm/module.c"),
     "function-pointer patch uses atomic exchange and compare-restore":
         "hotpatch_exchange64" in fphook and
         "hotpatch_cmpxchg64" in fphook and
