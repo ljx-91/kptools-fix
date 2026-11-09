@@ -714,60 +714,81 @@ KP_EXPORT_SYMBOL(hook_uninstall);
 hook_err_t hook(void *func, void *replace, void **backup)
 {
     hook_err_t err = HOOK_NO_ERR;
+    uint64_t origin;
+    hook_t *hook;
+    void *owner = NULL;
+    unsigned long flags;
+    int owner_rc, patch_rc;
+
     if (!func || !replace || !backup) return -HOOK_BAD_ADDRESS;
-    *backup = 0;
-    uint64_t origin_addr = branch_func_addr((uintptr_t)func);
-    if (is_bad_address((void *)origin_addr)) return -HOOK_BAD_ADDRESS;
-    hook_t *hook = (hook_t *)hook_mem_zalloc(origin_addr, INLINE);
-    if (!hook) return -HOOK_NO_MEM;
+    *backup = NULL;
+    origin = branch_func_addr((uintptr_t)func);
+    if (is_bad_address((void *)origin)) return -HOOK_BAD_ADDRESS;
+
+    /* Direct replacement bypasses transit callback references. Refuse KPM
+     * text here; KPM callbacks must use hook_wrap() instead. */
+    owner_rc = kp_hook_owner_register((unsigned long)replace, &owner);
+    if (owner_rc < 0) return -EBUSY;
+    if (owner) {
+        kp_hook_owner_unregister(owner);
+        return -EOPNOTSUPP;
+    }
+
+    flags = hook_engine_lock();
+    hook = (hook_t *)hook_mem_zalloc(origin, INLINE);
+    if (!hook) {
+        hook_engine_unlock(flags);
+        return -HOOK_NO_MEM;
+    }
     hook->func_addr = (uint64_t)func;
-    hook->origin_addr = origin_addr;
+    hook->origin_addr = origin;
     hook->replace_addr = (uint64_t)replace;
     hook->relo_addr = (uint64_t)hook->relo_insts;
-    logkv("Hook func: %llx, origin: %llx, replace: %llx, relocate: %llx, chain: %llx\\n",
-          hook->func_addr, hook->origin_addr, hook->replace_addr, hook->relo_addr, (uint64_t)hook);
     err = hook_prepare(hook);
-    if (err) goto out;
-    {
-        int patch_rc = hook_install(hook);
-        if (patch_rc) {
-            if (patch_rc == -EUCLEAN) {
-                /* Rollback state is uncertain: retain trampoline memory. */
-                logkv("Hook func: %llx patch rollback uncertain: %d\\n",
-                      hook->func_addr, patch_rc);
-                return -HOOK_PATCH_UNCERTAIN;
-            }
-            err = -HOOK_PATCH_FAILED;
-            goto out;
+    if (err) goto fail;
+    patch_rc = hook_install(hook);
+    if (patch_rc) {
+        if (patch_rc == -EUCLEAN) {
+            hook_mem_publish(hook);
+            hook_engine_unlock(flags);
+            return -HOOK_PATCH_UNCERTAIN;
         }
+        err = -HOOK_PATCH_FAILED;
+        goto fail;
     }
     hook_mem_publish(hook);
     *backup = (void *)hook->relo_addr;
-    logkv("Hook func: %llx succeeded\\n", hook->func_addr);
+    hook_engine_unlock(flags);
     return HOOK_NO_ERR;
-out:
+fail:
     hook_mem_free(hook);
-    logkv("Hook func: %llx failed, err: %d\\n", hook->func_addr, err);
+    hook_engine_unlock(flags);
     return err;
 }
 KP_EXPORT_SYMBOL(hook);
 
 void unhook(void *func)
 {
+    uint64_t origin;
+    hook_t *hook;
+    unsigned long flags;
+    int rc;
+
     if (is_bad_address(func)) return;
-    uint64_t origin = branch_func_addr((uint64_t)func);
+    origin = branch_func_addr((uint64_t)func);
     if (is_bad_address((void *)origin)) return;
-    hook_t *hook = hook_get_mem_from_origin_type(origin, INLINE);
-    if (!hook) return;
-    int rc = hook_uninstall(hook);
-    if (rc) {
-        /* Keep trampoline storage alive if restoring original text failed. */
-        logkv("Unhook func: %llx restore failed: %d; retaining hook memory\\n",
-              (uint64_t)func, rc);
+    flags = hook_engine_lock();
+    hook = hook_get_mem_from_origin_type(origin, INLINE);
+    if (!hook) {
+        hook_engine_unlock(flags);
         return;
     }
-    hook_mem_retire(hook);
-    logkv("Unhook func: %llx\\n", (uint64_t)func);
+    rc = hook_uninstall(hook);
+    if (!rc)
+        hook_mem_retire(hook);
+    hook_engine_unlock(flags);
+    if (rc)
+        logkv("Unhook func: %llx restore failed: %d; retaining hook memory\\n", (uint64_t)func, rc);
 }
 KP_EXPORT_SYMBOL(unhook);
 
