@@ -83,6 +83,17 @@ checks = {
         "mod->active_calls != UINT_MAX" in body(kpimg, "int kp_hook_owner_call_get("),
     "KPIMG unload waits for async and hook owner pins":
         "mod->active_calls || mod->hook_refs" in body(kpimg, "long unload_module("),
+    "LKM event snapshots roll back references on counter overflow":
+        "pos->active_calls == UINT_MAX" in body(lkm, "long kp_notify_modules_event(") and
+        "snapshot[i]->active_calls--" in body(lkm, "long kp_notify_modules_event(") and
+        "return -EOVERFLOW" in body(lkm, "long kp_notify_modules_event("),
+    "KPIMG event snapshots roll back references on counter overflow":
+        "pos->active_calls == UINT_MAX" in body(kpimg, "long notify_modules_event(") and
+        "snapshot[i]->active_calls--" in body(kpimg, "long notify_modules_event(") and
+        "return -EOVERFLOW" in body(kpimg, "long notify_modules_event("),
+    "module lookup refuses active-call counter overflow":
+        "mod->active_calls == UINT_MAX" in body(lkm, "static struct kp_module *kp_module_get(") and
+        "mod->active_calls == UINT_MAX" in body(kpimg, "static struct module *module_get_live("),
 }
 
 for label, ok in checks.items():
