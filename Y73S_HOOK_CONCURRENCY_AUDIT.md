@@ -1068,8 +1068,12 @@ independent issues rather than merely adjusting the failing checks.
 
 ### Latest verified evidence
 
-All workflows below ran against the exact same current branch HEAD:
-- HEAD: 81831f30c9e274e5362cd37c5a9efbffc036b2e0
+Both workflows below ran against the same source-code HEAD:
+- Source HEAD: 81831f30c9e274e5362cd37c5a9efbffc036b2e0
+- Current branch HEAD: 9d392d05c0947fa2a69252bb078d2c522a1a9687
+  (report-only commit after the successful source-code runs; no production
+  source, verifier, or workflow files changed in that final documentation
+  commit.)
 - LKM source audit + host kptools build: run 42622781803, success
 - Arm GNU GCC 14.2 Y73S KPIMG build + full audit suite: run 42622781699, success
 
