@@ -535,7 +535,7 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
     int32_t MAX_ZERO_OFFSET_NUM = 10;
     int32_t zero_offset_num = 0;
 
-    if (!img || imglen <= 0 || (elem_size != 4 && elem_size != 8) ||
+    if (!img || imglen <= 0 || elem_size != 4 ||
         imglen < KSYM_MIN_NEQ_SYMS * elem_size) {
         tools_logw("invalid kallsyms_offsets scan range or element size\n");
         return -1;
