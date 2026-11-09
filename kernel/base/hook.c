@@ -906,47 +906,62 @@ KP_EXPORT_SYMBOL(hook_chain_remove);
 // todo: lock
 hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void *udata)
 {
-    if (is_bad_address(func)) return -HOOK_BAD_ADDRESS;
-    uint64_t faddr = (uint64_t)func;
-    uint64_t origin = branch_func_addr(faddr);
+    uint64_t faddr, origin;
+    hook_chain_t *chain;
+    hook_t *hook;
+    hook_err_t err;
+    unsigned long flags;
+    int patch_rc;
+
+    if (is_bad_address(func) || (!before && !after)) return -HOOK_BAD_ADDRESS;
+    faddr = (uint64_t)func;
+    origin = branch_func_addr(faddr);
     if (is_bad_address((void *)origin)) return -HOOK_BAD_ADDRESS;
-    hook_chain_t *chain = (hook_chain_t *)hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
-    if (chain) return hook_chain_add(chain, before, after, udata);
+
+    flags = hook_engine_lock();
+    chain = (hook_chain_t *)hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
+    if (chain) {
+        err = hook_chain_add_locked(chain, before, after, udata);
+        hook_engine_unlock(flags);
+        return err;
+    }
     chain = (hook_chain_t *)hook_mem_zalloc(origin, INLINE_CHAIN);
-    if (!chain) return -HOOK_NO_MEM;
-    chain->chain_items_max = 0;
-    hook_t *hook = &chain->hook;
+    if (!chain) {
+        hook_engine_unlock(flags);
+        return -HOOK_NO_MEM;
+    }
+    hook = &chain->hook;
     hook->func_addr = faddr;
     hook->origin_addr = origin;
     hook->replace_addr = (uint64_t)chain->transit;
     hook->relo_addr = (uint64_t)hook->relo_insts;
-    logkv("Wrap func: %llx, origin: %llx, replace: %llx, relocate: %llx, chain: %llx\n", hook->func_addr,
-          hook->origin_addr, hook->replace_addr, hook->relo_addr, (uint64_t)chain);
-    hook_err_t err = hook_prepare(hook);
-    if (err) goto err;
+
+    err = hook_prepare(hook);
+    if (err) goto fail;
     err = hook_chain_prepare(chain->transit, argno);
-    if (err) goto err;
-    err = hook_chain_add(chain, before, after, udata);
-    if (err) goto err;
-    {
-        int patch_rc = hook_install(&chain->hook);
-        if (patch_rc) {
-            if (patch_rc == -EUCLEAN) {
-                /* Do not free memory while patched text may still reference it. */
-                logkv("Wrap func: %llx patch rollback uncertain: %d\\n",
-                      hook->func_addr, patch_rc);
-                return -HOOK_PATCH_UNCERTAIN;
-            }
-            err = -HOOK_PATCH_FAILED;
-            goto err;
+    if (err) goto fail;
+    err = hook_chain_add_locked(chain, before, after, udata);
+    if (err) goto fail;
+
+    patch_rc = hook_install(hook);
+    if (patch_rc) {
+        if (patch_rc == -EUCLEAN) {
+            /* Text may still point at this chain; publish and pin it. */
+            hook_mem_publish(chain);
+            hook_engine_unlock(flags);
+            return -HOOK_PATCH_UNCERTAIN;
         }
+        hook_chain_remove_locked(chain, before, after);
+        err = -HOOK_PATCH_FAILED;
+        goto fail;
     }
     hook_mem_publish(chain);
-    logkv("Wrap func: %llx succsseed\\n", hook->func_addr);
+    hook_engine_unlock(flags);
     return HOOK_NO_ERR;
-err:
+
+fail:
     hook_mem_free(chain);
-    logkv("Wrap func: %llx failed, err: %d\n", hook->func_addr, err);
+    hook_engine_unlock(flags);
     return err;
 }
 KP_EXPORT_SYMBOL(hook_wrap);
