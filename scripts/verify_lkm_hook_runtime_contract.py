@@ -130,7 +130,7 @@ checks = {
     "fixmap data writes reject cross-page and non-word patches":
         "len != sizeof(u32)" in patch_data and
         "((unsigned long)dst & 3)" in patch_data and
-        "len > PAGE_SIZE - phy_off" in patch_data and
+        "phy_off > PAGE_SIZE - sizeof(u32)" in patch_data and
         "WRITE_ONCE(*(volatile u32 *)map" in patch_data and
         "READ_ONCE(*(const u32 *)src)" in patch_data,
     "atomic pointer patchers hold the shared fixmap lock":
