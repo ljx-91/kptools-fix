@@ -90,7 +90,7 @@ def main():
          "zero-addend RELA entries must not be mistaken for empty padding")
     need(r"offset64\s*>=\s*\(uint64_t\)max_offset", rela,
          "ARM64 relocation target must be range-checked before narrowing")
-    if rela.find("info->kernel_base = kernel_va") < rela.find("rela_num < ARM64_RELO_MIN_NUM"):
+    if rela.find("info->kernel_base = kernel_va") < rela.find("ARM64 relocation table is shorter"):
         raise AssertionError("kernel base must not be committed before RELA candidate validation")
 
     need(r"kernel_va\s*==\s*max_va", rela,
