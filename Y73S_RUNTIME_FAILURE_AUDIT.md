@@ -34,6 +34,25 @@ In `mem_proc()`, absence of `memblock_virt_alloc_relo` reaches `__builtin_trap()
 
 However, the verifier does not identify the restore sequence by ELF symbol/range and does not independently validate the compiler-generated prologue of `start()` (which is relied on by the inline assembly using `x29`). The next audit should use the ELF symbol table and disassembly to verify both function boundaries and the relevant frame-chain assumptions.
 
+## ABI and verifier limitations consolidated from the map/stack follow-up
+
+Do not infer the Vivo vendor kernel's memblock function signatures from current
+upstream Linux headers. Upstream versions have used different argument lists
+for `memblock_alloc_try_nid` and `memblock_phys_alloc_try_nid`; that is not
+proof of the vendor 4.14.141 implementation. Any target-specific signature or
+return-value claim must be tied to the exact original Y73s kernel symbol body,
+call sites, CFI thunk and resolver log.
+
+The stack-frame verifier is a narrow byte-pattern consistency check. It does
+not locate `_paging_init` and `start` by ELF symbol range, nor prove the
+compiler-generated frame-record convention assumed by the inline assembly.
+A stronger proof requires the exact unstripped AArch64 ELF, symbol-bounded
+disassembly of both functions, and validation of the saved FP/LR and restore
+sequence. A verifier PASS alone is not an ABI proof.
+
+The prior standalone note `Y73S_MAP_AND_STACK_VERIFIER_FOLLOWUP.md` has been
+consolidated here; retain these caveats as open validation requirements.
+
 ## Target-specific relevance
 
 For the reported Y73S Linux 4.14.141 kernel, `new_era = kmajor > 5` is false, so the newer-kernel scratch mapping branch is not selected. That does not eliminate the allocation and page-table failure paths above.
