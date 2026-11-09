@@ -63,6 +63,7 @@ def main():
     verify_token_table_cursor_semantics()
     src = (ROOT / "tools/patch.c").read_text(encoding="utf-8")
     kallsym_src = (ROOT / "tools/kallsym.c").read_text(encoding="utf-8")
+    kallsym_header = (ROOT / "tools/kallsym.h").read_text(encoding="utf-8")
     offsets = body(kallsym_src, "static int find_approx_offsets(")
     need(r"elem_size\s*!=\s*4", offsets,
          "relative kallsyms scan must accept only supported entry widths")
@@ -102,6 +103,22 @@ def main():
          "aligned token-table start must remain inside the image")
     need(r"memchr\(token_pos,\s*'\\0',\s*imgend\s*-\s*token_pos\)", token_table,
          "all 256 token strings must terminate inside the image")
+
+    need(r"char\s*\*\s*kallsyms_token_table_image", kallsym_header,
+         "token strings must retain the image that owns their pointers")
+    need(r"info->kallsyms_token_table_image\s*=\s*img", token_table,
+         "token-table parser must record its pointer backing image")
+    token_bounds = body(kallsym_src, "static int get_token_string(")
+    need(r"info->kallsyms_token_table_image", token_bounds,
+         "token pointer bounds must use the original backing image")
+    need(r"token_addr\s*-\s*image_base\s*>=\s*\(uintptr_t\)info->image_size",
+         token_bounds, "token pointer range must be bounded against its backing image")
+    decoder = body(kallsym_src, "static int decompress_symbol_name(")
+    need(r"get_token_string\(info,\s*tokidx", decoder,
+         "symbol decompressor must use backing-image token validation")
+    name_probe = body(kallsym_src, "static int is_symbol_name_pos(")
+    need(r"get_token_string\(info,\s*tokidx", name_probe,
+         "symbol-name probe must use backing-image token validation")
 
     token_index = body(kallsym_src, "static int find_token_index(")
     need(r"token_offset\s*>\s*UINT16_MAX", token_index,
