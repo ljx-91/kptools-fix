@@ -389,7 +389,7 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
         uint64_t ro = uint_unpack(img + cand_end, 8, info->is_be);
         uint64_t ri = uint_unpack(img + cand_end + 8, 8, info->is_be);
         uint64_t ra = uint_unpack(img + cand_end + 16, 8, info->is_be);
-        if (ro && ri && ra) break;
+        if (ro || ri || ra) break;
         cand_end -= 24;
     }
     if (cand_end < cand_start) {
