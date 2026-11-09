@@ -304,90 +304,149 @@ int fp_unhook(uintptr_t fp_addr, void *backup)
 }
 KP_EXPORT_SYMBOL(fp_unhook);
 
+static hook_err_t fp_chain_add_locked(fp_hook_chain_t *chain, void *before, void *after, void *udata)
+{
+    void *before_owner = NULL, *after_owner = NULL;
+    int rc, i;
+    if (!chain || (!before && !after)) return -HOOK_BAD_ADDRESS;
+    if (before) {
+        rc = kp_hook_owner_register((unsigned long)before, &before_owner);
+        if (rc < 0) return -EBUSY;
+    }
+    if (after) {
+        rc = kp_hook_owner_register((unsigned long)after, &after_owner);
+        if (rc < 0) {
+            kp_hook_owner_unregister(before_owner);
+            return -EBUSY;
+        }
+    }
+    for (i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
+        int state = __atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST);
+        if (state != CHAIN_ITEM_STATE_EMPTY &&
+            ((before && chain->befores[i] == before) ||
+             (after && chain->afters[i] == after))) {
+            kp_hook_owner_unregister(before_owner);
+            kp_hook_owner_unregister(after_owner);
+            return -HOOK_DUPLICATED;
+        }
+    }
+    for (i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
+        if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY)
+            continue;
+        chain->udata[i] = udata;
+        chain->befores[i] = before;
+        chain->afters[i] = after;
+        chain->before_owners[i] = before_owner;
+        chain->after_owners[i] = after_owner;
+        if (i + 1 > chain->chain_items_max) chain->chain_items_max = i + 1;
+        __atomic_store_n(&chain->states[i], CHAIN_ITEM_STATE_READY, __ATOMIC_SEQ_CST);
+        return HOOK_NO_ERR;
+    }
+    kp_hook_owner_unregister(before_owner);
+    kp_hook_owner_unregister(after_owner);
+    return -HOOK_CHAIN_FULL;
+}
+
+static void fp_chain_remove_locked(fp_hook_chain_t *chain, void *before, void *after)
+{
+    int i;
+    for (i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
+        if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_READY)
+            continue;
+        if ((before && chain->befores[i] == before) ||
+            (after && chain->afters[i] == after)) {
+            __atomic_store_n(&chain->states[i], CHAIN_ITEM_STATE_RETIRED, __ATOMIC_SEQ_CST);
+            break;
+        }
+    }
+}
+
 hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *after, void *udata)
 {
-    hook_err_t err = HOOK_NO_ERR;
-    if (is_bad_address((void *)fp_addr)) return -HOOK_BAD_ADDRESS;
-    fp_hook_chain_t *chain = hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN);
+    fp_hook_chain_t *chain;
+    unsigned long flags;
+    hook_err_t err;
+    int patch_rc;
+
+    if (is_bad_address((void *)fp_addr) || (fp_addr & 7) || (!before && !after))
+        return -HOOK_BAD_ADDRESS;
+    flags = hook_engine_lock();
+    chain = hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN);
+    if (chain) {
+        err = fp_chain_add_locked(chain, before, after, udata);
+        hook_engine_unlock(flags);
+        return err;
+    }
+    chain = (fp_hook_chain_t *)hook_mem_zalloc(fp_addr, FUNCTION_POINTER_CHAIN);
     if (!chain) {
-        chain = (fp_hook_chain_t *)hook_mem_zalloc(fp_addr, FUNCTION_POINTER_CHAIN);
-        if (!chain) return -HOOK_NO_MEM;
-        chain->hook.fp_addr = fp_addr;
-        chain->hook.replace_addr = (uint64_t)chain->transit;
-        err = hook_chain_prepare(chain->transit, argno);
-        if (err) {
-            hook_mem_free(chain);
-            return err;
-        }
-        flush_icache_all();
-        int patch_rc = fp_hook(chain->hook.fp_addr, (void *)chain->hook.replace_addr,
-                               (void **)&chain->hook.origin_fp);
-        if (patch_rc) {
-            if (patch_rc == -EUCLEAN) {
-                logkv("Wrap func pointer: %llx patch rollback uncertain: %d; retaining chain memory\\n",
-                      chain->hook.fp_addr, patch_rc);
-                return -HOOK_PATCH_UNCERTAIN;
-            }
-            hook_mem_free(chain);
-            return -HOOK_PATCH_FAILED;
-        }
+        hook_engine_unlock(flags);
+        return -HOOK_NO_MEM;
     }
-
-    for (int i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
-        if ((before && chain->befores[i] == before) || (after && chain->afters[i] == after)) return -HOOK_DUPLICATED;
-
-        // todo: atomic or lock
-        if (chain->states[i] == CHAIN_ITEM_STATE_EMPTY) {
-            chain->states[i] = CHAIN_ITEM_STATE_BUSY;
-            dsb(ish);
-            chain->udata[i] = udata;
-            chain->befores[i] = before;
-            chain->afters[i] = after;
-            if (i + 1 > chain->chain_items_max) {
-                chain->chain_items_max = i + 1;
-            }
-            dsb(ish);
-            chain->states[i] = CHAIN_ITEM_STATE_READY;
+    chain->hook.fp_addr = fp_addr;
+    chain->hook.replace_addr = (uint64_t)chain->transit;
+    err = hook_chain_prepare(chain->transit, argno);
+    if (err) goto fail;
+    flush_icache_all();
+    /* Snapshot and patch are serialized against all KP hook-manager writers.
+     * A foreign writer that bypasses this manager remains outside this lock. */
+    patch_rc = fp_hook(chain->hook.fp_addr, (void *)chain->hook.replace_addr,
+                       (void **)&chain->hook.origin_fp);
+    if (patch_rc) {
+        if (patch_rc == -EUCLEAN) {
             hook_mem_publish(chain);
-            logkv("Wrap func pointer add: %llx, %llx, %llx successed\n", chain->hook.fp_addr, before, after);
-            return HOOK_NO_ERR;
+            hook_engine_unlock(flags);
+            return -HOOK_PATCH_UNCERTAIN;
         }
+        err = -HOOK_PATCH_FAILED;
+        goto fail;
     }
-    logkv("Wrap func pointer add: %llx, %llx, %llx failed\n", chain->hook.fp_addr, before, after);
-    return -HOOK_CHAIN_FULL;
+    err = fp_chain_add_locked(chain, before, after, udata);
+    if (err) {
+        int restore_rc = fp_unhook(chain->hook.fp_addr, (void *)chain->hook.origin_fp);
+        if (restore_rc) {
+            hook_mem_publish(chain);
+            hook_engine_unlock(flags);
+            return -HOOK_PATCH_UNCERTAIN;
+        }
+        goto fail;
+    }
+    hook_mem_publish(chain);
+    hook_engine_unlock(flags);
+    return HOOK_NO_ERR;
+fail:
+    hook_mem_free(chain);
+    hook_engine_unlock(flags);
+    return err;
 }
 KP_EXPORT_SYMBOL(fp_hook_wrap);
 
 void fp_hook_unwrap(uintptr_t fp_addr, void *before, void *after)
 {
-    if (is_bad_address((void *)fp_addr)) return;
-    fp_hook_chain_t *chain = (fp_hook_chain_t *)hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN);
-    if (!chain) return;
-    for (int i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
-        if (chain->states[i] == CHAIN_ITEM_STATE_READY)
-            if ((before && chain->befores[i] == before) || (after && chain->afters[i] == after)) {
-                chain->states[i] = CHAIN_ITEM_STATE_BUSY;
-                dsb(ish);
-                chain->udata[i] = 0;
-                chain->befores[i] = 0;
-                chain->afters[i] = 0;
-                dsb(ish);
-                chain->states[i] = CHAIN_ITEM_STATE_EMPTY;
-                break;
-            }
-    }
-    logkv("Wrap func pointer remove: %llx, %llx, %llx\n", chain->hook.fp_addr, before, after);
+    fp_hook_chain_t *chain;
+    unsigned long flags;
+    int i, rc;
 
-    for (int i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
-        if (chain->states[i] != CHAIN_ITEM_STATE_EMPTY) return;
+    if (is_bad_address((void *)fp_addr) || (fp_addr & 7)) return;
+    chain = hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN);
+    if (!chain) return;
+    flags = hook_engine_lock();
+    fp_chain_remove_locked(chain, before, after);
+    hook_engine_unlock(flags);
+    hook_chain_reap_slots(chain, 1);
+
+    flags = hook_engine_lock();
+    for (i = 0; i < FP_HOOK_CHAIN_NUM; i++) {
+        if (__atomic_load_n(&chain->states[i], __ATOMIC_SEQ_CST) != CHAIN_ITEM_STATE_EMPTY) {
+            hook_engine_unlock(flags);
+            return;
+        }
     }
-    int rc = fp_unhook(chain->hook.fp_addr, (void *)chain->hook.origin_fp);
-    if (rc) {
+    rc = fp_unhook(chain->hook.fp_addr, (void *)chain->hook.origin_fp);
+    if (!rc)
+        hook_mem_retire(chain);
+    hook_engine_unlock(flags);
+    if (rc)
         logkv("Unwrap func pointer: %llx restore failed: %d; retaining chain memory\\n",
               fp_addr, rc);
-        return;
-    }
-    hook_mem_retire(chain);
-    logkv("Unwrap func pointer: %llx, %llx, %llx\n", fp_addr, before, after);
 }
 KP_EXPORT_SYMBOL(fp_hook_unwrap);
