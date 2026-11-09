@@ -19,6 +19,7 @@ struct kp_hook_mem {
 	uintptr_t origin;
 	enum hook_type type;
 	bool ready;
+	bool retiring;
 	void *region;
 	union {
 		hook_t hook;
@@ -179,7 +180,7 @@ void *hook_get_mem_from_origin(uint64_t origin)
 
 	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry(mem, &kp_hook_mems, list) {
-		if (mem->origin == origin && mem->ready) {
+		if (mem->origin == origin && mem->ready && !mem->retiring) {
 			result = mem->payload;
 			break;
 		}
@@ -211,13 +212,50 @@ void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
 
 	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry(mem, &kp_hook_mems, list) {
-		if (mem->origin == origin && mem->type == type && mem->ready) {
+		if (mem->origin == origin && mem->type == type && mem->ready && !mem->retiring) {
 			result = mem->payload;
 			break;
 		}
 	}
 	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 	return result;
+}
+
+int hook_mem_claim_retire(void *payload)
+{
+	struct kp_hook_mem *mem;
+	unsigned long flags;
+	int rc = -ENOENT;
+
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
+	list_for_each_entry(mem, &kp_hook_mems, list) {
+		if (mem->payload != payload)
+			continue;
+		if (!mem->ready || mem->retiring)
+			rc = -EBUSY;
+		else {
+			mem->retiring = true;
+			rc = 0;
+		}
+		break;
+	}
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
+	return rc;
+}
+
+void hook_mem_cancel_retire(void *payload)
+{
+	struct kp_hook_mem *mem;
+	unsigned long flags;
+
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
+	list_for_each_entry(mem, &kp_hook_mems, list) {
+		if (mem->payload == payload) {
+			mem->retiring = false;
+			break;
+		}
+	}
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 }
 
 /* A successfully restored hook may still have CPUs that entered its old
