@@ -204,7 +204,7 @@ def main():
          "KPM image must be leaked rather than freed if NX restoration fails")
     need(r"kp_free_exec\(mod->start,\s*mod->size\)", module,
          "KPM free paths must restore the complete image range")
-    if re.search(r"kp_free_exec\\s*\\(\\s*mod->start\\s*\\)", module):
+    if "kp_free_exec(mod->start);" in module:
         raise AssertionError("KPM unload must pass the complete image size to kp_free_exec")
     if module.count("enum kp_exec_backend {") != 1:
         raise AssertionError("KPM executable backend enum must be defined exactly once")
