@@ -73,6 +73,10 @@ def main():
     need(r"offset\s*<\s*start\s*\|\|\s*offset\s*>=\s*imglen", token_index,
          "token-index generation must validate each cursor before dereferencing")
 
+    dispatcher = body(kallsym_src, "static int32_t find_approx_addresses_or_offset(")
+    need(r"!info\s*\|\|\s*!img\s*\|\|\s*imglen\s*<=\s*0", dispatcher,
+         "Kallsyms scan dispatcher must reject invalid image inputs")
+
     num_syms = body(kallsym_src, "static int find_num_syms(")
     need(r"approx_end\s*<\s*0\s*\|\|\s*approx_end\s*>\s*imglen\s*-\s*num_syms_elem_size",
          num_syms, "symbol-count scan must validate its image range")
@@ -140,7 +144,7 @@ def main():
     need(r"if\s*\(!info->banner_num\)\s*\{[^}]*return\s+0;", banner,
          "missing linux_banner must leave the vector fallback path available")
     need(r"if\s*\(!info->banner_num\)", banner,
-         "linux_banner parser must reject images without a valid banner")
+         "linux_banner parser must detect absence without aborting vector fallback")
     need(r"memchr\(uts_release_start,\s*' ',", banner,
          "linux release parser must find a bounded in-image delimiter")
     need(r"release_len\s*>=\s*sizeof\(release\)", banner,
