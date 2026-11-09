@@ -51,6 +51,8 @@ struct kp_module {
 	/* state and active_calls are protected by the KPM registry lock. */
 	enum kp_module_state state;
 	unsigned int active_calls;
+	unsigned int hook_refs;
+	bool exit_called;
 
 	struct {
 		const char *base, *name, *version, *license, *author, *description;
