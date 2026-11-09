@@ -44,9 +44,9 @@ def main():
         raise AssertionError("unbounded kallsyms_offsets backward scan reintroduced")
 
     addresses = body(kallsym_src, "static int find_approx_addresses(")
-    need(r"imglen\\s*<\\s*KSYM_MIN_NEQ_SYMS\\s*\\*\\s*info->asm_PTR_size", addresses,
+    need(r"imglen\s*<\s*KSYM_MIN_NEQ_SYMS\s*\*\s*info->asm_PTR_size", addresses,
          "absolute kallsyms scan must validate the minimum image size")
-    need(r"cand\\s*<=\\s*imglen\\s*-\\s*elem_size", addresses,
+    need(r"cand\s*<=\s*imglen\s*-\s*elem_size", addresses,
          "absolute kallsyms tail scan must read only complete entries")
 
     token_table = body(kallsym_src, "static int find_token_table(")
@@ -93,7 +93,7 @@ def main():
     if rela.find("info->kernel_base = kernel_va") < rela.find("rela_num < ARM64_RELO_MIN_NUM"):
         raise AssertionError("kernel base must not be committed before RELA candidate validation")
 
-    need(r"kernel_va\\s*==\\s*max_va", rela,
+    need(r"kernel_va\s*==\s*max_va", rela,
          "ARM64 RELA scanner must reject a candidate without a resolved kernel base")
 
     preset = body(src, "preset_t *get_preset(")
