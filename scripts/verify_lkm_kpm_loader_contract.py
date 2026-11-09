@@ -181,6 +181,15 @@ def main():
          "verify KPM image permissions before init")
     need(r"if\s*\(rc\).*?goto free;", load,
          "permission verification failure must prevent KPM init")
+    if module.count("enum kp_exec_backend {") != 1:
+        raise AssertionError("KPM executable backend enum must be defined exactly once")
+    need(r"KP_EXEC_BACKEND_MODULE", exec_alloc, "matched module allocator backend")
+    need(r"KP_EXEC_BACKEND_EXECMEM", exec_alloc, "matched execmem allocator backend")
+    need(r"KP_EXEC_BACKEND_VMALLOC", exec_alloc, "matched vmalloc allocator backend")
+    need(r"pte_lockptr", permissions, "PTE changes must hold the page-table lock")
+    need(r"set_pte_at", permissions, "PTE updates must use the architecture setter")
+    need(r"pte_val\(\*pte\).*?KP_LKM_PTE_PXN.*?KP_LKM_PTE_UXN.*?KP_LKM_PTE_GP",
+         permissions, "permission bits must be verified after the PTE update")
 
     safe_iter = body(module, "int kp_kpm_safe_kallsyms_on_each_symbol(")
     need(r"kp_module_get_by_addr", safe_iter, "kallsyms callback owner acquisition")
