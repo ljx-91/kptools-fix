@@ -146,6 +146,35 @@ def main():
     need(r"marker_end64\s*>\s*imglen", markers,
          "marker table end arithmetic must remain inside the image")
 
+    insn_window = body(kallsym_src, "static int arm64_verify_pid_vnr_window(")
+    need(r"int64_t\s+insn_offset", insn_window,
+         "ARM64 instruction-window scan must use wide offset arithmetic")
+    need(r"insn_offset\s*>\s*\(int64_t\)imglen\s*-\s*4", insn_window,
+         "ARM64 instruction-window scan must bound every 4-byte read")
+    arm64_stub = body(kallsym_src, "static int arm64_verify_pid_vnr(")
+    need(r"int64_t\s+target", arm64_stub,
+         "CFI branch target arithmetic must not overflow 32-bit offsets")
+    need(r"target\s*\+\s*4\s*<=\s*imglen", arm64_stub,
+         "CFI branch target must fit inside the image")
+
+    vectors = body(kallsym_src, "static int correct_addresses_or_offsets_by_vectors(")
+    need(r"info->arch\s*!=\s*ARM64", vectors,
+         "ARM64 vector heuristic must reject non-ARM64 architectures")
+    need(r"int64_t\s+search_end", vectors,
+         "vector search end arithmetic must use 64-bit intermediates")
+    need(r"candidate\s*\+\s*3LL\s*\*\s*elem_size\s*>\s*table_end", vectors,
+         "strict alias check must fit all three entries inside the table")
+    need(r"vector_raw\s*<\s*base", vectors,
+         "vector address subtraction must reject underflow")
+    need(r"vector_next_delta\s*<\s*vector_delta", vectors,
+         "vector span calculation must reject descending addresses")
+    need(r"pid_delta\s*>\s*INT32_MAX", vectors,
+         "pid_vnr address must fit the validated image-offset type")
+
+    generic = body(kallsym_src, "static int correct_addresses_or_offsets(")
+    need(r"end\s*>\s*imglen\s*\|\|\s*end\s*<\s*start", generic,
+         "resolved kallsyms table coverage must be validated before subtraction")
+
     banner_match = body(kallsym_src, "static int correct_addresses_or_offsets_by_banner(")
     need(r"table_end\s*>\s*imglen", banner_match,
          "banner-based address matching must validate candidate table bounds")
