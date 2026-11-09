@@ -671,6 +671,12 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
         mod->state = KP_MODULE_LIVE; module_lock_release(flags);
         logkfi("[%s] succeed with [%s]\n", mod->info.name, args ? args : ""); goto out;
     }
+    mod->state = KP_MODULE_UNLOADING;
+    if (mod->active_calls) {
+        module_lock_release(flags);
+        rc = -EBUSY;
+        goto out;
+    }
     mod->state = KP_MODULE_EXITING;
     module_lock_release(flags);
     if (mod->exit) {
