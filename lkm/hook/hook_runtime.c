@@ -167,7 +167,7 @@ void *hook_mem_zalloc(uintptr_t origin, enum hook_type type)
 		}
 	}
 	list_add_tail(&mem->list, &kp_hook_mems);
-	mutex_unlock(&kp_hook_lock);
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 	return mem->payload;
 }
 
@@ -177,14 +177,14 @@ void *hook_get_mem_from_origin(uint64_t origin)
 	unsigned long flags;
 	void *result = NULL;
 
-	mutex_lock(&kp_hook_lock);
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry(mem, &kp_hook_mems, list) {
 		if (mem->origin == origin && mem->ready) {
 			result = mem->payload;
 			break;
 		}
 	}
-	mutex_unlock(&kp_hook_lock);
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 	return result;
 }
 
@@ -193,14 +193,14 @@ void hook_mem_publish(void *payload)
 	struct kp_hook_mem *mem;
 	unsigned long flags;
 
-	mutex_lock(&kp_hook_lock);
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry(mem, &kp_hook_mems, list) {
 		if (mem->payload == payload) {
 			mem->ready = true;
 			break;
 		}
 	}
-	mutex_unlock(&kp_hook_lock);
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 }
 
 void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
@@ -209,14 +209,14 @@ void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
 	unsigned long flags;
 	void *result = NULL;
 
-	mutex_lock(&kp_hook_lock);
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry(mem, &kp_hook_mems, list) {
 		if (mem->origin == origin && mem->type == type && mem->ready) {
 			result = mem->payload;
 			break;
 		}
 	}
-	mutex_unlock(&kp_hook_lock);
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 	return result;
 }
 
@@ -228,16 +228,16 @@ void hook_mem_retire(void *payload)
 	struct kp_hook_mem *mem, *tmp;
 	unsigned long flags;
 
-	mutex_lock(&kp_hook_lock);
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry_safe(mem, tmp, &kp_hook_mems, list) {
 		if (mem->payload == payload) {
 			list_del(&mem->list);
-			mutex_unlock(&kp_hook_lock);
+			raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 			kfree(mem);
 			return;
 		}
 	}
-	mutex_unlock(&kp_hook_lock);
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 }
 
 void hook_mem_free(void *payload)
@@ -245,17 +245,17 @@ void hook_mem_free(void *payload)
 	struct kp_hook_mem *mem, *tmp;
 	unsigned long flags;
 
-	mutex_lock(&kp_hook_lock);
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry_safe(mem, tmp, &kp_hook_mems, list) {
 		if (mem->payload == payload) {
 			list_del(&mem->list);
-			mutex_unlock(&kp_hook_lock);
+			raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 			kp_hook_exec_free(mem->region);
 			kfree(mem);
 			return;
 		}
 	}
-	mutex_unlock(&kp_hook_lock);
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 }
 
 int hotpatch(void *addrs[], uint32_t values[], int count)
