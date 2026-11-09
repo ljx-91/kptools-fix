@@ -43,7 +43,7 @@ hook_exec_alloc = function_body(runtime, "static void *kp_hook_exec_alloc(")
 hook_runtime_init = function_body(runtime, "int kp_hook_runtime_init(void)")
 hook_make_nx = function_body(runtime, "static int kp_hook_make_nx(")
 hook_update_exec = function_body(runtime, "static int kp_hook_update_exec(")
-hook_exec_free = function_body(runtime, "static void kp_hook_exec_free(void *region, unsigned long size)")
+hook_exec_free = function_body(runtime, "static void kp_hook_exec_free(void *region, unsigned long size)\\n{")
 hook_install = function_body(hook, "int hook_install(")
 
 checks = {
