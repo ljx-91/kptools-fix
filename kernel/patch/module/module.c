@@ -631,9 +631,14 @@ static struct module *find_module_locked(const char *name)
 }
 int kp_hook_owner_register(unsigned long addr, void **owner)
 {
-    struct module *pos; unsigned long flags; int rc = 0;
-    if (!owner) return -EINVAL;
-    *owner = NULL; flags = module_lock_acquire();
+    struct module *pos;
+    unsigned long flags;
+    int rc = 0;
+
+    if (!owner)
+        return -EINVAL;
+    *owner = NULL;
+    flags = module_lock_acquire();
     list_for_each_entry(pos, &modules.list, list) {
         unsigned long start = (unsigned long)pos->start;
         unsigned long image_end = start + pos->size;
@@ -650,11 +655,14 @@ int kp_hook_owner_register(unsigned long addr, void **owner)
 }
 void kp_hook_owner_unregister(void *owner)
 {
-    struct module *mod = owner; unsigned long flags;
+    struct module *mod = owner;
+    unsigned long flags;
+
     if (!mod)
         return;
     flags = module_lock_acquire();
-    if (mod->hook_refs) mod->hook_refs--;
+    if (mod->hook_refs)
+        mod->hook_refs--;
     module_lock_release(flags);
 }
 int kp_hook_owner_call_get(void *owner)
@@ -671,9 +679,14 @@ int kp_hook_owner_call_get(void *owner)
 }
 void kp_hook_owner_call_put(void *owner)
 {
-    struct module *mod = owner; unsigned long flags;
-    if (!mod) return; flags = module_lock_acquire();
-    if (mod->active_calls) mod->active_calls--;
+    struct module *mod = owner;
+    unsigned long flags;
+
+    if (!mod)
+        return;
+    flags = module_lock_acquire();
+    if (mod->active_calls)
+        mod->active_calls--;
     module_lock_release(flags);
 }
 
