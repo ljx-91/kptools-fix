@@ -132,6 +132,8 @@ def main():
     need(r"!info\s*\|\|\s*!img\s*\|\|\s*imglen\s*<=\s*0", dispatcher,
          "Kallsyms scan dispatcher must reject invalid image inputs")
 
+    need(r"ret\s*=\s*find_approx_offsets\(info,\s*img,\s*imglen\);\s*if\s*\(!ret\)\s*return\s+0;.*?ret\s*=\s*find_approx_addresses\(info,\s*img,\s*imglen\)",
+         dispatcher, "unsupported relative-offset layouts must fall back to the absolute-address scan")
     num_syms = body(kallsym_src, "static int find_num_syms(")
     need(r"approx_end\s*<\s*0\s*\|\|\s*approx_end\s*>\s*imglen\s*-\s*num_syms_elem_size",
          num_syms, "symbol-count scan must validate its image range")
@@ -252,6 +254,8 @@ def main():
          "pid_vnr address must fit the validated image-offset type")
 
     generic = body(kallsym_src, "static int correct_addresses_or_offsets(")
+    need(r"correct_addresses_or_offsets_by_banner.*?else\s*\{.*?correct_addresses_or_offsets_by_vectors",
+         generic, "missing linux_banner must fall back to strict ARM64 vector validation")
     need(r"end\s*>\s*imglen\s*\|\|\s*end\s*<\s*start", generic,
          "resolved kallsyms table coverage must be validated before subtraction")
 
