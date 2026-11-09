@@ -1187,22 +1187,23 @@ static int correct_addresses_or_offsets_by_vectors(kallsym_t *info, char *img, i
                         continue;
                 }
 #endif
-                int64_t vector_raw = (int64_t)uint_unpack(
+                uint64_t vector_raw = uint_unpack(
                     img + candidate + (int64_t)vector_index * elem_size, elem_size, info->is_be);
-                int64_t vector_next_raw = (int64_t)uint_unpack(
+                uint64_t vector_next_raw = uint_unpack(
                     img + candidate + (int64_t)(vector_index + 1) * elem_size, elem_size, info->is_be);
-                if (vector_raw < (int64_t)base || vector_next_raw < (int64_t)base) continue;
+                if (vector_raw < base || vector_next_raw < base) continue;
 
-                uint64_t vector_delta = (uint64_t)(vector_raw - (int64_t)base);
-                uint64_t vector_next_delta = (uint64_t)(vector_next_raw - (int64_t)base);
-                if (vector_delta > INT32_MAX || vector_next_delta > INT32_MAX) continue;
-                int64_t vector_span = (int64_t)vector_next_delta - (int64_t)vector_delta;
+                uint64_t vector_delta = vector_raw - base;
+                uint64_t vector_next_delta = vector_next_raw - base;
+                if (vector_delta > INT32_MAX || vector_next_delta > INT32_MAX ||
+                    vector_next_delta < vector_delta) continue;
+                uint64_t vector_span = vector_next_delta - vector_delta;
                 if (vector_span < 0x600 || (vector_delta & ((1U << 11) - 1))) continue;
 
-                int64_t pid_raw = (int64_t)uint_unpack(
+                uint64_t pid_raw = uint_unpack(
                     img + candidate + (int64_t)pid_vnr_index * elem_size, elem_size, info->is_be);
-                if (pid_raw < (int64_t)base) continue;
-                uint64_t pid_delta = (uint64_t)(pid_raw - (int64_t)base);
+                if (pid_raw < base) continue;
+                uint64_t pid_delta = pid_raw - base;
                 if (pid_delta > INT32_MAX) continue;
 
                 if (!arm64_verify_pid_vnr(info, img, imglen, (int32_t)pid_delta, pass)) {
