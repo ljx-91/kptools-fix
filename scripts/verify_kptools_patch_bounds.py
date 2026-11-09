@@ -168,8 +168,10 @@ def main():
          "symbol decompressor must validate the input cursor")
     need(r"len\s*>\s*limit\s*-\s*pos", decoder,
          "symbol decompressor must bound compressed name bytes")
-    need(r"memchr\(token,\s*'\\0',\s*token_remaining\)", decoder,
-         "symbol decompressor must validate token string termination")
+    need(r"get_token_string\(info,\s*tokidx", decoder,
+         "symbol decompressor must use the bounded token helper")
+    need(r"memchr\(token,\s*'\\0',\s*remaining\)", token_bounds,
+         "token helper must validate token string termination against its backing image")
     need(r"append_len\s*>\s*KSYM_SYMBOL_LEN\s*-\s*1\s*-\s*used", decoder,
          "symbol decompressor must bound expanded output")
     index_offset = body(kallsym_src, "int32_t get_symbol_index_offset(")
