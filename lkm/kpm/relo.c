@@ -53,13 +53,18 @@ static int reloc_data(enum kp_aarch64_reloc_op op, void *place, u64 val, int len
 		pr_err("Invalid length (%d) for data relocation\n", len);
 		return -EINVAL;
 	}
-	/* Extract the upper value bits (including the sign bit) and
-	 * shift them to bit 0. */
-	sval = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
-
-	/* Overflow if the value is not representable in len bits. */
-	if ((u64)(sval + 1) > 2)
-		return -ERANGE;
+	/* PREL relocations encode a signed displacement. ABS relocations
+	 * permit either a signed or unsigned narrow value per AAELF64. */
+	if (op == RELOC_OP_PREL && len < 64) {
+		if (value < -(1LL << (len - 1)) ||
+		    value >= (1LL << (len - 1)))
+			return -ERANGE;
+	} else {
+		/* ABS overflow range: -2^(n-1) <= X < 2^n. */
+		sval = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
+		if ((u64)(sval + 1) > 2)
+			return -ERANGE;
+	}
 
 	switch (len) {
 	case 16:
