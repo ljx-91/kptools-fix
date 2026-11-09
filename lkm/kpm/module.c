@@ -172,7 +172,7 @@ static void kp_free_exec(void *region, unsigned long size)
 	/* Never return executable pages to a general allocator. If NX/BTI
 	 * restoration cannot be verified, deliberately leak the region. */
 	if (kp_restore_nx_gp((unsigned long)region, size)) {
-		logke("KPM executable memory permission restore failed; leaking %px\\n", region);
+		logke("KPM executable memory permission restore failed; leaking %px\n", region);
 		return;
 	}
 	switch (kp_exec_backend) {
