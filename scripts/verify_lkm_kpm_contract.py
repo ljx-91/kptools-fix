@@ -147,6 +147,48 @@ def main():
     require(r"kp_kpm_owner_pin|kp_hook_owner_register", module,
             "LKM must expose callback owner pinning")
 
+    # Executable-memory permission changes are architecture-sensitive. Keep
+    # the page-table walk and all runtime prerequisites fail-closed.
+    pte = body(module, "static int kp_update_bti_gp(")
+    for pattern, message in (
+        (r"size\s*>\s*ULONG_MAX\s*-\s*base", "PTE range overflow"),
+        (r"pgd_none\(\*pgd\)|pgd_bad\(\*pgd\)", "PGD validity"),
+        (r"p4d_none\(\*p4d\)|p4d_bad\(\*p4d\)", "P4D validity"),
+        (r"pud_none\(\*pud\)|pud_bad\(\*pud\)|pud_sect\(\*pud\)", "PUD validity"),
+        (r"pmd_none\(\*pmd\)|pmd_bad\(\*pmd\)|pmd_sect\(\*pmd\)", "PMD validity"),
+        (r"pte_lockptr\(kp_kpm_init_mm,\s*pmd\)", "PTE lock"),
+        (r"pte_present\(\*pte\)", "present PTE"),
+        (r"set_pte_at\(kp_kpm_init_mm", "PTE update"),
+        (r"flush_tlb_kernel_range\(addr,\s*addr\s*\+\s*PAGE_SIZE\)", "kernel TLB invalidation"),
+    ):
+        require(pattern, pte, f"KPM executable PTE walk must validate {message}")
+
+    free_exec = body(module, "static void kp_free_exec(")
+    require(r"if\s*\(kp_restore_nx_gp\([^)]*\)\)", free_exec,
+            "KPM executable pages must be restored before release")
+    require(r"return;", free_exec,
+            "KPM pages must be retained if NX/BTI restoration fails")
+
+    init_runtime = body(module, "int kp_kpm_init(")
+    for pattern, message in (
+        (r"if\s*\(!kp_kpm_init_mm\)", "init_mm"),
+        (r"if\s*\(!kp_flush_icache_all_fn\)", "cross-CPU I-cache flush"),
+        (r"kp_module_alloc\s*&&\s*kp_module_memfree", "matched module allocator/free pair"),
+        (r"kp_execmem_alloc\s*&&\s*kp_execmem_free", "matched execmem allocator/free pair"),
+        (r"else if\s*\(kp_set_memory_x\)", "permission-capable vmalloc fallback"),
+        (r"perm_rc\s*=\s*kp_clear_bti_gp", "callback trampoline PTE verification"),
+        (r"if\s*\(perm_rc\)[\s\S]*?kp_callback_tramp\s*=\s*NULL", "disable unsafe callback trampoline"),
+    ):
+        require(pattern, init_runtime, f"KPM runtime initialization must require {message}")
+
+    load_gate = body(module, "long kp_load_module(")
+    require(r"kp_exec_backend\s*==\s*KP_EXEC_BACKEND_NONE\s*\|\|\s*!kp_kpm_init_mm",
+            load_gate, "KPM loading must fail closed without verified allocator and init_mm")
+
+    unload_gate = body(module, "long kp_unload_module(")
+    require(r"mod->active_calls\s*\|\|\s*mod->hook_refs[\s\S]*?return\s*-EBUSY",
+            unload_gate, "KPM image must remain resident while callbacks or hooks reference it")
+
     require(r"y73s-cred-layout-guards-20261108", workflow,
             "LKM contract workflow must trigger on the selected Y73S branch")
     require(r"verify_lkm_kpm_contract\.py", workflow,
