@@ -366,7 +366,6 @@ int fp_unhook(uintptr_t fp_addr, void *expected, void *backup);
  * @param fp_addr 
  * @param backup 
  */
-int fp_unhook(uintptr_t fp_addr, void *backup);
 
 /**
  * @brief 
