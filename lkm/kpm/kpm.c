@@ -21,19 +21,52 @@
 #define KPM_NAME_LEN 32
 #define KPM_CTL_ARGS_LEN 1024
 
-long kp_kpm_load_sc(const char __user *upath, const char __user *uargs, void __user *reserved)
+/*
+ * strncpy_from_user() returns dst_size when the source has no NUL in range.
+ * In that case the destination is not a valid C string. Reject it explicitly
+ * and terminate every accepted buffer before passing it to string consumers.
+ */
+static long kp_copy_user_string(char *dst, size_t dst_size,
+				const char __user *src)
+{
+	long len;
+
+	if (!dst || !dst_size || !src)
+		return -EINVAL;
+	len = strncpy_from_user(dst, src, dst_size);
+	if (len < 0)
+		return len;
+	if ((size_t)len >= dst_size) {
+		dst[dst_size - 1] = '\0';
+		return -ENAMETOOLONG;
+	}
+	dst[len] = '\0';
+	return len;
+}
+
+long kp_kpm_load_sc(const char __user *upath, const char __user *uargs,
+		    void __user *reserved)
 {
 	char path[KPM_LOAD_PATH_LEN];
-	char *args;
-	long pathlen = strncpy_from_user(path, upath, sizeof(path));
-	if (pathlen <= 0)
-		return -EINVAL;
+	char *args = NULL;
+	long pathlen, arglen = 0;
+	long rc;
 
-	args = kzalloc(KPM_ARGS_LEN, GFP_KERNEL);
-	if (!args)
-		return -ENOMEM;
-	long arglen = strncpy_from_user(args, uargs, KPM_ARGS_LEN);
-	long rc = kp_load_module_path(path, arglen <= 0 ? NULL : args, reserved);
+	pathlen = kp_copy_user_string(path, sizeof(path), upath);
+	if (pathlen <= 0)
+		return pathlen < 0 ? pathlen : -EINVAL;
+
+	if (uargs) {
+		args = kzalloc(KPM_ARGS_LEN, GFP_KERNEL);
+		if (!args)
+			return -ENOMEM;
+		arglen = kp_copy_user_string(args, KPM_ARGS_LEN, uargs);
+		if (arglen < 0) {
+			kfree(args);
+			return arglen;
+		}
+	}
+	rc = kp_load_module_path(path, arglen > 0 ? args : NULL, reserved);
 	kfree(args);
 	return rc;
 }
@@ -43,15 +76,27 @@ long kp_kpm_control_sc(const char __user *uname, const char __user *uctl_args,
 {
 	char name[KPM_NAME_LEN];
 	char *ctl_args;
-	long namelen = strncpy_from_user(name, uname, sizeof(name));
+	long namelen, arglen, rc;
+
+	namelen = kp_copy_user_string(name, sizeof(name), uname);
 	if (namelen <= 0)
+		return namelen < 0 ? namelen : -EINVAL;
+	if (!uctl_args)
 		return -EINVAL;
 
 	ctl_args = kzalloc(KPM_CTL_ARGS_LEN, GFP_KERNEL);
 	if (!ctl_args)
 		return -ENOMEM;
-	long arglen = strncpy_from_user(ctl_args, uctl_args, KPM_CTL_ARGS_LEN);
-	long rc = kp_module_control0(name, arglen <= 0 ? NULL : ctl_args, out_msg, outlen);
+	arglen = kp_copy_user_string(ctl_args, KPM_CTL_ARGS_LEN, uctl_args);
+	if (arglen < 0) {
+		kfree(ctl_args);
+		return arglen;
+	}
+	if (!arglen) {
+		kfree(ctl_args);
+		return -EINVAL;
+	}
+	rc = kp_module_control0(name, ctl_args, out_msg, outlen);
 	kfree(ctl_args);
 	return rc;
 }
@@ -59,9 +104,10 @@ long kp_kpm_control_sc(const char __user *uname, const char __user *uctl_args,
 long kp_kpm_unload_sc(const char __user *uname, void __user *reserved)
 {
 	char name[KPM_NAME_LEN];
-	long len = strncpy_from_user(name, uname, sizeof(name));
+	long len = kp_copy_user_string(name, sizeof(name), uname);
+
 	if (len <= 0)
-		return -EINVAL;
+		return len < 0 ? len : -EINVAL;
 	return kp_unload_module(name, reserved);
 }
 
@@ -72,12 +118,15 @@ long kp_kpm_nums_sc(void)
 
 long kp_kpm_list_sc(char __user *names, int len)
 {
-	if (len <= 0)
+	char *buf;
+	int sz, copy_len, rc;
+
+	if (!names || len <= 0)
 		return -EINVAL;
-	char *buf = kzalloc(4096, GFP_KERNEL);
+	buf = kzalloc(4096, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
-	int sz = kp_list_modules(buf, 4096);
+	sz = kp_list_modules(buf, 4096);
 	if (sz < 0) {
 		kfree(buf);
 		return sz;
@@ -86,26 +135,27 @@ long kp_kpm_list_sc(char __user *names, int len)
 		kfree(buf);
 		return -ENOBUFS;
 	}
-	int copy_len = sz > 0 ? sz : 1;
-	int rc = copy_to_user(names, buf, copy_len) ? -EFAULT : sz;
+	copy_len = sz > 0 ? sz : 1;
+	rc = copy_to_user(names, buf, copy_len) ? -EFAULT : sz;
 	kfree(buf);
 	return rc;
 }
 
 long kp_kpm_info_sc(const char __user *uname, char __user *out_info, int out_len)
 {
-	if (out_len <= 0)
-		return -EINVAL;
 	char name[KPM_NAME_LEN];
-	char *buf = kzalloc(2048, GFP_KERNEL);
+	char *buf;
+	int len, sz, rc;
+
+	if (!out_info || out_len <= 0)
+		return -EINVAL;
+	len = (int)kp_copy_user_string(name, sizeof(name), uname);
+	if (len <= 0)
+		return len < 0 ? len : -EINVAL;
+	buf = kzalloc(2048, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
-	int len = strncpy_from_user(name, uname, sizeof(name));
-	if (len <= 0) {
-		kfree(buf);
-		return -EINVAL;
-	}
-	int sz = kp_get_module_info(name, buf, 2048);
+	sz = kp_get_module_info(name, buf, 2048);
 	if (sz < 0) {
 		kfree(buf);
 		return sz;
@@ -114,7 +164,7 @@ long kp_kpm_info_sc(const char __user *uname, char __user *out_info, int out_len
 		kfree(buf);
 		return -ENOBUFS;
 	}
-	int rc = copy_to_user(out_info, buf, sz) ? -EFAULT : sz;
+	rc = copy_to_user(out_info, buf, sz) ? -EFAULT : sz;
 	kfree(buf);
 	return rc;
 }
