@@ -99,7 +99,7 @@ def main():
          "AVB footer movement must avoid signed overflow")
     need(r"if\s*\(has_avb\)\s*\{\s*if\s*\(fwrite\(&avb", repack,
          "a footer may only be written when an AVB footer was actually read")
-    need(r"AVB footer/vbmeta bytes will be preserved, but partition digest and signature are not recomputed",
+    need(r"AVB metadata bytes are preserved, but partition digest and signature are not recomputed; do not treat the repacked image as AVB-verified",
          repack, "AVB repack must warn that preserved metadata is not a recomputed AVB signature")
     need(r"fwrite\(&hdr,\s*sizeof\(hdr\),\s*1,\s*f_out\)\s*!=\s*1", repack,
          "repack must check output header writes")
