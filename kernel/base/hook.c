@@ -515,6 +515,12 @@ _transit4(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3)
     hook_chain_t *hook_chain = current_inline_hook_chain();
     if (!hook_chain) return 0;
     hook_chain_reader_enter(hook_chain, 0);
+    int before_refs[HOOK_CHAIN_NUM] = {0};
+    int after_refs[HOOK_CHAIN_NUM] = {0};
+    int before_allowed[HOOK_CHAIN_NUM] = {0};
+    int after_allowed[HOOK_CHAIN_NUM] = {0};
+    hook_chain_pin_callbacks(hook_chain, 0, before_refs, after_refs,
+                             before_allowed, after_allowed);
     hook_fargs4_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
@@ -554,6 +560,12 @@ _transit8(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t a
     hook_chain_t *hook_chain = current_inline_hook_chain();
     if (!hook_chain) return 0;
     hook_chain_reader_enter(hook_chain, 0);
+    int before_refs[HOOK_CHAIN_NUM] = {0};
+    int after_refs[HOOK_CHAIN_NUM] = {0};
+    int before_allowed[HOOK_CHAIN_NUM] = {0};
+    int after_allowed[HOOK_CHAIN_NUM] = {0};
+    hook_chain_pin_callbacks(hook_chain, 0, before_refs, after_refs,
+                             before_allowed, after_allowed);
     hook_fargs8_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
@@ -599,6 +611,12 @@ _transit12(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_t 
     hook_chain_t *hook_chain = current_inline_hook_chain();
     if (!hook_chain) return 0;
     hook_chain_reader_enter(hook_chain, 0);
+    int before_refs[HOOK_CHAIN_NUM] = {0};
+    int after_refs[HOOK_CHAIN_NUM] = {0};
+    int before_allowed[HOOK_CHAIN_NUM] = {0};
+    int after_allowed[HOOK_CHAIN_NUM] = {0};
+    hook_chain_pin_callbacks(hook_chain, 0, before_refs, after_refs,
+                             before_allowed, after_allowed);
     hook_fargs12_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
