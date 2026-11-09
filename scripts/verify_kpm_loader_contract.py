@@ -54,6 +54,11 @@ def main():
     require(r"memchr\(info->strtab", setup,
             "device parser must require NUL-terminated symbol names")
 
+    symbols = function_body(module, "static int simplify_symbols(")
+    common_case = symbols[symbols.index("case SHN_COMMON"):symbols.index("case SHN_ABS")]
+    require(r"ret\\s*=\\s*-ENOEXEC", common_case,
+            "device loader must reject unsupported SHN_COMMON symbols")
+
     layout = function_body(module, "static int layout_sections(")
     require(r"get_offset\(", layout, "device layout must use checked offsets")
     require(r"section->sh_entsize\s*==\s*~0UL", layout,
