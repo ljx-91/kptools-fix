@@ -155,6 +155,80 @@ static inline int is_interrupt_masked()
     return daif & 0xC0;
 }
 
+struct hotpatch_ptr64_t {
+    volatile uint64_t *addr;
+    uint64_t expected;
+    uint64_t desired;
+    uint64_t original;
+    bool compare;
+};
+
+static int hotpatch_ptr64_cb(void *arg)
+{
+    struct hotpatch_ptr64_t *pp = arg;
+    uint64_t old;
+    int rc;
+
+    if (!pp || !pp->addr || ((uintptr_t)pp->addr & 7) ||
+        !pgtable_entry_kernel((uintptr_t)pp->addr))
+        return -EINVAL;
+    old = *pp->addr;
+    if (pp->compare && old != pp->expected)
+        return -EAGAIN;
+
+    rc = hotpatch_nosync((void *)pp->addr, (uint32_t)pp->desired);
+    if (!rc)
+        rc = hotpatch_nosync((void *)((uintptr_t)pp->addr + 4),
+                             (uint32_t)(pp->desired >> 32));
+    if (rc) {
+        int r1 = hotpatch_nosync((void *)pp->addr, (uint32_t)old);
+        int r2 = hotpatch_nosync((void *)((uintptr_t)pp->addr + 4),
+                                 (uint32_t)(old >> 32));
+        if (r1 || r2)
+            return -EUCLEAN;
+        return rc;
+    }
+    pp->original = old;
+    return 0;
+}
+
+static int hotpatch_ptr64_run(struct hotpatch_ptr64_t *patch)
+{
+    if (!patch || !patch->addr || ((uintptr_t)patch->addr & 7))
+        return -EINVAL;
+    if (kver < VERSION(4, 6, 0) || !kfunc(stop_machine) ||
+        (is_interrupt_masked() && !hotpatch_early_boot))
+        return -EOPNOTSUPP;
+    return stop_machine(hotpatch_ptr64_cb, patch, NULL);
+}
+
+int hotpatch_exchange64(void *addr, uint64_t desired, uint64_t *original)
+{
+    struct hotpatch_ptr64_t patch = {
+        .addr = (volatile uint64_t *)addr,
+        .desired = desired,
+        .compare = false,
+    };
+    int rc;
+    if (!original) return -EINVAL;
+    rc = hotpatch_ptr64_run(&patch);
+    if (!rc) *original = patch.original;
+    return rc;
+}
+KP_EXPORT_SYMBOL(hotpatch_exchange64);
+
+int hotpatch_cmpxchg64(void *addr, uint64_t expected, uint64_t desired)
+{
+    struct hotpatch_ptr64_t patch = {
+        .addr = (volatile uint64_t *)addr,
+        .expected = expected,
+        .desired = desired,
+        .compare = true,
+    };
+    return hotpatch_ptr64_run(&patch);
+}
+KP_EXPORT_SYMBOL(hotpatch_cmpxchg64);
+
 int hotpatch(void *addrs[], uint32_t values[], int cnt)
 {
     struct hotpatch_t patch = {
