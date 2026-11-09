@@ -73,6 +73,14 @@ enum kp_exec_backend {
 };
 static enum kp_exec_backend kp_exec_backend;
 
+enum kp_exec_backend {
+	KP_EXEC_BACKEND_NONE,
+	KP_EXEC_BACKEND_MODULE,
+	KP_EXEC_BACKEND_EXECMEM,
+	KP_EXEC_BACKEND_VMALLOC,
+};
+static enum kp_exec_backend kp_exec_backend;
+
 /* Clear the Guarded-Page bit (BTI enable), Privileged-eXecute-Never and
  * User-eXecute-Never. Fail closed if any page cannot be inspected or made
  * executable: the KPM must never enter init on an NX/BTI-incompatible image. */
@@ -80,8 +88,7 @@ static int kp_clear_bti_gp(unsigned long base, unsigned long size)
 {
 	unsigned long addr, end;
 
-	if (!kp_kpm_init_mm || !base || !size ||
-	    size > ULONG_MAX - base)
+	if (!kp_kpm_init_mm || !base || !size || size > ULONG_MAX - base)
 		return -ENOSYS;
 	end = base + size;
 	for (addr = base; addr < end; addr += PAGE_SIZE) {
@@ -90,6 +97,7 @@ static int kp_clear_bti_gp(unsigned long base, unsigned long size)
 		pud_t *pud;
 		pmd_t *pmd;
 		pte_t *pte;
+		spinlock_t *ptl;
 		pteval_t v;
 
 		if (pgd_none(*pgd) || pgd_bad(*pgd))
@@ -103,18 +111,24 @@ static int kp_clear_bti_gp(unsigned long base, unsigned long size)
 		pmd = pmd_offset(pud, addr);
 		if (pmd_none(*pmd) || pmd_bad(*pmd) || pmd_sect(*pmd))
 			return -EFAULT;
+		ptl = pte_lockptr(kp_kpm_init_mm, pmd);
+		spin_lock(ptl);
 		pte = pte_offset_kernel(pmd, addr);
-		if (!pte || !pte_present(*pte))
+		if (!pte || !pte_present(*pte)) {
+			spin_unlock(ptl);
 			return -EFAULT;
-
+		}
 		v = pte_val(*pte);
 		if (v & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) {
 			v &= ~(KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP);
-			set_pte(pte, __pte(v));
-			flush_tlb_kernel_range(addr, addr + PAGE_SIZE);
+			set_pte_at(kp_kpm_init_mm, addr, pte, __pte(v));
 		}
-		if (pte_val(*pte) & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP))
+		if (pte_val(*pte) & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) {
+			spin_unlock(ptl);
 			return -EACCES;
+		}
+		spin_unlock(ptl);
+		flush_tlb_kernel_range(addr, addr + PAGE_SIZE);
 	}
 	return 0;
 }
