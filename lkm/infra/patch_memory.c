@@ -114,7 +114,7 @@ static int kp_patch_data(void *dst, const void *src, size_t len)
 	void *map;
 	int ret;
 
-	if (!dst || !src || !len)
+	if (!dst || !src || len != sizeof(u32) || ((unsigned long)dst & 3))
 		return -EINVAL;
 	phy = kp_phys_from_virt((unsigned long)dst);
 	if (!phy) {
@@ -129,10 +129,12 @@ static int kp_patch_data(void *dst, const void *src, size_t len)
 
 	raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags);
 	map = (void *)set_fixmap_offset(FIX_TEXT_POKE0, phy & PAGE_MASK) + phy_off;
-	ret = (int)copy_to_kernel_nofault(map, src, len);
+	/* A64 instructions are patched as one aligned 32-bit store; avoid
+	 * byte-copy helpers that could expose a torn instruction to another CPU. */
+	WRITE_ONCE(*(volatile u32 *)map, READ_ONCE(*(const u32 *)src));
 	clear_fixmap(FIX_TEXT_POKE0);
-	if (!ret)
-		kp_flush_dcache((unsigned long)dst, len);
+	kp_flush_dcache((unsigned long)dst, sizeof(u32));
+	ret = 0;
 	raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags);
 	return ret;
 }
