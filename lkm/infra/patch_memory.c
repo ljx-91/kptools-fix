@@ -48,6 +48,10 @@
 #define kp_flush_icache(start, end) __flush_icache_range((start), (end))
 #endif
 
+typedef int (*kp_stop_machine_fn_t)(int (*fn)(void *), void *data,
+				      const struct cpumask *cpus);
+static kp_stop_machine_fn_t kp_patch_stop_machine;
+
 /* Resolve the physical address of a kernel VA through init_mm's page tables.
  * Used for the data patch path (sys_call_table is rodata, not mapped via the
  * direct kernel text alias, so we poke it through a fixmap). init_mm is cached
@@ -135,14 +139,14 @@ static int kp_patch_data(void *dst, const void *src, size_t len)
 
 int kp_patch_memory_init(void)
 {
-	/* aarch64_insn_patch_text() used to be resolved here for text patching,
-	 * but its stop_machine/struct-layout mismatch panics on some GKI builds.
-	 * Text and data are now both patched through the fixmap poke
-	 * (kp_patch_data) + manual cache flush, so no kernel helper is needed. */
 	kp_patch_init_mm = (struct mm_struct *)kp_resolve_symbol("init_mm");
+	kp_patch_stop_machine = (kp_stop_machine_fn_t)kp_resolve_symbol("stop_machine");
 	if (!kp_patch_init_mm)
-		logkw("failed to resolve init_mm; data (sys_call_table) patch disabled\n");
-	logki("patch memory ready (fixmap poke; aarch64_insn_patch_text not used)\n");
+		logkw("failed to resolve init_mm; data (sys_call_table) patch disabled\\n");
+	if (!kp_patch_stop_machine)
+		logkw("stop_machine unavailable; executable text patching disabled\\n");
+	logki("patch memory ready (serialized fixmap; stop_machine=%px)\\n",
+	      kp_patch_stop_machine);
 	return 0;
 }
 
@@ -206,21 +210,56 @@ int kp_patch_cmpxchg64(void *dst, u64 expected, u64 desired)
 	return seen == expected ? 0 : -EAGAIN;
 }
 
-/* Patch dst with src bytes, then make the change visible to the I-cache.
- * Uses the fixmap poke (kp_patch_data) for both text and data instead of
- * aarch64_insn_patch_text: that kernel helper runs under stop_machine and its
- * struct aarch64_insn_data layout does not match every GKI build, which has
- * produced "aarch64_insn_patch_text_cb: insn_cnt garbage" panics at ko load.
- * The fixmap path writes via a physical alias and flushes caches itself; the
- * hooked targets (report_cfi_failure / __cfi_slowpath_diag) are cold functions
- * not executing at hook time, so the missing stop_machine is acceptable. */
+struct kp_text_patch {
+	void *dst;
+	const void *src;
+	size_t len;
+	int flags;
+};
+
+/* Text updates can span several instructions and must not be exposed as a
+ * partially-written prologue to another CPU. Run the complete page-split
+ * fixmap write while stop_machine has all other CPUs parked. */
+__attribute__((no_sanitize("cfi")))
+static int kp_patch_text_stop(void *arg)
+{
+	struct kp_text_patch *patch = arg;
+	unsigned long dst = (unsigned long)patch->dst;
+	size_t done = 0;
+	int ret;
+
+	while (done < patch->len) {
+		unsigned long page_off = (dst + done) & ~PAGE_MASK;
+		size_t chunk = PAGE_SIZE - page_off;
+
+		if (chunk > patch->len - done)
+			chunk = patch->len - done;
+		ret = kp_patch_data((void *)(dst + done),
+				    (const char *)patch->src + done, chunk);
+		if (ret)
+			return ret;
+		done += chunk;
+	}
+	if (patch->flags & KP_PATCH_TEXT_FLUSH_ICACHE)
+		kp_flush_icache(dst, dst + patch->len);
+	return 0;
+}
+
 __attribute__((no_sanitize("cfi")))
 int kp_patch_text(void *dst, const void *src, size_t len, int flags)
 {
-	int ret = kp_patch_data(dst, src, len);
-	if (!ret && (flags & KP_PATCH_TEXT_FLUSH_ICACHE))
-		kp_flush_icache((unsigned long)dst, (unsigned long)dst + len);
-	return ret;
+	struct kp_text_patch patch = {
+		.dst = dst,
+		.src = src,
+		.len = len,
+		.flags = flags,
+	};
+
+	if (!dst || !src || !len || len > ULONG_MAX - (unsigned long)dst)
+		return -EINVAL;
+	if (!kp_patch_stop_machine)
+		return -EOPNOTSUPP;
+	return kp_patch_stop_machine(kp_patch_text_stop, &patch, NULL);
 }
 
 #endif /* __aarch64__ */
