@@ -190,16 +190,15 @@ def main():
             unload_gate, "KPM image must remain resident while callbacks or hooks reference it")
 
     legacy_pgtable = read("lkm/include/kp_lkm.h")
-    require(r"LINUX_VERSION_CODE\\s*<\\s*KERNEL_VERSION\\(5,\\s*8,\\s*0\\)", legacy_pgtable,
-            "legacy ARM64 must define a version-gated folded p4d bridge")
-    require(r"typedef\\s+pgd_t\\s+p4d_t", legacy_pgtable,
-            "Linux 4.14 ARM64 must map folded p4d to pgd_t")
-    require(r"#define\\s+p4d_offset\\(pgd,\\s*address\\)\\s+\\(\\(p4d_t\\s*\\*\\)\\(pgd\\)\\)", legacy_pgtable,
-            "legacy folded p4d offset must preserve the direct PGD-to-PUD walk")
-    require(r"#define\\s+p4d_none\\(p4d\\)\\s+\\(0\\)", legacy_pgtable,
-            "folded p4d entries must never be reported absent")
-    require(r"#define\\s+p4d_bad\\(p4d\\)\\s+\\(0\\)", legacy_pgtable,
-            "folded p4d entries must never be reported bad")
+    for token in (
+        "#if defined(CONFIG_ARM64) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)",
+        "typedef pgd_t p4d_t;",
+        "#define p4d_offset(pgd, address) ((p4d_t *)(pgd))",
+        "#define p4d_none(p4d) (0)",
+        "#define p4d_bad(p4d) (0)",
+    ):
+        require(re.escape(token), legacy_pgtable,
+                f"legacy ARM64 folded-p4d compatibility missing: {token}")
 
     require(r"y73s-cred-layout-guards-20261108", workflow,
             "LKM contract workflow must trigger on the selected Y73S branch")
