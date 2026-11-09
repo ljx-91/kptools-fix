@@ -330,6 +330,10 @@ static int32_t decode_relative_symbol_offset(kallsym_t *info, const char *entry)
 
 static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
 {
+    if (!info || !img || imglen < 24) {
+        tools_logw("invalid image for ARM64 relocation scan\\n");
+        return -1;
+    }
     if (!info->try_relo) return 0;
 
     uint64_t min_va = ELF64_KERNEL_MIN_VA;
@@ -365,18 +369,38 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
         tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 "\n", kernel_va);
     }
 
+    if (rela_num < ARM64_RELO_MIN_NUM) {
+        tools_logw("can't find arm64 relocation table\\n");
+        return 0;
+    }
+
     int32_t cand_start = cand - 24 * rela_num;
     int32_t cand_end = cand - 24;
-    while (1) {
-        if (*(uint64_t *)(img + cand_end) && *(uint64_t *)(img + cand_end + 8) && *(uint64_t *)(img + cand_end + 16))
-            break;
+    if (cand_start < 0 || cand_end < cand_start || cand_end > imglen - 24) {
+        tools_logw("ARM64 relocation candidate range is outside the image\\n");
+        return -1;
+    }
+
+    /*
+     * Ignore trailing all-zero RELA slots, but never walk before the
+     * candidate range. A truncated or zero-filled image must fail closed.
+     */
+    while (cand_end >= cand_start) {
+        uint64_t ro = uint_unpack(img + cand_end, 8, info->is_be);
+        uint64_t ri = uint_unpack(img + cand_end + 8, 8, info->is_be);
+        uint64_t ra = uint_unpack(img + cand_end + 16, 8, info->is_be);
+        if (ro && ri && ra) break;
         cand_end -= 24;
+    }
+    if (cand_end < cand_start) {
+        tools_logw("ARM64 relocation candidate contains no complete nonzero entry\\n");
+        return 0;
     }
     cand_end += 24;
 
     rela_num = (cand_end - cand_start) / 24;
     if (rela_num < ARM64_RELO_MIN_NUM) {
-        tools_logw("can't find arm64 relocation table\n");
+        tools_logw("ARM64 relocation table is shorter than the required minimum\\n");
         return 0;
     }
 
@@ -395,8 +419,8 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
             continue;
         }
 
-        int32_t offset = r_offset - kernel_va;
-        if (offset < 0 || offset >= max_offset) {
+        uint64_t offset64 = r_offset - kernel_va;
+        if (offset64 >= (uint64_t)max_offset) {
             /*
              * Some vendor kernels (e.g. 5.4 qgki) carry a relocation whose target lies
              * just past the loaded image (init/bss tail). Skipping it and continuing lets
@@ -409,6 +433,7 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
             return -1;
         }
 
+        int32_t offset = (int32_t)offset64;
         uint32_t r_type = r_info & 0xffffffff;
         if (r_type == 0x101) {
             r_addend += kernel_va;
