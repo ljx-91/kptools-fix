@@ -281,3 +281,14 @@
 - 下一步：等待专用 Host workflow 正常创建 jobs；拿到修复后 artifact 后，对同一份解压内核运行 `-d`，核对完整 Kallsyms、vector fallback 和符号导出结果。
 
 安全边界继续有效：不使用 Fastboot，不刷写、不写设备分区，不做真机启动测试。
+
+
+## 13. 2026-11-10：修复后跨平台构建状态
+
+- `tools/kallsym.c` 的 `pos + 1` 修复已包含在后续 Windows kptools 构建源码中。
+- GitHub Actions 通用构建 Run `42673376096`（源码提交 `c7caef3a`）最终成功：
+  - GCC 14.2 ARM64 KPIMG 构建、ELF stack-frame / map-relocation 审计成功。
+  - Windows `kptools.exe` 编译、打包成功。
+- 专用 Linux Host Run `42672967489` 已实际执行编译；`make` / C 编译阶段通过，但构建步骤被当时错误的 synthetic NUL fixture 拦截，未生成 artifact。fixture 随后已改为 `bytes(49)`，并补上对齐结果断言（提交 `4c34c8b`）。
+- 专用 Linux Host Run `42673414886` 对 `4c34c8b` 显示 workflow-level failure，GitHub 未创建 jobs/check-runs；没有源码失败日志，不能判定为 C 编译失败或通过。
+- 因此：修复后的 C 源码已通过 Windows 编译；Linux Host C 编译曾通过，但修复后的回归脚本尚未在有效 Host CI job 中跑完；**修复后完整 Linux kptools artifact 和完整 C 工具真实 Boot `-d` 结果仍待确认**。
