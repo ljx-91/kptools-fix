@@ -37,6 +37,7 @@ patch_data = function_body(patch_memory, "static int kp_patch_data(")
 patch_exchange = function_body(patch_memory, "int kp_patch_exchange64(")
 patch_cmpxchg = function_body(patch_memory, "int kp_patch_cmpxchg64(")
 patch_batch = function_body(patch_memory, "static int kp_patch_text_batch_stop(")
+patch_text_batch = function_body(patch_memory, "int kp_patch_text_batch(")
 
 checks = {
     "LKM backend defines hook_mem_retire": "void hook_mem_retire(void *payload)" in runtime,
@@ -127,6 +128,11 @@ checks = {
         "DEFINE_RAW_SPINLOCK(kp_fixmap_patch_lock)" in patch_memory and
         "raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags)" in patch_memory and
         "raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags)" in patch_memory,
+    "stop-machine text patch rejects atomic and interrupt context":
+        "in_atomic()" in patch_text_batch and
+        "irqs_disabled()" in patch_text_batch and
+        "return -EWOULDBLOCK;" in patch_text_batch and
+        "kp_patch_stop_machine(kp_patch_text_batch_stop, &patch, NULL)" in patch_text_batch,
     "fixmap data writes reject cross-page and non-word patches":
         "len != sizeof(u32)" in patch_data and
         "((unsigned long)dst & 3)" in patch_data and
