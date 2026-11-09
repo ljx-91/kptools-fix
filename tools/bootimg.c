@@ -938,6 +938,9 @@ int repack_bootimg_mem(const char *orig_boot_path,
         memcmp(avb.magic, AVB_FOOTER_MAGIC, sizeof(avb.magic)) == 0) {
         has_avb = 1;
     }
+    if (has_avb) {
+        tools_logw("AVB footer/vbmeta bytes will be preserved, but partition digest and signature are not recomputed; the repacked image may require re-signing or disabled verification\\n");
+    }
 
     uint32_t header_ver = hdr.unused[0];
     if (header_ver > 10){header_ver = 0;extracted_size = hdr.unused[0];}
