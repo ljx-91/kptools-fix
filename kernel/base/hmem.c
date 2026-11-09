@@ -6,9 +6,17 @@
 #include "hook.h"
 
 #include <stdint.h>
+#include <linux/spinlock.h>
+#include <kp_spinlock.h>
 
 static uint64_t mem_region_start = 0;
 static uint64_t mem_region_end = 0;
+static spinlock_t hook_mem_lock;
+static spinlock_t hook_engine_spinlock;
+static bool hook_locks_ready;
+
+unsigned long hook_engine_lock(void) { return kp_private_spin_lock(&hook_engine_spinlock); }
+void hook_engine_unlock(unsigned long flags) { kp_private_spin_unlock(&hook_engine_spinlock, flags); }
 
 typedef struct
 {
@@ -26,69 +34,114 @@ typedef struct
 
 int hook_mem_add(uint64_t start, int32_t size)
 {
-    for (uint64_t i = start; i < start + size; i += 8) {
+    uint64_t end;
+    if (!start || size <= 0 || (uint64_t)size > (~0ULL - start))
+        return -EINVAL;
+    end = start + (uint64_t)size;
+    spin_lock_init(&hook_mem_lock);
+    spin_lock_init(&hook_engine_spinlock);
+    hook_locks_ready = true;
+    for (uint64_t i = start; i + sizeof(uint64_t) <= end; i += sizeof(uint64_t))
         *(uint64_t *)i = 0;
-    }
     mem_region_start = start;
-    mem_region_end = start + size;
+    mem_region_end = end;
     return 0;
 }
 
 void *hook_mem_zalloc(uintptr_t origin_addr, enum hook_type type)
 {
-    uint64_t start = mem_region_start;
-    for (uint64_t addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
+    uint64_t start, end;
+    if (!hook_locks_ready || !origin_addr)
+        return 0;
+    unsigned long flags = kp_private_spin_lock(&hook_mem_lock);
+    start = mem_region_start;
+    end = mem_region_end;
+    for (uint64_t addr = start; addr < end && sizeof(hook_mem_warp_t) <= end - addr;
+         addr += sizeof(hook_mem_warp_t)) {
         hook_mem_warp_t *wrap = (hook_mem_warp_t *)addr;
-        if (wrap->using) continue;
-
-        wrap->using = 3; /* allocated, not yet published */
+        if (wrap->using == 1 || wrap->using == 3) {
+            if (wrap->addr == origin_addr) {
+                kp_private_spin_unlock(&hook_mem_lock, flags);
+                return 0;
+            }
+            continue;
+        }
+        if (wrap->using == 2)
+            continue;
+        wrap->using = 3;
         wrap->addr = origin_addr;
         wrap->type = type;
-
-        for (uintptr_t i = (uintptr_t)&wrap->chain; i < (uintptr_t)&wrap->chain + sizeof(wrap->chain); i += 8) {
-            *(uint64_t *)i = 0;
-        }
-
-        // todo: assert
-        if (((uintptr_t)&wrap->chain) & 0b111) {
+        kp_private_spin_unlock(&hook_mem_lock, flags);
+        memset(&wrap->chain, 0, sizeof(wrap->chain));
+        if (((uintptr_t)&wrap->chain) & 0x7) {
+            flags = kp_private_spin_lock(&hook_mem_lock);
+            wrap->using = 0;
+            kp_private_spin_unlock(&hook_mem_lock, flags);
             return 0;
         }
         return &wrap->chain;
     }
+    kp_private_spin_unlock(&hook_mem_lock, flags);
     return 0;
 }
 
 void hook_mem_free(void *hook_mem)
 {
-    hook_mem_warp_t *warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
-    warp->using = 0;
+    hook_mem_warp_t *warp;
+    unsigned long flags;
+    if (!hook_mem || !hook_locks_ready) return;
+    warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
+    flags = kp_private_spin_lock(&hook_mem_lock);
+    if (warp->using == 3) {
+        warp->using = 0;
+        warp->addr = 0;
+        warp->type = NONE;
+    }
+    kp_private_spin_unlock(&hook_mem_lock, flags);
 }
 
 void hook_mem_publish(void *hook_mem)
 {
-    hook_mem_warp_t *warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
+    hook_mem_warp_t *warp;
+    unsigned long flags;
+    if (!hook_mem || !hook_locks_ready) return;
+    warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
+    flags = kp_private_spin_lock(&hook_mem_lock);
     if (warp->using == 3)
-        warp->using = 1;
+        __atomic_store_n(&warp->using, 1, __ATOMIC_RELEASE);
+    kp_private_spin_unlock(&hook_mem_lock, flags);
 }
 
-/* Retired chains may still be referenced by CPUs that entered the old
- * trampoline before text restoration. Never recycle their storage. */
 void hook_mem_retire(void *hook_mem)
 {
-    hook_mem_warp_t *warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
-    warp->using = 2;
+    hook_mem_warp_t *warp;
+    unsigned long flags;
+    if (!hook_mem || !hook_locks_ready) return;
+    warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
+    flags = kp_private_spin_lock(&hook_mem_lock);
+    if (warp->using == 1)
+        __atomic_store_n(&warp->using, 2, __ATOMIC_RELEASE);
+    kp_private_spin_unlock(&hook_mem_lock, flags);
 }
 
 void *hook_get_mem_from_origin(uint64_t origin_addr)
 {
-    uint64_t start = mem_region_start;
-
-    for (uint64_t addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
+    uint64_t start, end;
+    unsigned long flags;
+    if (!hook_locks_ready) return 0;
+    flags = kp_private_spin_lock(&hook_mem_lock);
+    start = mem_region_start;
+    end = mem_region_end;
+    for (uint64_t addr = start; addr < end && sizeof(hook_mem_warp_t) <= end - addr;
+         addr += sizeof(hook_mem_warp_t)) {
         hook_mem_warp_t *wrap = (hook_mem_warp_t *)addr;
-        if ((wrap->using == 1 || wrap->using == 3) && wrap->addr == origin_addr) {
+        if (__atomic_load_n(&wrap->using, __ATOMIC_ACQUIRE) == 1 &&
+            wrap->addr == origin_addr) {
+            kp_private_spin_unlock(&hook_mem_lock, flags);
             return &wrap->chain;
         }
     }
+    kp_private_spin_unlock(&hook_mem_lock, flags);
     return 0;
 }
 
