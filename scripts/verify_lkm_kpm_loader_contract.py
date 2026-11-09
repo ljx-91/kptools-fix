@@ -254,9 +254,19 @@ def main():
     need(r"memcpy\(\(void \*\)target->sh_addr,\s*backup", rela,
          "RELA rollback must restore the complete target section")
     need(r"vfree\(backup\)", rela, "RELA snapshot must be released")
-    if data.find("return -ERANGE") > data.find("*(s16 *)place"):
+    if data.find("return -ERANGE") > data.find("memcpy(place"):
         raise AssertionError("data relocation must check overflow before writing")
+    for width in ("s16", "s32", "s64"):
+        need(r"memcpy\(place,\s*&encoded,\s*sizeof\(encoded\)\)", data,
+             f"unaligned-safe {width} data relocation write")
 
+    rela = body(relo, "int kp_apply_relocate_add(")
+    need(r"ovf\s*==\s*-ERANGE\s*&&\s*!overflow_check", rela,
+         "NC relocation overflow must be intentionally ignored after field encoding")
+    need(r"width\s*==\s*4\s*&&\s*type\s*!=\s*R_AARCH64_ABS32", rela,
+         "only instruction relocations require 4-byte alignment")
+    need(r"type\s*!=\s*R_AARCH64_PREL32", rela,
+         "PREL32 data relocations must allow byte alignment")
     rel = body(relo, "int kp_apply_relocate(")
     need(r"return\s*-EOPNOTSUPP", rel, "unimplemented REL must fail closed")
 

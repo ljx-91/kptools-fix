@@ -67,15 +67,21 @@ static int reloc_data(enum kp_aarch64_reloc_op op, void *place, u64 val, int len
 	}
 
 	switch (len) {
-	case 16:
-		*(s16 *)place = (s16)value;
+	case 16: {
+		s16 encoded = (s16)value;
+		memcpy(place, &encoded, sizeof(encoded));
 		break;
-	case 32:
-		*(s32 *)place = (s32)value;
+	}
+	case 32: {
+		s32 encoded = (s32)value;
+		memcpy(place, &encoded, sizeof(encoded));
 		break;
-	case 64:
-		*(s64 *)place = value;
+	}
+	case 64: {
+		s64 encoded = value;
+		memcpy(place, &encoded, sizeof(encoded));
 		break;
+	}
 	default:
 		return -EINVAL;
 	}
@@ -227,7 +233,12 @@ int kp_apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int 
 		if (rel[i].r_offset > target->sh_size ||
 		    width > target->sh_size - rel[i].r_offset)
 			return -ENOEXEC;
-		if (((unsigned long)target->sh_addr + rel[i].r_offset) & (width == 2 ? 1 : width == 4 ? 3 : width == 8 ? 7 : 3))
+		/* AArch64 instruction relocations patch a 32-bit instruction and
+		 * require instruction alignment. Data relocations may target packed
+		 * or otherwise byte-aligned objects; reloc_data() uses memcpy for them. */
+		if (width == 4 && type != R_AARCH64_ABS32 &&
+		    type != R_AARCH64_PREL32 &&
+		    (((unsigned long)target->sh_addr + rel[i].r_offset) & 3))
 			return -ENOEXEC;
 	}
 
@@ -305,6 +316,8 @@ int kp_apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int 
 			ret = -ENOEXEC;
 			goto rollback;
 		}
+		if (ovf == -ERANGE && !overflow_check)
+			ovf = 0; /* *_NC relocations intentionally truncate the checked field. */
 		if (overflow_check && ovf == -ERANGE) {
 			pr_err("overflow in relocation type %u val %llx\\n", type, val);
 			ret = -ENOEXEC;
