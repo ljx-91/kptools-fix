@@ -67,6 +67,8 @@ def main():
     layout = body(module, "static int layout_sections(")
     need(r"get_offset\(", layout, "checked section reservation")
     need(r"kp_align_module_size\(", layout, "checked page alignment")
+    need(r"sh_entsize\\s*==\\s*~0UL", layout,
+         "all alloc sections must receive a checked image offset")
     sym_layout = body(module, "static int layout_symtab(")
     need(r"UINT_MAX\s*-\s*info->symoffs", sym_layout, "symbol table extent")
     need(r"UINT_MAX\s*-\s*info->stroffs", sym_layout, "string table extent")
