@@ -86,6 +86,7 @@ typedef struct
     int32_t symbol_banner_idx;
 
     char *kallsyms_token_table[KSYM_TOKEN_NUMS];
+    char *kallsyms_token_table_image; /* backing image for token pointers */
     int32_t asm_long_size;
     int32_t asm_PTR_size;
     int32_t kallsyms_markers_elem_size;
