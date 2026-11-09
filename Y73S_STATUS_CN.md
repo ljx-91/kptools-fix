@@ -315,7 +315,20 @@
   - `vectors` index 18，offset `0x2800`。
   - `pid_vnr` index `0xd165`，offset `0x01912460`；CFI B veneer 跳到 `0x0011bc10`，目标指令 `0xd5384108`，成功识别 SP_EL0。
   - kallsyms addresses `0x01c1c700`；kernel base `0xffffff8008080000`。
-- 通用构建 Run `42674779097` 的 Ubuntu KPIMG job 和新增 Linux kptools/源码契约步骤均 success；Windows job当时仍在进行中。
+- 之后统一构建 Run `42674985016`（提交 `e2dfebec`）最终全部 success：Ubuntu GCC 14.2 KPIMG、Linux kptools 编译与全量源码契约、Windows kptools.exe 编译和 artifact 上传均通过。
 - 该结果证明原始 Boot 的完整 Kallsyms 离线解析链已通过；不代表目标设备已启动、APatch 已初始化或真实 `.ko` 已在设备加载。
 
 安全边界不变：没有使用 Fastboot、没有刷写或写设备分区、没有进行真机启动测试。
+
+
+### 最新 HEAD 复测结果（提交 `e2dfebeca4fa714b4a0ee99c84670bff18f20211`）
+
+- 从 Run `42674985016` 下载当前 HEAD 的 `kpimg-and-headers` artifact，内含 Linux `kptools`；工具 SHA-256：`a9fef9972e451305a1efc3e5a7ce888258c10241750967f61c5b41648191d06f`。
+- 原始 Boot SHA-256：`c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`；解压内核 Image 大小 47,517,708 bytes，SHA-256：`345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`。
+- 在该解压内核副本上执行 `kptools -d -i kernel`，实际退出码 **0**；完整导出 107,961 条符号，等于 `0x1a5b9`。
+- 新旧两份完整符号列表逐行完全一致；符号行规范化 SHA-256：`b551f2cd3fae3b58677796b95db6044adf4725f9814f35df2342f23479d7654f`。
+- 最新输出再次确认 Token Table `0x01e4bd00`、Token Index `0x01e4c100`、Markers `[0x01e4af00, 0x01e4bc30)`、Names `0x01cef600`、Addresses `0x01c1c700`、kernel base `0xffffff8008080000`；`vectors` index 18 / offset `0x2800`，`pid_vnr` offset `0x01912460`，CFI veneer 跳转和 SP_EL0 指令校验通过。
+- 日志中的 `find approximate kallsyms_offsets error` 是此固件不采用相对 offsets 表时的预期回退；前两次候选的 symbol-count 不匹配被严格拒绝，第三次候选以精确 count 和 vectors/pid_vnr 双重验证通过。上述警告不是被忽略的致命错误。
+- 测试只解包并读取工作目录副本，未修改资料库原始 Boot；没有 Fastboot、刷写、分区写入或设备启动操作。
+
+当前阶段结论：**源码契约、Host Linux 工具构建、KPIMG 构建、Windows 工具构建和原始 Y73s Boot 的完整 Kallsyms 离线解析均已通过。** 尚未通过目标 Linux 4.14.141 KDIR 的真实 `.ko` 编译/modpost、KPM 动态 load/unload 与 Hook 压力测试，也未进行真机启动/APatch 初始化；不能据此宣称设备可启动或 APatch 已可用。
