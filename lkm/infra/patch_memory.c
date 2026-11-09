@@ -90,16 +90,26 @@ static unsigned long kp_phys_from_virt(unsigned long addr)
 		return __p4d_to_phys(*p4d) + (addr & ~P4D_MASK);
 #endif
 	pud = pud_offset(p4d, addr);
-	if (pud_none(*pud) || pud_bad(*pud))
+	if (pud_none(*pud))
 		return 0;
 #if defined(pud_leaf)
 	if (pud_leaf(*pud))
-		return __pud_to_phys(*pud) + (addr & ~PUD_MASK);
+		return (pud_page_paddr(*pud) & PUD_MASK) + (addr & ~PUD_MASK);
+#elif defined(pud_sect)
+	/* Linux 4.14 exposes pud_sect(), not the newer pud_leaf() helper. */
+	if (pud_sect(*pud))
+		return (pud_page_paddr(*pud) & PUD_MASK) + (addr & ~PUD_MASK);
 #endif
+	if (pud_bad(*pud))
+		return 0;
 	pmd = pmd_offset(pud, addr);
 #if defined(pmd_leaf)
 	if (pmd_leaf(*pmd))
-		return __pmd_to_phys(*pmd) + (addr & ~PMD_MASK);
+		return (pmd_page_paddr(*pmd) & PMD_MASK) + (addr & ~PMD_MASK);
+#elif defined(pmd_sect)
+	/* Linux 4.14 uses pmd_sect() for valid block descriptors. */
+	if (pmd_sect(*pmd))
+		return (pmd_page_paddr(*pmd) & PMD_MASK) + (addr & ~PMD_MASK);
 #endif
 	if (pmd_none(*pmd) || pmd_bad(*pmd))
 		return 0;

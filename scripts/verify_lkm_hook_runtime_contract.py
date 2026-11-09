@@ -45,6 +45,7 @@ hook_make_nx = function_body(runtime, "static int kp_hook_make_nx(")
 hook_update_exec = function_body(runtime, "static int kp_hook_update_exec(")
 hook_exec_free = function_body(runtime, "static void kp_hook_exec_free(void *region, unsigned long size)\n{")
 hook_install = function_body(hook, "int hook_install(")
+phys_from_virt = function_body(patch_memory, "static unsigned long kp_phys_from_virt(")
 
 checks = {
     "LKM hook executable pages clear BTI guard and verify permissions":
@@ -184,6 +185,14 @@ checks = {
         "raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags)" in patch_exchange and
         "raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags)" in patch_cmpxchg and
         "raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags)" in patch_cmpxchg,
+    "Linux 4.14 PUD block mappings are resolved before pud_bad":
+        "pud_sect(*pud)" in phys_from_virt and
+        "pud_page_paddr(*pud) & PUD_MASK" in phys_from_virt and
+        phys_from_virt.index("pud_sect(*pud)") < phys_from_virt.index("pud_bad(*pud)"),
+    "Linux 4.14 PMD block mappings are resolved before pmd_bad":
+        "pmd_sect(*pmd)" in phys_from_virt and
+        "pmd_page_paddr(*pmd) & PMD_MASK" in phys_from_virt and
+        phys_from_virt.index("pmd_sect(*pmd)") < phys_from_virt.index("pmd_bad(*pmd)"),
 }
 
 for label, ok in checks.items():
