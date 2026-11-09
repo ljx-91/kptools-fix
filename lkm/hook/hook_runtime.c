@@ -61,38 +61,67 @@ static void (*kp_hook_module_memfree)(void *region);
 static void (*kp_hook_flush_icache_all)(void);
 static int (*kp_hook_set_memory_x)(unsigned long addr, int numpages);
 
-/* noinline: these are raw resolved function pointers; if inlined into a
- * CFI-instrumented caller, the compiler emits a kCFI type-hash load of
- * [fnptr - 4] that dereferences NULL when the allocator is absent (6.10+ has
- * no module_alloc) and panics. no_sanitize keeps the indirect calls unchecked. */
+enum kp_hook_alloc_backend {
+	KP_HOOK_ALLOC_NONE = 0,
+	KP_HOOK_ALLOC_MODULE,
+	KP_HOOK_ALLOC_EXECMEM,
+	KP_HOOK_ALLOC_VMALLOC,
+};
+static enum kp_hook_alloc_backend kp_hook_alloc_backend;
+
+/* Raw resolved allocator calls are no_sanitize/noinline to avoid an invalid
+ * CFI type-hash read when optional kernel symbols are absent. */
 __attribute__((no_sanitize("cfi"), __noinline__))
 static void *kp_hook_exec_alloc(unsigned long size)
 {
 	void *p = NULL;
-	unsigned long pages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	unsigned long pages;
 
-	if (kp_hook_module_alloc)
+	if (!size || size > ULONG_MAX - (PAGE_SIZE - 1))
+		return NULL;
+	pages = (size + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	switch (kp_hook_alloc_backend) {
+	case KP_HOOK_ALLOC_MODULE:
 		p = kp_hook_module_alloc(size);
-	else if (kp_hook_execmem_alloc)
+		if (p && kp_hook_set_memory_x((unsigned long)p, pages)) {
+			kp_hook_module_memfree(p);
+			p = NULL;
+		}
+		break;
+	case KP_HOOK_ALLOC_EXECMEM:
 		p = kp_hook_execmem_alloc(0 /* EXECMEM_MODULE_TEXT */, size);
-	else
+		break;
+	case KP_HOOK_ALLOC_VMALLOC:
 		p = vmalloc(size);
-	/* GKI module_alloc returns PAGE_KERNEL (PXN set, NX); vmalloc too. Hook
-	 * trampolines live here and must be executable. */
-	if (p && kp_hook_set_memory_x)
-		kp_hook_set_memory_x((unsigned long)p, pages);
+		if (p && kp_hook_set_memory_x((unsigned long)p, pages)) {
+			vfree(p);
+			p = NULL;
+		}
+		break;
+	default:
+		break;
+	}
 	return p;
 }
 
 __attribute__((no_sanitize("cfi"), __noinline__))
 static void kp_hook_exec_free(void *region)
 {
-	if (kp_hook_module_memfree)
+	if (!region)
+		return;
+	switch (kp_hook_alloc_backend) {
+	case KP_HOOK_ALLOC_MODULE:
 		kp_hook_module_memfree(region);
-	else if (kp_hook_execmem_free)
+		break;
+	case KP_HOOK_ALLOC_EXECMEM:
 		kp_hook_execmem_free(region);
-	else
+		break;
+	case KP_HOOK_ALLOC_VMALLOC:
 		vfree(region);
+		break;
+	default:
+		break;
+	}
 }
 
 __attribute__((no_sanitize("cfi")))
@@ -110,14 +139,20 @@ int kp_hook_runtime_init(void)
 	kp_hook_execmem_free = (void *)kp_resolve_symbol("execmem_free");
 	kp_hook_flush_icache_all = (void *)kp_resolve_symbol("flush_icache_all");
 	kp_hook_set_memory_x = (int (*)(unsigned long, int))kp_resolve_symbol("set_memory_x");
-	if (!kp_hook_module_alloc)
-		logkw("module_alloc not found; using execmem_alloc/vmalloc for hook memory\n");
-	if (!kp_hook_set_memory_x && !kp_hook_execmem_alloc) {
-		logke("no executable-memory path (set_memory_x/execmem_alloc missing)\n");
+	/* Select a matched allocator/free pair. Never pass memory from one
+	 * executable allocator to another backend's free routine. */
+	if (kp_hook_module_alloc && kp_hook_module_memfree && kp_hook_set_memory_x)
+		kp_hook_alloc_backend = KP_HOOK_ALLOC_MODULE;
+	else if (kp_hook_execmem_alloc && kp_hook_execmem_free)
+		kp_hook_alloc_backend = KP_HOOK_ALLOC_EXECMEM;
+	else if (kp_hook_set_memory_x)
+		kp_hook_alloc_backend = KP_HOOK_ALLOC_VMALLOC;
+	else {
+		logke("no matched executable-memory allocator/free backend\\n");
 		return -ENOSYS;
 	}
-	logki("KPM hook runtime ready (module_alloc=%px execmem_alloc=%px set_memory_x=%px)\n",
-	      kp_hook_module_alloc, kp_hook_execmem_alloc, kp_hook_set_memory_x);
+	logki("KPM hook runtime ready backend=%d module_alloc=%px execmem_alloc=%px set_memory_x=%px\\n",
+	      kp_hook_alloc_backend, kp_hook_module_alloc, kp_hook_execmem_alloc, kp_hook_set_memory_x);
 	return 0;
 }
 
