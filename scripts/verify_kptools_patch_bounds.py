@@ -28,7 +28,38 @@ def need(pattern, src, message):
         raise AssertionError(message)
 
 
+def verify_token_table_cursor_semantics():
+    # Model the 49-NUL prefix used by the token-table backward scan.
+    image = bytearray(b"X" * 64)
+    image[4:53] = b"\\0" * 49
+    marker = 53
+    pos = marker
+    count = 0
+    while pos > 0 and count < 49:
+        pos -= 1
+        if not image[pos]:
+            count += 1
+    if count != 49:
+        raise AssertionError("synthetic token-table prefix was not fully scanned")
+    while_offset = pos + 1
+
+    # The legacy for-loop decremented once after examining its final NUL.
+    old_pos = marker
+    old_count = 0
+    while old_pos > 0 and old_count < 49:
+        if not image[old_pos]:
+            old_count += 1
+        old_pos -= 1
+    legacy_offset = old_pos + 2
+    if while_offset != legacy_offset or while_offset != 4:
+        raise AssertionError(
+            f"token-table cursor semantics diverged: while={while_offset}, "
+            f"legacy={legacy_offset}"
+        )
+
+
 def main():
+    verify_token_table_cursor_semantics()
     src = (ROOT / "tools/patch.c").read_text(encoding="utf-8")
     kallsym_src = (ROOT / "tools/kallsym.c").read_text(encoding="utf-8")
     offsets = body(kallsym_src, "static int find_approx_offsets(")
