@@ -13,7 +13,7 @@
 ## 2. 当前分支与最近提交
 
 - 分支：[`y73s-cred-layout-guards-20261108`](https://github.com/ljx-91/kptools-fix/tree/y73s-cred-layout-guards-20261108)
-- 最近已确认提交：[`ed8de7e35e5594a348c7c1d98d7fc4740994728a`](https://github.com/ljx-91/kptools-fix/commit/ed8de7e35e5594a348c7c1d98d7fc4740994728a)
+- 最近已通过上述三类 CI 的源码提交：[`ed8de7e35e5594a348c7c1d98d7fc4740994728a`](https://github.com/ljx-91/kptools-fix/commit/ed8de7e35e5594a348c7c1d98d7fc4740994728a)。其后的提交仅整理文档，没有改动构建源码。
 - 目标：Vivo Y73s / MTK / Android 10 / Linux 4.14.141（具体内核构建配置仍须由目标 KDIR 和设备镜像确认）。
 
 ## 3. 最新 CI 结果
@@ -61,7 +61,16 @@
 - 不把 KPIMG 构建成功、静态 patch 成功或源码审计通过解释为设备可启动。
 - 不把通用 DDK 示例目标（例如 Android 12 / Linux 5.10）当成 Y73s Linux 4.14.141 的兼容性证明。
 
-## 7. 文档索引
+## 7. 本轮文档清理
+
+- 新增本文作为唯一当前状态入口。
+- 将根 README 和 Y73s README 改为指向本文，避免多个文件分别维护状态。
+- 将 allocator、runtime failure、hook concurrency 报告明确标记为历史技术证据，防止把旧章节中的阶段性“未修复”误认为当前状态。
+- 将 map/stack follow-up 中仍有价值的 memblock ABI 和 ELF 栈帧验证限制并入 runtime failure 审计后，删除重复文件。
+- 删除过时的独立 GCC audit 分支摘要；其有效技术结论保留在 allocator/runtime/hook 深度审计中。
+- 旧版本机编译和 boot 只读数据保留在 `BUILD_VALIDATION_CN.md`，但已标注为历史记录，不再作为当前 CI 状态。
+
+## 8. 文档索引
 
 - [Y73s 定向工具改动说明](OPTIMIZATION_Y73S_CN.md)：kptools 严格 Kallsyms、镜像布局、密钥日志处理和历史构建方法。
 - [Allocator ABI 深度审计](Y73S_ALLOCATOR_DISPATCH_AUDIT.md)：原始内核符号、反汇编证据、memblock ABI 与映射路径修复历史。
