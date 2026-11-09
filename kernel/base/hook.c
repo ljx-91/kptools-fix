@@ -989,10 +989,9 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
         return err;
     }
     chain = (hook_chain_t *)hook_mem_zalloc(origin, INLINE_CHAIN);
-    if (!chain) {
-        hook_engine_unlock(flags);
-        return -HOOK_NO_MEM;
-    }
+    hook_engine_unlock(flags);
+    if (!chain) return -HOOK_NO_MEM;
+
     hook = &chain->hook;
     hook->func_addr = faddr;
     hook->origin_addr = origin;
@@ -1003,28 +1002,31 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
     if (err) goto fail;
     err = hook_chain_prepare(chain->transit, argno);
     if (err) goto fail;
+
+    flags = hook_engine_lock();
     err = hook_chain_add_locked(chain, before, after, udata);
+    hook_engine_unlock(flags);
     if (err) goto fail;
 
+    /* Do not hold hook_engine_lock across KPIMG stop_machine patching. */
     patch_rc = hook_install(hook);
     if (patch_rc) {
         if (patch_rc == -EUCLEAN) {
-            /* Text may still point at this chain; publish and pin it. */
             hook_mem_publish(chain);
-            hook_engine_unlock(flags);
             return -HOOK_PATCH_UNCERTAIN;
         }
+        flags = hook_engine_lock();
         hook_chain_remove_locked(chain, before, after);
+        hook_chain_reap_slots_locked(chain, 0);
+        hook_engine_unlock(flags);
         err = -HOOK_PATCH_FAILED;
         goto fail;
     }
     hook_mem_publish(chain);
-    hook_engine_unlock(flags);
     return HOOK_NO_ERR;
 
 fail:
     hook_mem_free(chain);
-    hook_engine_unlock(flags);
     return err;
 }
 KP_EXPORT_SYMBOL(hook_wrap);
@@ -1039,6 +1041,7 @@ int hook_unwrap_remove(void *func, void *before, void *after, int remove)
     if (is_bad_address(func)) return -HOOK_BAD_ADDRESS;
     origin = branch_func_addr((uint64_t)func);
     if (is_bad_address((void *)origin)) return -HOOK_BAD_ADDRESS;
+
     flags = hook_engine_lock();
     chain = hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
     if (!chain) {
@@ -1062,10 +1065,17 @@ int hook_unwrap_remove(void *func, void *before, void *after, int remove)
             return -EBUSY;
         }
     }
+    rc = hook_mem_claim_retire(chain);
+    hook_engine_unlock(flags);
+    if (rc)
+        return rc;
+
+    /* The memory-registry retiring state blocks a new wrap while patching. */
     rc = hook_uninstall(&chain->hook);
     if (!rc)
         hook_mem_retire(chain);
-    hook_engine_unlock(flags);
+    else
+        hook_mem_cancel_retire(chain);
     return rc;
 }
 KP_EXPORT_SYMBOL(hook_unwrap_remove);
