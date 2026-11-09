@@ -199,9 +199,13 @@ static void kp_free_exec(void *region, unsigned long size)
 __attribute__((no_sanitize("cfi")))
 static void kp_flush_kpm_icache(void *start, size_t size)
 {
-	(void)start; (void)size; (void)kp_flush_icache_all_fn;
+	/* flush_icache_all() performs the architecture's inner-shareable
+	 * instruction-cache invalidation. A local "ic iallu" is insufficient:
+	 * another CPU may execute freshly written KPM or trampoline code. */
+	(void)start;
+	(void)size;
 	dsb(ishst);
-	asm volatile("ic iallu");
+	kp_flush_icache_all_fn();
 	dsb(ish);
 	isb();
 }
@@ -1196,10 +1200,7 @@ int kp_kpm_safe_kallsyms_on_each_symbol(kp_kallsyms_cb_t fn, void *data)
 	words[1] = 0;
 	words[2] = 0xd503245f; /* bti c */
 	words[3] = 0x14000000 | (((unsigned long)branch_off >> 2) & 0x03ffffff);
-	dsb(ishst);
-	asm volatile("ic iallu");
-	dsb(ish);
-	isb();
+	kp_flush_kpm_icache(words, KP_CALLBACK_TRAMP_SLOT_SIZE);
 
 	rc = kp_real_kallsyms_on_each_symbol(
 		(kp_kallsyms_cb_t)((char *)kp_callback_tramp + offset + 8), data);
@@ -1720,6 +1721,10 @@ int kp_kpm_init(void)
 
 	if (!kp_kpm_init_mm) {
 		logke("init_mm unavailable; cannot verify KPM executable permissions\n");
+		return -ENOSYS;
+	}
+	if (!kp_flush_icache_all_fn) {
+		logke("flush_icache_all unavailable; cannot safely publish executable KPM code\n");
 		return -ENOSYS;
 	}
 	if (kp_module_alloc && kp_module_memfree)
