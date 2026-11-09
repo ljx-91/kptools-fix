@@ -188,7 +188,8 @@ static long kp_call_init(mod_initcall_t *fn, const char *args, const char *event
 __attribute__((no_sanitize("cfi")))
 static long kp_call_exit(mod_exitcall_t *fn, void __user *reserved)
 {
-	return (*fn)(reserved);
+	/* KPM exit callbacks are optional. */
+	return fn ? (*fn)(reserved) : 0;
 }
 
 __attribute__((no_sanitize("cfi")))
