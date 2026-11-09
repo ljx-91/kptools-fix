@@ -43,36 +43,48 @@ static u64 do_reloc(enum aarch64_reloc_op reloc_op, void *place, u64 val)
 static int reloc_data(enum aarch64_reloc_op op, void *place, u64 val, int len)
 {
     u64 imm_mask;
-    s64 sval;
+    s64 sval = do_reloc(op, place, val);
+    s64 value = sval;
 
-    if (len != 16 && len != 32 && len != 64) {
-        pr_err("Invalid length (%d) for data relocation\\n", len);
+    if (len == 64)
+        imm_mask = ~0ULL;
+    else if (len == 16 || len == 32)
+        imm_mask = (1ULL << len) - 1;
+    else {
+        pr_err("Invalid length (%d) for data relocation\n", len);
         return -EINVAL;
     }
 
-    /* Avoid undefined shifts, especially shifting a 32-bit int by 64. */
-    imm_mask = len == 64 ? ~0ULL : ((1ULL << len) - 1);
-    sval = do_reloc(op, place, val);
-
-    /*
-     * Check representability before modifying the destination. For 64-bit
-     * relocations every bit is retained, so the signed-width check is moot.
-     */
-    if (len != 64) {
+    /* PREL relocations encode a signed displacement; ABS permits signed or
+     * unsigned narrow values according to the AArch64 ELF ABI. */
+    if (op == RELOC_OP_PREL && len < 64) {
+        if (value < -(1LL << (len - 1)) ||
+            value >= (1LL << (len - 1)))
+            return -ERANGE;
+    } else {
         s64 upper = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
-        if ((u64)(upper + 1) > 2) return -ERANGE;
+        if ((u64)(upper + 1) > 2)
+            return -ERANGE;
     }
 
     switch (len) {
-    case 16:
-        *(s16 *)place = (s16)sval;
+    case 16: {
+        s16 encoded = (s16)value;
+        memcpy(place, &encoded, sizeof(encoded));
         break;
-    case 32:
-        *(s32 *)place = (s32)sval;
+    }
+    case 32: {
+        s32 encoded = (s32)value;
+        memcpy(place, &encoded, sizeof(encoded));
         break;
-    case 64:
-        *(s64 *)place = sval;
+    }
+    case 64: {
+        s64 encoded = value;
+        memcpy(place, &encoded, sizeof(encoded));
         break;
+    }
+    default:
+        return -EINVAL;
     }
     return 0;
 }
@@ -94,7 +106,7 @@ static int reloc_insn_movw(enum aarch64_reloc_op op, void *place, u64 val, int l
 		 * immediate is less than zero.
 		 */
         insn &= ~(3 << 29);
-        if ((s64)imm >= 0) {
+        if (sval >= 0) {
             /* >=0: Set the instruction to MOVZ (opcode 10b). */
             insn |= 2 << 29;
         } else {
@@ -212,7 +224,13 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
         if (symno >= symhdr->sh_size / sizeof(Elf64_Sym)) return -ENOEXEC;
         if (rel[i].r_offset > targethdr->sh_size ||
             width > targethdr->sh_size - rel[i].r_offset) return -ENOEXEC;
-        if (width && (rel[i].r_offset & (width - 1))) return -ENOEXEC;
+        /* Data relocations may target packed/byte-aligned objects. Only
+         * instruction relocations require a 4-byte-aligned instruction word. */
+        if (width && type != R_AARCH64_ABS64 && type != R_AARCH64_PREL64 &&
+            type != R_AARCH64_ABS32 && type != R_AARCH64_PREL32 &&
+            type != R_AARCH64_ABS16 && type != R_AARCH64_PREL16 &&
+            (((unsigned long)targethdr->sh_addr + rel[i].r_offset) & 3))
+            return -ENOEXEC;
     }
 
     backup = vmalloc(targethdr->sh_size ? targethdr->sh_size : 1);

@@ -35,10 +35,20 @@ def need(pattern, source, message):
 def main():
     module = read("lkm/kpm/module.c")
     relo = read("lkm/kpm/relo.c")
-    need(r"if\s*\(sval\s*>=\s*0\).*?imm\s*=\s*~imm", relo,
-         "signed MOVW must select MOVZ/MOVN from the untruncated signed value")
-    if "(s64)imm >= 0" in relo:
-        raise AssertionError("signed MOVW selector must not inspect the truncated 16-bit immediate")
+    kp_relo = read("kernel/patch/module/relo.c")
+    for source_name, source_text in (("LKM", relo), ("KPIMG", kp_relo)):
+        need(r"if\s*\(sval\s*>=\s*0\).*?imm\s*=\s*~imm", source_text,
+             source_name + " signed MOVW must select MOVZ/MOVN from the full signed value")
+        if "(s64)imm >= 0" in source_text:
+            raise AssertionError(source_name + " signed MOVW selector uses a truncated immediate")
+        need(r"op\s*==\s*RELOC_OP_PREL\s*&&\s*len\s*<\s*64", source_text,
+             source_name + " PREL narrow data relocations must use a signed range")
+    need(r"memcpy\(place,\s*&encoded,\s*sizeof\(encoded\)\)", kp_relo,
+         "KPIMG data relocations must support unaligned writes")
+    need(r"type\s*!=\s*R_AARCH64_ABS32.*?type\s*!=\s*R_AARCH64_PREL32.*?type\s*!=\s*R_AARCH64_ABS16.*?type\s*!=\s*R_AARCH64_PREL16",
+         kp_relo, "KPIMG alignment validation must exempt packed data relocation types")
+    if "rel[i].r_offset & (width - 1)" in kp_relo:
+        raise AssertionError("KPIMG must not require natural alignment for data relocations")
     kbuild = read("lkm/Kbuild")
 
     need(re.escape("""ifneq ($(filter y,$(CONFIG_SHADOW_CALL_STACK) $(CONFIG_ARM64_SCS)),)
