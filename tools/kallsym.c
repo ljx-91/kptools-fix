@@ -69,6 +69,7 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
     if (!info || !img || imglen <= 0) return -1;
 
     int32_t *kver = (int32_t *)opt;
+    if (kver) *kver = 0;
     static const char linux_banner_prefix[] = "Linux version ";
     const size_t prefix_len = sizeof(linux_banner_prefix) - 1;
     char *imgend = img + imglen;
@@ -102,8 +103,8 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
     }
 
     if (!info->banner_num) {
-        tools_loge("no valid linux_banner in image\n");
-        return -1;
+        tools_logw("no valid linux_banner in image; vector fallback remains available\n");
+        return 0;
     }
 
     char *banner = img + info->linux_banner_offset[info->banner_num - 1];
@@ -111,15 +112,15 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
     char *space = (char *)memchr(uts_release_start, ' ',
                                  (size_t)(imgend - uts_release_start));
     if (!space) {
-        tools_loge("linux_banner release string is not terminated inside image\n");
-        return -1;
+        tools_logw("linux_banner release string is truncated; using fallback symbol validation\n");
+        return 0;
     }
 
     size_t release_len = (size_t)(space - uts_release_start);
     char release[128];
     if (!release_len || release_len >= sizeof(release)) {
-        tools_loge("linux_banner release string has invalid length\n");
-        return -1;
+        tools_logw("linux_banner release string has invalid length; using fallback symbol validation\n");
+        return 0;
     }
     memcpy(release, uts_release_start, release_len);
     release[release_len] = '\0';
@@ -127,17 +128,17 @@ int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
     char *cursor = release;
     char *end = NULL;
     unsigned long major = strtoul(cursor, &end, 10);
-    if (end == cursor || *end != '.' || major > UINT8_MAX) return -1;
+    if (end == cursor || *end != '.' || major > UINT8_MAX) return 0;
     cursor = end + 1;
 
-    if (!isdigit((unsigned char)*cursor)) return -1;
+    if (!isdigit((unsigned char)*cursor)) return 0;
     unsigned long minor = strtoul(cursor, &end, 10);
-    if (end == cursor || *end != '.' || minor > UINT8_MAX) return -1;
+    if (end == cursor || *end != '.' || minor > UINT8_MAX) return 0;
     cursor = end + 1;
 
     if (!isdigit((unsigned char)*cursor)) return -1;
     unsigned long patch = strtoul(cursor, &end, 10);
-    if (end == cursor || (*end && *end != '+' && *end != '-')) return -1;
+    if (end == cursor || (*end && *end != '+' && *end != '-')) return 0;
 
     info->version.major = (uint8_t)major;
     info->version.minor = (uint8_t)minor;
