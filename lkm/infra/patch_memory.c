@@ -114,31 +114,27 @@ static int kp_patch_data(void *dst, const void *src, size_t len)
 {
 	unsigned long phy, phy_off, flags;
 	void *map;
-	int ret;
 
+	/* This primitive is deliberately one aligned instruction word only.
+	 * Batch callers provide CPU quiescence; WRITE_ONCE prevents torn stores. */
 	if (!dst || !src || len != sizeof(u32) || ((unsigned long)dst & 3))
 		return -EINVAL;
 	phy = kp_phys_from_virt((unsigned long)dst);
 	if (!phy) {
-		logke("no phys for data patch dst 0x%lx\n", (unsigned long)dst);
+		logke("no phys for data patch dst 0x%lx\\n", (unsigned long)dst);
 		return -ENOENT;
 	}
 	phy_off = phy & ~PAGE_MASK;
-	/* One fixmap slot maps one page. Callers must split a cross-page patch
-	 * into independently translated pieces before reaching this helper. */
-	if (len > PAGE_SIZE - phy_off)
+	if (phy_off > PAGE_SIZE - sizeof(u32))
 		return -E2BIG;
 
 	raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags);
 	map = (void *)set_fixmap_offset(FIX_TEXT_POKE0, phy & PAGE_MASK) + phy_off;
-	/* A64 instructions are patched as one aligned 32-bit store; avoid
-	 * byte-copy helpers that could expose a torn instruction to another CPU. */
 	WRITE_ONCE(*(volatile u32 *)map, READ_ONCE(*(const u32 *)src));
 	clear_fixmap(FIX_TEXT_POKE0);
 	kp_flush_dcache((unsigned long)dst, sizeof(u32));
-	ret = 0;
 	raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags);
-	return ret;
+	return 0;
 }
 
 int kp_patch_memory_init(void)
