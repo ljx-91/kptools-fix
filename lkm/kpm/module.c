@@ -1198,6 +1198,12 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		unsigned long flags;
 		/* Keep the image registered while failure cleanup runs. */
 		spin_lock_irqsave(&module_lock, flags);
+		mod->state = KP_MODULE_UNLOADING;
+		if (mod->active_calls) {
+			spin_unlock_irqrestore(&module_lock, flags);
+			rc = -EBUSY;
+			goto out;
+		}
 		mod->state = KP_MODULE_EXITING;
 		spin_unlock_irqrestore(&module_lock, flags);
 	}
