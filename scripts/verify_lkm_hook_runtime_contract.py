@@ -36,6 +36,7 @@ hotpatch = function_body(runtime, "int hotpatch(void *addrs[], uint32_t values[]
 patch_data = function_body(patch_memory, "static int kp_patch_data(")
 patch_exchange = function_body(patch_memory, "int kp_patch_exchange64(")
 patch_cmpxchg = function_body(patch_memory, "int kp_patch_cmpxchg64(")
+patch_batch = function_body(patch_memory, "static int kp_patch_text_batch_stop(")
 
 checks = {
     "LKM backend defines hook_mem_retire": "void hook_mem_retire(void *payload)" in runtime,
@@ -107,12 +108,21 @@ checks = {
         "hook_get_mem_from_origin_type(origin, INLINE)" in hook and
         "hook_get_mem_from_origin_type(origin, INLINE_CHAIN)" in hook and
         "hook_get_mem_from_origin_type(fp_addr, FUNCTION_POINTER_CHAIN)" in fphook,
-    "LKM hook text patch batch snapshots all words before writing":
-        "uint32_t original[64];" in hotpatch and
-        "copy_from_kernel_nofault(&original[i], addrs[i]" in hotpatch,
-    "LKM hook text patch batch rolls back failed and prior words":
-        "for (j = i; j >= 0; j--)" in hotpatch and
-        "rollback_rc = -EUCLEAN" in hotpatch,
+    "LKM hook text patch delegates the complete instruction set atomically":
+        "return kp_patch_text_batch(addrs, values, count);" in hotpatch and
+        'kp_resolve_symbol("stop_machine")' in patch_memory and
+        "kp_patch_stop_machine(kp_patch_text_batch_stop, &patch, NULL)" in patch_memory,
+    "LKM hook text patch snapshots every word before any write":
+        "Validate and snapshot every target before modifying the first word." in patch_batch and
+        "patch->original[i] = READ_ONCE" in patch_batch,
+    "LKM hook text patch rolls back partial writes and reports uncertainty":
+        "applied = i + 1" in patch_batch and
+        "rollback_failed" in patch_batch and
+        "return rollback_failed ? -EUCLEAN : ret;" in patch_batch,
+    "LKM hook text patch rejects duplicate and invalid cross-page targets":
+        "patch->addrs[j] == patch->addrs[i]" in patch_batch and
+        "phy & ~PAGE_MASK" in patch_batch and
+        "PAGE_SIZE - sizeof(u32)" in patch_batch,
     "shared FIX_TEXT_POKE0 mapping is serialized":
         "DEFINE_RAW_SPINLOCK(kp_fixmap_patch_lock)" in patch_memory and
         "raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags)" in patch_memory and
