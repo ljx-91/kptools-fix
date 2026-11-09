@@ -35,6 +35,18 @@ def need(pattern, source, message):
 def main():
     module = read("lkm/kpm/module.c")
     relo = read("lkm/kpm/relo.c")
+    kbuild = read("lkm/Kbuild")
+
+    need(re.escape("""ifneq ($(filter y,$(CONFIG_SHADOW_CALL_STACK) $(CONFIG_ARM64_SCS)),)
+CFLAGS_hook/hook_engine.o += -fno-sanitize=shadow-call-stack
+endif"""), kbuild, "SCS workaround must be conditional on target SCS config")
+    need(re.escape("""ifeq ($(CONFIG_ARM64_BTI_KERNEL),y)
+CFLAGS_hook/hook_engine.o += -mbranch-protection=bti
+endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI config")
+    if kbuild.count("-mbranch-protection=bti") != 1 or kbuild.count("-fno-sanitize=shadow-call-stack") != 1:
+        raise AssertionError("BTI/SCS compiler flags must appear only in their guarded blocks")
+    need("CFLAGS_hook/hook_engine.o += -fno-lto", kbuild,
+         "hook engine must remain outside LTO due its distinct branch-protection ABI")
 
     header = body(module, "static int elf_header_check(")
     for token in ("ELFCLASS64", "ELFDATA2LSB", "EI_VERSION",

@@ -92,12 +92,14 @@ CFLAGS_hook/hook_engine.o += -fno-lto
 # CFI so the backup calls don't recurse into the CFI slowpath.
 CFLAGS_infra/secpass.o += -fno-sanitize=cfi
 # _transit4 runs from a kernel text function's inline hook; x18 there is NOT the
-# module's shadow-call-stack. Disable SCS so the transit never writes x30 through
-# x18 (str x30,[x18]) into garbage -> CPU fault -> watchdog bite on that core.
-# Also drop PAC (paciasp/autiasp): the hooked kernel function does not PAC-sign
-# the return address the way this module does, so _transit4's autiasp would
-# fault on return. Keep BTI so the trampoline branch into _transit4 is valid.
+# module's shadow-call-stack. Disable SCS only when the target kernel enables it.
+ifneq ($(filter y,$(CONFIG_SHADOW_CALL_STACK) $(CONFIG_ARM64_SCS)),)
 CFLAGS_hook/hook_engine.o += -fno-sanitize=shadow-call-stack
+endif
+# BTI landing pads are required only when the target kernel enables kernel BTI.
+# Older targets such as the Y73S Linux 4.14.141 build have no such Kconfig option.
+ifeq ($(CONFIG_ARM64_BTI_KERNEL),y)
 CFLAGS_hook/hook_engine.o += -mbranch-protection=bti
+endif
 
 # Keep a trailing newline so config can be appended.
