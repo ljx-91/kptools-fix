@@ -434,7 +434,7 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
 
     if (!img || imglen <= 0 || (elem_size != 4 && elem_size != 8) ||
         imglen < KSYM_MIN_NEQ_SYMS * elem_size) {
-        tools_logw("invalid kallsyms_offsets scan range or element size\\n");
+        tools_logw("invalid kallsyms_offsets scan range or element size\n");
         return -1;
     }
 
@@ -458,13 +458,13 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
         }
     }
     if (sym_num < KSYM_MIN_NEQ_SYMS) {
-        tools_logw("find approximate kallsyms_offsets error\\n");
+        tools_logw("find approximate kallsyms_offsets error\n");
         return -1;
     }
 
     cand -= KSYM_MIN_NEQ_SYMS * elem_size;
     if (cand < 0 || cand > imglen - elem_size) {
-        tools_logw("kallsyms_offsets candidate start is outside the image\\n");
+        tools_logw("kallsyms_offsets candidate start is outside the image\n");
         return -1;
     }
 
@@ -472,7 +472,7 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
     while (cand >= 0 && int_unpack(img + cand, elem_size, info->is_be))
         cand -= elem_size;
     if (cand < 0) {
-        tools_logw("kallsyms_offsets zero sentinel is not bounded by the image\\n");
+        tools_logw("kallsyms_offsets zero sentinel is not bounded by the image\n");
         return -1;
     }
 
@@ -482,13 +482,13 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
         cand -= elem_size;
     }
     if (cand < 0) {
-        tools_logw("kallsyms_offsets table start underflows the image\\n");
+        tools_logw("kallsyms_offsets table start underflows the image\n");
         return -1;
     }
 
     cand += elem_size;
     if (cand < 0 || cand > imglen - elem_size) {
-        tools_logw("kallsyms_offsets table start has no complete entry\\n");
+        tools_logw("kallsyms_offsets table start has no complete entry\n");
         return -1;
     }
     int32_t approx_offset = cand;
@@ -510,7 +510,7 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
     int32_t approx_num_syms = (end - approx_offset) / elem_size;
     info->_approx_addresses_or_offsets_num = approx_num_syms;
     tools_logi("approximate kallsyms_offsets range: [0x%08x, 0x%08x) "
-               "count: 0x%08x\\n",
+               "count: 0x%08x\n",
                approx_offset, end, approx_num_syms);
     return 0;
 }
