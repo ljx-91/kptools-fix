@@ -465,7 +465,7 @@ static int find_approx_addresses(kallsym_t *info, char *img, int32_t imglen)
     if (!info || !img || imglen <= 0 ||
         (info->asm_PTR_size != 4 && info->asm_PTR_size != 8) ||
         imglen < KSYM_MIN_NEQ_SYMS * info->asm_PTR_size) {
-        tools_logw("invalid kallsyms_addresses scan range or element size\\n");
+        tools_logw("invalid kallsyms_addresses scan range or element size\n");
         return -1;
     }
 
