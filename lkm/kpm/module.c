@@ -164,13 +164,13 @@ static void *kp_malloc_exec(unsigned long size)
 }
 
 __attribute__((no_sanitize("cfi"), __noinline__))
-static void kp_free_exec(void *region)
+static void kp_free_exec(void *region, unsigned long size)
 {
 	if (!region)
 		return;
 	/* Never return executable pages to a general allocator. If NX/BTI
 	 * restoration cannot be verified, deliberately leak the region. */
-	if (kp_restore_nx_gp((unsigned long)region, PAGE_ALIGN(1))) {
+	if (kp_restore_nx_gp((unsigned long)region, size)) {
 		logke("KPM executable memory permission restore failed; leaking %px\\n", region);
 		return;
 	}
@@ -1335,7 +1335,7 @@ free:
 	if (mod->args)
 		kvfree(mod->args);
 	if (mod->start)
-		kp_free_exec(mod->start);
+		kp_free_exec(mod->start, mod->size);
 free1:
 	kfree(mod);
 out:
@@ -1709,7 +1709,7 @@ int kp_kpm_init(void)
 		perm_rc = kp_clear_bti_gp((unsigned long)kp_callback_tramp, PAGE_SIZE);
 		if (perm_rc) {
 			logke("callback trampoline permissions unverifiable: %d\n", perm_rc);
-			kp_free_exec(kp_callback_tramp);
+			kp_free_exec(kp_callback_tramp, PAGE_SIZE);
 			kp_callback_tramp = NULL;
 			kp_callback_tramp_size = 0;
 		} else {
