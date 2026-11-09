@@ -1130,8 +1130,8 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		rc = -EINVAL;
 		goto out;
 	}
-	if (!kp_module_alloc && !kp_execmem_alloc) {
-		set_load_error(info, "executable memory allocator unavailable");
+	if (kp_exec_backend == KP_EXEC_BACKEND_NONE || !kp_kpm_init_mm) {
+		set_load_error(info, "verified executable memory backend unavailable");
 		rc = -ENOSYS;
 		goto out;
 	}
@@ -1177,22 +1177,23 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	}
 	logkfe("KPM [%s] relocations applied\n", info->info.name);
 
-	/* GKI 5.10+ module_alloc returns PAGE_KERNEL (PXN set, non-executable).
-	 * The kernel's own module loader calls set_memory_x() after writing; we
-	 * must do the same, otherwise kp_call_init triggers a permission fault. */
+	/* GKI module_alloc pages may be NX/BTI-guarded. set_memory_x is
+	 * attempted when available; the PTE walk below is authoritative. */
 	if (kp_set_memory_x) {
-		
 		int npages = (mod->size + PAGE_SIZE - 1) >> PAGE_SHIFT;
 		int xret = kp_do_set_memory_x((unsigned long)mod->start, npages);
 		if (xret)
-			logke("KPM [%s] set_memory_x(%px, %d) = %d\n",
-			      info->info.name, mod->start, npages, xret);
+			logkw("KPM [%s] set_memory_x returned %d; verifying PTE permissions directly\n",
+			      info->info.name, xret);
 	}
 
-	/* Disable BTI on the KPM pages: the module is bare-metal compiled
-		 * without bti c landing pads, and every BLR from KPM code to the
-		 * LKM / kernel faults on GKI BTI-enabled kernels. */
-		kp_clear_bti_gp((unsigned long)mod->start, mod->size);
+	/* Disable PXN/UXN/GP and verify every page before entering module code. */
+	rc = kp_clear_bti_gp((unsigned long)mod->start, mod->size);
+	if (rc) {
+		set_load_error(info, "KPM executable/BTI page permissions could not be verified");
+		logke("KPM [%s] executable page verification failed: %ld\n", info->info.name, rc);
+		goto free;
+	}
 	kp_flush_kpm_icache(mod->start, mod->size);
 	logkfe("KPM [%s] icache flushed\n", info->info.name);
 
@@ -1593,14 +1594,12 @@ int kp_kpm_init(void)
 	spin_lock_init(&module_lock);
 	kp_kpm_symbols_init();
 
-	/* module_alloc exists up to ~6.8; 6.10+ replaced it with execmem_alloc
-	 * (EXECMEM_MODULE_TEXT). None are exported to modules, but all are in
-	 * kallsyms. kp_malloc_exec falls back module_alloc -> execmem_alloc ->
-	 * vmalloc. */
+	/* Resolve matched allocator/free pairs. Never free through a different
+	 * backend, and require init_mm to verify executable and BTI PTE state. */
 	kp_module_alloc = (void *(*)(unsigned long))kallsyms_lookup_name("module_alloc");
 	kp_module_memfree = (void (*)(void *))kallsyms_lookup_name("module_memfree");
 	kp_execmem_alloc = (void *)kallsyms_lookup_name("execmem_alloc");
-	kp_execmem_free = (void *)kallsyms_lookup_name("execmem_free");
+	kp_execmem_free = (void (*)(void *))kallsyms_lookup_name("execmem_free");
 	kp_flush_icache_all_fn = (void (*)(void))kallsyms_lookup_name("flush_icache_all");
 	kp_set_memory_x = (int (*)(unsigned long, int))kallsyms_lookup_name("set_memory_x");
 	kp_set_memory_nx = (int (*)(unsigned long, int))kallsyms_lookup_name("set_memory_nx");
@@ -1608,28 +1607,42 @@ int kp_kpm_init(void)
 	logki("kpm runtime: module_alloc=%px execmem_alloc=%px set_memory_x=%px init_mm=%px\n",
 	      kp_module_alloc, kp_execmem_alloc, kp_set_memory_x, kp_kpm_init_mm);
 
-	if (!kp_module_alloc && !kp_execmem_alloc) {
-		logke("no module/execmem allocator; KPM loading disabled\n");
+	if (!kp_kpm_init_mm) {
+		logke("init_mm unavailable; cannot verify KPM executable permissions\n");
+		return -ENOSYS;
+	}
+	if (kp_module_alloc && kp_module_memfree)
+		kp_exec_backend = KP_EXEC_BACKEND_MODULE;
+	else if (kp_execmem_alloc && kp_execmem_free)
+		kp_exec_backend = KP_EXEC_BACKEND_EXECMEM;
+	else if (kp_set_memory_x)
+		kp_exec_backend = KP_EXEC_BACKEND_VMALLOC;
+	else {
+		logke("no matched executable-memory allocator/free backend\n");
 		return -ENOSYS;
 	}
 
-	/* One RWX page to hold the bti-c trampoline for KPM kallsyms callbacks.
-	 * GKI 5.10+ module_alloc returns PAGE_KERNEL (NX), so make it executable
-	 * like the KPM images. */
+	/* One executable page holds per-call BTI-C trampolines. If its PTEs
+	 * cannot be verified, keep kallsyms callbacks disabled rather than
+	 * exposing an NX or BTI-incompatible entry point. */
 	kp_callback_tramp = kp_malloc_exec(PAGE_SIZE);
 	if (kp_callback_tramp) {
-		kp_callback_tramp_size = PAGE_SIZE;
-		if (kp_set_memory_x) {
-			int xret = kp_do_set_memory_x((unsigned long)kp_callback_tramp, 1);
-			if (xret)
-				logke("callback trampoline set_memory_x(%px) = %d\n",
-				      kp_callback_tramp, xret);
+		int perm_rc;
+		if (kp_set_memory_x)
+			kp_do_set_memory_x((unsigned long)kp_callback_tramp, 1);
+		perm_rc = kp_clear_bti_gp((unsigned long)kp_callback_tramp, PAGE_SIZE);
+		if (perm_rc) {
+			logke("callback trampoline permissions unverifiable: %d\n", perm_rc);
+			kp_free_exec(kp_callback_tramp);
+			kp_callback_tramp = NULL;
+			kp_callback_tramp_size = 0;
+		} else {
+			kp_callback_tramp_size = PAGE_SIZE;
+			memset(kp_callback_tramp, 0, PAGE_SIZE);
+			kp_flush_kpm_icache(kp_callback_tramp, PAGE_SIZE);
 		}
-		/* module_alloc may return PXN/NX; clear PXN/UXN/GP like KPM images */
-		kp_clear_bti_gp((unsigned long)kp_callback_tramp, PAGE_SIZE);
-		memset(kp_callback_tramp, 0, PAGE_SIZE);
 	} else {
-		logkw("callback trampoline alloc failed; KPM kallsyms iteration unshielded\n");
+		logkw("callback trampoline alloc failed; KPM kallsyms iteration disabled\n");
 	}
 
 	kp_real_kallsyms_on_each_symbol =
