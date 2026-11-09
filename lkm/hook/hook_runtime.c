@@ -2,6 +2,7 @@
 /* LKM backends required by kernel/base/hook.c. */
 #include <linux/errno.h>
 #include <linux/compiler.h>
+#include <linux/uaccess.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
@@ -337,7 +338,7 @@ int hotpatch(void *addrs[], uint32_t values[], int count)
 	uint32_t original[64];
 	int i, j, rc, rollback_rc = 0;
 
-	if (!addrs || !values || count <= 0 || count > ARRAY_SIZE(original))
+	if (!addrs || !values || count <= 0 || count > (int)(sizeof(original) / sizeof(original[0])))
 		return -EINVAL;
 
 	/* Snapshot and validate the complete patch set before the first write.
@@ -348,7 +349,8 @@ int hotpatch(void *addrs[], uint32_t values[], int count)
 		for (j = 0; j < i; j++)
 			if (addrs[j] == addrs[i])
 				return -EINVAL;
-		original[i] = READ_ONCE(*(volatile uint32_t *)addrs[i]);
+		if (copy_from_kernel_nofault(&original[i], addrs[i], sizeof(original[i])))
+			return -EFAULT;
 	}
 
 	for (i = 0; i < count; i++) {
