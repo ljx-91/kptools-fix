@@ -1047,90 +1047,99 @@ static int correct_addresses_or_offsets_by_banner(kallsym_t *info, char *img, in
     return 0;
 }
 
-static int verify_names_candidate(kallsym_t *info, char *img, int32_t marker_elem_size, int32_t cand)
+static int verify_names_candidate(kallsym_t *info, char *img,
+                                   int32_t marker_elem_size, int32_t cand)
 {
-    int32_t pos = cand;
-    int32_t test_marker_num = KSYM_FIND_NAMES_USED_MARKER; // check n * 256 symbols
+    if (!info || !img || info->image_size <= 0 ||
+        cand < 0 || cand >= info->kallsyms_markers_offset ||
+        (marker_elem_size != 4 && marker_elem_size != 8) ||
+        info->_marker_num <= KSYM_FIND_NAMES_USED_MARKER) return -1;
 
+    int32_t pos = cand;
+    int32_t test_marker_num = KSYM_FIND_NAMES_USED_MARKER;
     for (int32_t i = 0;; i++) {
-        int32_t len;
-         if (pos >= info->kallsyms_markers_offset) return -1;
-         len = *(uint8_t *)(img + pos++);
-         if (len > 0x7F) {
-             if (pos >= info->kallsyms_markers_offset) return -1;
-             len = (len & 0x7F) + (*(uint8_t *)(img + pos++) << 7);
-         }
-        if (!len || len >= KSYM_SYMBOL_LEN) return -1;
-        if (pos + len > info->kallsyms_markers_offset) return -1;
+        if (pos < 0 || pos >= info->kallsyms_markers_offset) return -1;
+        int32_t len = (uint8_t)img[pos++];
+        if (len > 0x7F) {
+            if (pos >= info->kallsyms_markers_offset) return -1;
+            len = (len & 0x7F) + ((uint8_t)img[pos++] << 7);
+        }
+        if (!len || len >= KSYM_SYMBOL_LEN ||
+            len > info->kallsyms_markers_offset - pos) return -1;
         pos += len;
         if (pos >= info->kallsyms_markers_offset) return -1;
 
-        if (i && (i & 0xFF) == 0xFF) { // every 256 symbols
+        if (i && (i & 0xFF) == 0xFF) {
             int32_t marker_index = (i >> 8) + 1;
-            int32_t marker_offset = marker_index * marker_elem_size;
-            int32_t marker_table_size = info->_marker_num * marker_elem_size;
+            if (marker_index < 0 || marker_index >= info->_marker_num) return -1;
+            int64_t marker_offset = (int64_t)marker_index * marker_elem_size;
+            int64_t marker_table_size = (int64_t)info->_marker_num * marker_elem_size;
+            if (marker_offset < 0 ||
+                marker_offset > marker_table_size - marker_elem_size ||
+                (int64_t)info->kallsyms_markers_offset + marker_offset >
+                    (int64_t)info->image_size - marker_elem_size) return -1;
 
-            if (marker_index >= info->_marker_num) return -1;
-            if (marker_offset < 0 || marker_offset > marker_table_size - marker_elem_size) return -1;
-
-            int32_t mark_len = int_unpack(img + info->kallsyms_markers_offset + marker_offset, marker_elem_size,
-                                          info->is_be);
+            int32_t mark_len = (int32_t)int_unpack(
+                img + info->kallsyms_markers_offset + marker_offset,
+                marker_elem_size, info->is_be);
             if (pos - cand != mark_len) return -1;
             if (!--test_marker_num) return 0;
         }
     }
 }
 
+
 static int find_names(kallsym_t *info, char *img, int32_t imglen)
 {
+    if (!info || !img || imglen <= 0 || info->image_size != imglen ||
+        info->kallsyms_markers_offset <= 0 ||
+        info->kallsyms_markers_offset > imglen ||
+        info->_marker_num <= 0) return -1;
+
     int32_t marker_elem_size = get_markers_elem_size(info);
+    if (marker_elem_size != 4 && marker_elem_size != 8) return -1;
+    int64_t marker_bytes = (int64_t)info->_marker_num * marker_elem_size;
+    if (marker_bytes <= 0 ||
+        (int64_t)info->kallsyms_markers_offset + marker_bytes > imglen)
+        return -1;
 
     if (info->_marker_num > KSYM_FIND_NAMES_USED_MARKER) {
-        int32_t last_marker =
-            (int32_t)int_unpack(img + info->kallsyms_markers_offset + (info->_marker_num - 1) * marker_elem_size,
-                                marker_elem_size, info->is_be);
-        int32_t guess = info->kallsyms_markers_offset - last_marker;
-        int32_t guess_start = guess - 0x10000;
-        int32_t guess_end = guess + 0x1000;
+        int64_t last_marker_pos = (int64_t)info->kallsyms_markers_offset +
+            (int64_t)(info->_marker_num - 1) * marker_elem_size;
+        if (last_marker_pos < 0 || last_marker_pos > (int64_t)imglen - marker_elem_size)
+            return -1;
+        int32_t last_marker = (int32_t)int_unpack(
+            img + last_marker_pos, marker_elem_size, info->is_be);
+        if (last_marker < 0 || last_marker >= info->kallsyms_markers_offset) return -1;
+
+        int64_t guess = (int64_t)info->kallsyms_markers_offset - last_marker;
+        int64_t guess_start = guess - 0x10000;
+        int64_t guess_end = guess + 0x1000;
         if (guess_start < 0x4000) guess_start = 0x4000;
-        if (guess_end > info->kallsyms_markers_offset) guess_end = info->kallsyms_markers_offset;
-        for (int32_t cand = guess_start; cand < guess_end; cand++) {
-            if (!verify_names_candidate(info, img, marker_elem_size, cand)) {
-                info->kallsyms_names_offset = cand;
-                tools_logi("kallsyms_names offset: 0x%08x\n", cand);
+        if (guess_end > info->kallsyms_markers_offset)
+            guess_end = info->kallsyms_markers_offset;
+
+        for (int64_t candidate = guess_start; candidate < guess_end; candidate++) {
+            if (!verify_names_candidate(info, img, marker_elem_size, (int32_t)candidate)) {
+                info->kallsyms_names_offset = (int32_t)candidate;
+                tools_logi("kallsyms_names offset: 0x%08x\n", (int32_t)candidate);
                 return 0;
             }
         }
     }
 
-    // int32_t cand = info->_approx_addresses_or_offsets_offset;
-    for (int32_t cand = 0x4000; cand < info->kallsyms_markers_offset; cand++) {
-        if (!verify_names_candidate(info, img, marker_elem_size, cand)) {
-            info->kallsyms_names_offset = cand;
-            tools_logi("kallsyms_names offset: 0x%08x\n", cand);
+    for (int32_t candidate = 0x4000;
+         candidate < info->kallsyms_markers_offset; candidate++) {
+        if (!verify_names_candidate(info, img, marker_elem_size, candidate)) {
+            info->kallsyms_names_offset = candidate;
+            tools_logi("kallsyms_names offset: 0x%08x\n", candidate);
             return 0;
         }
     }
     tools_loge("find kallsyms_names error\n");
     return -1;
-
-#if 0
-    // print all symbol for test
-    // if CONFIG_KALLSYMS=y and CONFIG_KALLSYMS_ALL=n
-    // kallsyms_names table in kernel image will be truncated, and only functions exported
-    int32_t pos = info->kallsyms_names_offset;
-    int32_t index = 0;
-    char symbol[KSYM_SYMBOL_LEN] = { '\0' };
-    while (pos < info->kallsyms_markers_offset) {
-        memset(symbol, 0, sizeof(symbol));
-        int32_t ret = decompress_symbol_name(info, img, &pos, NULL, symbol);
-        if (ret) break;
-        tools_logi("index: %d, %08x, symbol: %s\n", index, pos, symbol);
-        index++;
-    }
-#endif
-    return 0;
 }
+
 
 static int arm64_verify_pid_vnr_window(kallsym_t *info, char *img, int32_t imglen,
                                        int32_t offset, int back, int fwd, int generic_sp)
