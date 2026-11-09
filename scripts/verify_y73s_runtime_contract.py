@@ -98,20 +98,22 @@ def main():
             "old image physical-to-linear translation must reject overflow")
     require(r"start_pa\s*>\s*~\(uint64_t\)0\s*-\s*data->kimage_voffset", paging,
             "destination physical-to-kimage translation must reject overflow")
-    require(r"old_start_va\s*>\s*~\(uint64_t\)0\s*-\s*reserve_size", paging,
+    require(r"paging_init_va\s*>\s*~\(uint64_t\)0\s*-\s*reserve_size", paging,
             "old image virtual copy range must reject overflow")
-    require(r"start_va\s*>\s*~\(uint64_t\)0\s*-\s*all_size", paging,
+    require(r"sctlr_el1\s*>\s*~\(uint64_t\)0\s*-\s*all_size", paging,
             "destination virtual copy range must reject overflow")
     require(r"data->start_img_size\s*&\s*\(sizeof\(uint64_t\)\s*-\s*1\)", paging,
             "word-copy source offset must be naturally aligned")
-    require(r"for\s*\(i\s*=\s*0;\s*\(uint64_t\)data->start_img_size\s*-\s*i\s*>=\s*sizeof\(uint64_t\)", paging,
+    require(r"for\s*\(off\s*=\s*0;\s*\(uint64_t\)data->start_img_size\s*-\s*off\s*>=\s*sizeof\(uint64_t\)", paging,
             "start image copy must process only complete words before the byte tail")
-    require(r"for\s*\(;\s*i\s*<\s*\(uint64_t\)data->start_img_size;\s*\+\+i\)", paging,
+    require(r"for\s*\(;\s*off\s*<\s*\(uint64_t\)data->start_img_size;\s*\+\+off\)", paging,
             "start image copy must handle its final bytes without overread")
-    require(r"i\s*=\s*0;\s*for\s*\(;\s*\(uint64_t\)data->extra_size\s*-\s*i\s*>=\s*sizeof\(uint64_t\)", paging,
+    require(r"off\s*=\s*0;\s*for\s*\(;\s*\(uint64_t\)data->extra_size\s*-\s*off\s*>=\s*sizeof\(uint64_t\)", paging,
             "extra payload copy must restart its offset at zero")
-    require(r"for\s*\(;\s*i\s*<\s*\(uint64_t\)data->extra_size;\s*\+\+i\)", paging,
+    require(r"for\s*\(;\s*off\s*<\s*\(uint64_t\)data->extra_size;\s*\+\+off\)", paging,
             "extra payload copy must handle its final bytes without overread")
+    require(r"\(\(start_f\)sctlr_el1\)", paging,
+            "relocated image entry must use the validated destination virtual address")
     require(r"memblock_mark_nomap_f[^;]*\)\(start_pa,\s*all_size\)\)\s*__builtin_trap\(\);",
             paging, "NOMAP failure must stop before mapping/copying")
 
