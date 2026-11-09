@@ -1105,3 +1105,61 @@ or runtime testing.
 
 The current source and KPIMG CI state is green, but the repository is not yet
 certified for device use or for loading untrusted KPMs.
+
+## 14. LKM user-string and execve redirection hardening (2026-11-09)
+
+A further review of the LKM supercall boundary found that several
+strncpy_from_user() callers treated a full-size return as a valid C string.
+When the user buffer had no NUL within the destination size, subsequent
+strcmp(), logging, or path handling could read beyond the local buffer.
+
+### Production changes
+
+- Added a shared bounded-copy helper in lkm/kpm/kpm.c. It rejects null
+  pointers, propagates copy faults, rejects strings without an in-range NUL
+  with -ENAMETOOLONG, and explicitly terminates accepted strings.
+- KPM load path, optional load arguments, control module name/arguments,
+  unload name, and info name now use that helper. Invalid optional argument
+  pointers no longer silently become absent arguments.
+- The KPM list/info output handlers now reject null output pointers and
+  invalid lengths before copying to userspace.
+- The feature-control name parser now rejects overlong names and explicitly
+  terminates accepted names.
+- lkm/supercall/sucompat_hook.c now applies the same bounded-copy rule to
+  execve filenames and SUPERCMD argv/-Z context strings. An overlong execve
+  filename is passed through to the original syscall rather than compared as
+  an unterminated stack buffer.
+- Removed shared static scratch buffers for per-exec SELinux contexts; the
+  context is now stored in the current execve handler's stack frame.
+- execve redirection no longer overwrites the caller's original filename
+  buffer. It stages the replacement path in fresh user stack space and
+  updates pt_regs->regs[0]. APD argv[0] staging is kept separate, and stack
+  pointer subtraction is checked before each allocation.
+
+### Regression coverage and CI
+
+scripts/verify_lkm_supercall_input_contract.py checks bounded copies, all KPM
+string entry points, execve and SUPERCMD input handling, local context buffers,
+and stack-based filename redirection. It runs in the LKM source-audit job.
+
+Validated source HEAD:
+- 2cc2776f5994dddae6258331312b99b455e3283a
+- Host/LKM source-audit workflow run 42625300840: success
+  - LKM KPM ELF/relocation contracts: success
+  - LKM Hook runtime contracts: success
+  - KPM lifecycle contracts: success
+  - LKM supercall input contracts: success
+  - host kptools build/package: success
+
+The matching KPIMG workflow run 42625300566 was still in progress when this
+section was prepared. It is not needed to validate the LKM-only source
+contract, but must be checked before reporting the full branch CI state.
+
+### Remaining limitations
+
+- These are source-contract and host-tool checks; they do not compile the LKM
+  against the target Android 10 / Linux 4.14.141 KDIR.
+- The execve stack-staging change still needs a target-kernel compile and
+  runtime validation of syscall ABI, user stack behavior, APD argument
+  preservation, and failure paths.
+- No device-side test or write was performed.
