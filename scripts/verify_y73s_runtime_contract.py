@@ -150,9 +150,9 @@ def main():
             "relative branch target must be instruction-aligned")
     require(r"0x07fffffcULL", branch_range,
             "positive A64 B range must exclude +128 MiB")
-    require(r"src_addr\\s*-\\s*dst_addr\\s*<=\\s*0x08000000ULL", branch_range,
+    require(r"src_addr\s*-\s*dst_addr\s*<=\s*0x08000000ULL", branch_range,
             "negative A64 B range must include -128 MiB")
-    require(r"dst_addr\\s*-\\s*src_addr\\s*<=\\s*0x07fffffcULL", branch_range,
+    require(r"dst_addr\s*-\s*src_addr\s*<=\s*0x07fffffcULL", branch_range,
             "positive A64 B range must stop at +128 MiB-4")
     if "int64_t delta" in branch_range:
         raise AssertionError("A64 branch range must not negate a signed uint64_t difference")
