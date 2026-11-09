@@ -43,8 +43,12 @@ endif"""), kbuild, "SCS workaround must be conditional on target SCS config")
     need(re.escape("""ifeq ($(CONFIG_ARM64_BTI_KERNEL),y)
 CFLAGS_hook/hook_engine.o += -mbranch-protection=bti
 endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI config")
-    if kbuild.count("-mbranch-protection=bti") != 1 or kbuild.count("-fno-sanitize=shadow-call-stack") != 1:
-        raise AssertionError("BTI/SCS compiler flags must appear only in their guarded blocks")
+    bti_flag_lines = [line for line in kbuild.splitlines()
+                       if line == "CFLAGS_hook/hook_engine.o += -mbranch-protection=bti"]
+    scs_flag_lines = [line for line in kbuild.splitlines()
+                      if line == "CFLAGS_hook/hook_engine.o += -fno-sanitize=shadow-call-stack"]
+    if len(bti_flag_lines) != 1 or len(scs_flag_lines) != 1:
+        raise AssertionError("BTI/SCS compiler flags must appear only once as guarded build directives")
     need("CFLAGS_hook/hook_engine.o += -fno-lto", kbuild,
          "hook engine must remain outside LTO due its distinct branch-protection ABI")
 
