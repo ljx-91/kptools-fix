@@ -1002,23 +1002,103 @@ Latest source commit tested:
 The KPIMG build validates the shared kernel/base hook and hmem changes. It
 does not compile the independent LKM runtime objects against a target KDIR.
 
-### Remaining hook-lifetime blockers
+### Updated hook-lifetime status
 
-1. The LKM hook runtime's retired executable regions are intentionally leaked.
-   This is safer than premature reuse but needs a future quiescence mechanism
+The later hardening recorded in section 13 resolves the chain-slot races listed
+above for the shared KPIMG/LKM hook engine: transit readers are counted before
+callback tuples are consumed; removal marks slots RETIRED under the engine
+lock; slot metadata and persistent owner references are reaped only after
+active readers drain; and each KPM callback receives a transient active-call
+reference for its invocation. Direct hook APIs reject callbacks that belong to
+a KPM image rather than silently registering an unpinned callback.
+
+The following limitations remain:
+1. LKM retired executable trampoline/chain regions are intentionally leaked.
+   This avoids premature reuse but needs a proven cross-CPU quiescence scheme
    before memory can be reclaimed.
-2. Chain slot add/remove and transit dispatch are still not protected by a
-   complete concurrent snapshot/reference protocol. A CPU may already have
-   loaded a callback and udata when another thread removes the slot.
-3. Hook callbacks are not yet tied to the owning KPM's active-call references.
-   The module manager changes in section 11 therefore do not make arbitrary
-   registered Hook callbacks safe to unload. A KPM must not be considered
-   unload-safe merely because the ordinary control/event references have
-   drained.
-4. The new publication and typed-lookup guards prevent incomplete-chain
-   exposure and cross-type casts, but they do not close every lookup-versus-
-   retire race or provide callback quiescence.
-5. A target-KDIR LKM build and runtime stress tests are still required.
+2. KPM-created workers, timers, delayed work, and external callback registries
+   must explicitly use the public kp_kpm_owner_pin/unpin and call_get/call_put
+   API or otherwise unregister and quiesce before unload. The manager cannot
+   automatically discover arbitrary external function pointers.
+3. kp_kpm_cfi_allowed_addr() remains a range predicate, not a reference API.
+   Consumers that use it to authorize an indirect call must separately hold
+   an owner reference across that call.
+4. Target-KDIR compilation of the LKM objects and runtime concurrency stress
+   testing are still required.
 
-This is a backend/linkage and registry improvement, not a completed Hook
-callback-lifetime solution.
+This is a substantial callback-lifetime improvement, but not a complete
+release sign-off.
+
+## 13. Full follow-up audit: ELF symbol policy, branch arithmetic, and CI repair (2026-11-09)
+
+A follow-up pass after the earlier CI failures found and fixed several
+independent issues rather than merely adjusting the failing checks.
+
+### Production fixes
+
+- Both KPM loaders now reject every SHN_COMMON symbol. Neither loader has a
+  common-symbol allocator, so retaining SHN_COMMON and treating st_value as a
+  runtime address could turn its alignment value into an invalid relocation
+  target. KPMs must be built with -fno-common.
+- The LKM loader now rejects any SHF_ALLOC section that did not receive a
+  checked image offset during layout, before allocating/copying the image.
+  Previously move_module() would reject the sentinel offset later; this moves
+  the failure earlier and makes the layout invariant explicit.
+- The shared AArch64 B-range predicate now compares unsigned forward/backward
+  distances directly. This removes a uint64_t-to-int64_t conversion followed
+  by negation, which could overflow for large address differences. The
+  accepted range remains [-128 MiB, +128 MiB-4], with 4-byte alignment.
+- KPIMG hook-arena initialization now uses subtraction-safe loop bounds rather
+  than testing i + sizeof(u64) <= end, avoiding unsigned wraparound near the
+  top of the address space.
+- The freestanding KPIMG build lacked UINT_MAX in its minimal headers. Added
+  a local UINT_MAX fallback in both KPIMG and LKM module managers, fixed
+  owner-reference null-guard formatting, and removed an unused relocation
+  type variable by switching on the already-decoded type.
+
+### CI and verifier repairs
+
+- Updated the LKM hook permission contract to inspect the shared PTE updater
+  (kp_hook_update_exec), not the thin kp_hook_make_exec wrapper.
+- Updated the KPIMG retired-slot contract to match the explicit claimed-retire
+  state (using=4) and permanent retired state (using=2).
+- Updated the runtime branch-range contract for the new unsigned comparisons.
+- Added regression checks for SHN_COMMON rejection, unplaced alloc sections,
+  unsigned A64 branch bounds, and hook-arena initialization bounds.
+
+### Latest verified evidence
+
+All workflows below ran against the exact same current branch HEAD:
+- HEAD: 81831f30c9e274e5362cd37c5a9efbffc036b2e0
+- LKM source audit + host kptools build: run 42622781803, success
+- Arm GNU GCC 14.2 Y73S KPIMG build + full audit suite: run 42622781699, success
+
+The KPIMG workflow compiles the KPIMG image and runs its ELF, map/relocation,
+memblock, runtime, function-pointer hook, hook-runtime, KPM loader/lifecycle,
+and userd contracts. The host workflow compiles/packages host kptools and runs
+the LKM source contracts plus host KPM/bootimg/patch-bound checks.
+
+Neither workflow compiles lkm/kpm/*.c or lkm/hook/*.c against the exact target
+Android kernel KDIR. Static source contracts do not substitute for that build
+or runtime testing.
+
+### Remaining release blockers
+
+1. The independent LKM module and hook backend still need a build against the
+   exact target kernel headers/configuration. No matching target KDIR is
+   currently configured in this repository workflow.
+2. No malformed-ELF corpus, fuzzing, KASAN/UBSAN, lockdep, or concurrency stress
+   tests have been run against a live kernel.
+3. LKM retired trampoline/chain executable pages are intentionally retained
+   after unhook. They are not recycled, so this is a bounded-by-hook-history
+   memory leak until a rigorously proven quiescence/reclamation mechanism is
+   implemented.
+4. Arbitrary KPM worker threads, timers, delayed work, and third-party callback
+   registries must opt into the exported owner pin/call reference API. The
+   loader cannot guarantee lifetime for pointers that external code retains
+   without registration.
+5. No device boot, APatch initialization, root validation, Fastboot, 9008, or
+   partition-write test has been performed. No device-side operation was run.
+
+The current source and KPIMG CI state is green, but the repository is not yet
+certified for device use or for loading untrusted KPMs.
