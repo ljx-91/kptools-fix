@@ -608,6 +608,11 @@ static int find_num_syms(kallsym_t *info, char *img, int32_t imglen)
 {
 #define NSYMS_MAX_GAP 10
 
+    if (!info || !img) {
+        tools_logw("invalid kallsyms_num_syms input\\n");
+        return -1;
+    }
+
     /* Do not allow a failed retry to leak a stale count into the next pass. */
     info->kallsyms_num_syms = 0;
     info->kallsyms_num_syms_offset = 0;
@@ -616,7 +621,7 @@ static int find_num_syms(kallsym_t *info, char *img, int32_t imglen)
     const int32_t num_syms_elem_size = 4;
     int32_t approx_num_syms = info->_approx_addresses_or_offsets_num;
 
-    if (!info || !img || imglen < num_syms_elem_size ||
+    if (imglen < num_syms_elem_size ||
         approx_end < 0 || approx_end > imglen - num_syms_elem_size ||
         approx_num_syms <= 0 || approx_num_syms > KSYM_MAX_SYMS) {
         tools_logw("invalid kallsyms_num_syms search range or approximate count\\n");
