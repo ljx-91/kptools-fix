@@ -1165,3 +1165,39 @@ KPIMG build and does not compile the LKM objects against the Y73s target KDIR.
   runtime validation of syscall ABI, user stack behavior, APD argument
   preservation, and failure paths.
 - No device-side test or write was performed.
+
+
+## 9. LKM relocation metadata follow-up (2026-11-09)
+
+A fresh source review of the selected branch found a concrete interaction
+between the LKM layout and relocation phases:
+
+- `layout_symtab()` intentionally repurposes the symbol section's
+  `sh_entsize` field to store its in-image destination offset.
+- `kp_apply_relocate_add()` then incorrectly re-validated that rewritten
+  field as though it were still the original ELF symbol entry size.
+- This rejects otherwise valid KPM relocation tables after the symbol table
+  has been moved into the allocated image.
+
+The original ELF `sh_entsize` remains validated in `setup_load_info()`
+before layout. The relocation helper now relies on that earlier validation
+and continues to check the symbol table type, size divisibility, and address.
+This preserves the loader's private offset convention without confusing it
+with ELF metadata.
+
+Changes committed on `y73s-cred-layout-guards-20261108`:
+
+- `d0da55a`: add independent LKM KPM loader source-contract verifier.
+- `7f265c3`: run the verifier in CI and include the selected branch in
+  push triggers.
+- `4bd615b`: fix the post-layout symbol-table `sh_entsize` conflict.
+- `0bd24a3`: add a regression assertion for the metadata contract.
+- `198e52f`: correct verifier regex escaping.
+
+Verification status: the source changes and workflow configuration were
+re-fetched from the branch after commits. The GitHub combined-status endpoint
+returned no status checks for the latest commit at review time, and the
+workflow-run query returned no PR-triggered runs. Therefore the new verifier
+has not yet been reported as executed by CI; no compile or device test is
+claimed. The branch remains unsuitable for untrusted KPM/device validation
+until CI and runtime tests pass.
