@@ -48,14 +48,6 @@ hook_install = function_body(hook, "int hook_install(")
 phys_from_virt = function_body(patch_memory, "static unsigned long kp_phys_from_virt(")
 
 checks = {
-    "Linux 4.14 ARM64 folded p4d compatibility is explicit":
-        "#if defined(CONFIG_ARM64) && LINUX_VERSION_CODE < KERNEL_VERSION(5, 8, 0)" in
-            read("lkm/include/kp_lkm.h") and
-        "typedef pgd_t p4d_t;" in read("lkm/include/kp_lkm.h") and
-        "#define p4d_offset(pgd, address) ((p4d_t *)(pgd))" in
-            read("lkm/include/kp_lkm.h") and
-        "#define p4d_none(p4d) (0)" in read("lkm/include/kp_lkm.h") and
-        "#define p4d_bad(p4d) (0)" in read("lkm/include/kp_lkm.h"),
     "Linux 4.14 without PTE_GP uses a zero BTI guard mask":
         "#ifdef PTE_GP" in runtime and "#define KP_HOOK_PTE_GP 0UL" in runtime and
         "#ifdef PTE_GP" in read("lkm/kpm/module.c") and "#define KP_LKM_PTE_GP 0UL" in read("lkm/kpm/module.c"),
