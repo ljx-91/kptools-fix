@@ -202,8 +202,11 @@ int kp_apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int 
 		return -ENOEXEC;
 	target = &sechdrs[rsec->sh_info];
 	symsec = &sechdrs[symindex];
+	/* layout_symtab() repurposes sh_entsize as the in-image offset
+	 * after setup_load_info() has validated the original ELF entry size.
+	 * Do not interpret that private offset as ELF metadata here. */
 	if (!(target->sh_flags & SHF_ALLOC) || !target->sh_addr ||
-	    symsec->sh_type != SHT_SYMTAB || symsec->sh_entsize != sizeof(Elf64_Sym) ||
+	    symsec->sh_type != SHT_SYMTAB ||
 	    symsec->sh_size % sizeof(Elf64_Sym) || !symsec->sh_addr)
 		return -ENOEXEC;
 
