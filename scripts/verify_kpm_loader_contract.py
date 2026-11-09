@@ -78,14 +78,26 @@ def main():
             "RELA entry size must be validated")
 
     data_reloc = function_body(relo, "static int reloc_data(")
-    require(r"len\s*==\s*64\s*\?\s*~0ULL", data_reloc,
+    require(r"if\s*\(len\s*==\s*64\)\s*imm_mask\s*=\s*~0ULL", data_reloc,
             "64-bit relocation mask must avoid full-width shifts")
     require(r"1ULL\s*<<\s*len", data_reloc,
             "narrow relocation mask must use an unsigned 64-bit literal")
+    require(r"op\s*==\s*RELOC_OP_PREL\s*&&\s*len\s*<\s*64", data_reloc,
+            "PREL data relocations must enforce signed narrow ranges")
     require(r"return\s*-ERANGE", data_reloc,
             "data relocation overflow must fail")
+    require(r"memcpy\(place,\s*&encoded,\s*sizeof\(encoded\)\)", data_reloc,
+            "data relocations must use unaligned-safe writes")
     if re.search(r"\(1\s*<<\s*len\)", data_reloc):
         raise AssertionError("undefined 32-bit shift expression reintroduced")
+    if data_reloc.find("return -ERANGE") > data_reloc.find("memcpy(place,"):
+        raise AssertionError("data relocation must validate overflow before writing")
+
+    movw = function_body(relo, "static int reloc_insn_movw(")
+    require(r"if\s*\(sval\s*>=\s*0\).*?imm\s*=\s*~imm", movw,
+            "signed MOVW must select MOVZ/MOVN from the full signed value")
+    if "(s64)imm >= 0" in movw:
+        raise AssertionError("signed MOVW selector must not inspect the truncated immediate")
 
     rela = function_body(relo, "int apply_relocate_add(")
     require(r"symno\s*>=\s*symhdr->sh_size\s*/\s*sizeof\(Elf64_Sym\)", rela,
@@ -94,6 +106,10 @@ def main():
             "RELA target offset must be bounded")
     require(r"width\s*>\s*targethdr->sh_size\s*-\s*rel\[i\]\.r_offset", rela,
             "RELA write width must fit target section")
+    require(r"type\s*!=\s*R_AARCH64_ABS32.*?type\s*!=\s*R_AARCH64_PREL32.*?type\s*!=\s*R_AARCH64_ABS16.*?type\s*!=\s*R_AARCH64_PREL16",
+            rela, "RELA alignment checks must exempt packed data relocations")
+    if "rel[i].r_offset & (width - 1)" in rela:
+        raise AssertionError("data relocations must not be forced to natural alignment")
     require(r"backup\s*=\s*vmalloc\(targethdr->sh_size", rela,
             "RELA application must snapshot the target section before writing")
     require(r"memcpy\(backup,\s*\(void \*\)targethdr->sh_addr", rela,
