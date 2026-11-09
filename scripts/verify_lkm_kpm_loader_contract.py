@@ -202,6 +202,17 @@ def main():
     ]:
         need(pattern, rela, f"RELA loader must validate {message}")
 
+    need(r"backup\s*=\s*vmalloc\(target->sh_size", rela,
+         "RELA application must snapshot target section before writes")
+    need(r"memcpy\(backup,\s*\(void \*\)target->sh_addr", rela,
+         "RELA transaction must preserve original target bytes")
+    need(r"goto rollback", rela, "late relocation failures must roll back")
+    need(r"memcpy\(\(void \*\)target->sh_addr,\s*backup", rela,
+         "RELA rollback must restore the complete target section")
+    need(r"vfree\(backup\)", rela, "RELA snapshot must be released")
+    if data.find("return -ERANGE") > data.find("*(s16 *)place"):
+        raise AssertionError("data relocation must check overflow before writing")
+
     rel = body(relo, "int kp_apply_relocate(")
     need(r"return\s*-EOPNOTSUPP", rel, "unimplemented REL must fail closed")
 
