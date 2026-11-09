@@ -39,6 +39,13 @@ checks = {
     "inline hook retirement on successful restore": "hook_mem_retire(hook);" in hook and
         "hook_mem_retire(chain);" in hook,
     "function-pointer chain retirement on successful restore": "hook_mem_retire(chain);" in src,
+    "AArch64 branch range check avoids signed-difference overflow":
+        "return dst_addr - src_addr <= 0x07fffffcULL;" in hook and
+        "return src_addr - dst_addr <= 0x08000000ULL;" in hook and
+        "int64_t delta;" not in hook[hook.index("static uint32_t can_b_rel("):hook.index("int32_t branch_relative(")],
+    "KPIMG hook arena initialization uses subtraction-safe bounds":
+        "i <= end - sizeof(uint64_t)" in hmem and
+        "i + sizeof(uint64_t) <= end" not in hmem,
 }
 for label, ok in checks.items():
     print(("PASS" if ok else "FAIL") + ": " + label)
