@@ -35,13 +35,52 @@ checks = {
     "KPIMG backend has a constructing state and publication":
         "wrap->using = 3;" in hmem and "if (warp->using == 3)" in hmem,
     "typed KPIMG lookup rejects unpublished or wrong-type records":
-        "wrap->using == 1 && wrap->addr == origin_addr && wrap->type == type" in hmem,
+        "__atomic_load_n(&wrap->using, __ATOMIC_ACQUIRE) == 1" in hmem and
+        "wrap->addr == origin_addr && wrap->type == type" in hmem,
     "inline hook publishes only after successful patch":
         "hook_mem_publish(hook);" in hook,
     "inline chain publishes only after successful install":
         "hook_mem_publish(chain);" in hook,
     "function-pointer chain publishes after callback slot setup":
-        "chain->states[i] = CHAIN_ITEM_STATE_READY;\n            hook_mem_publish(chain);" in fphook,
+        fphook.index("err = fp_chain_add_locked(chain, before, after, udata);") <
+        fphook.index("hook_mem_publish(chain);"),
+    "transit reader lifetime protects retired callback tuples":
+        "hook_chain_reader_enter(hook_chain" in hook and
+        "hook_chain_reader_exit(hook_chain" in hook and
+        "hook_chain_reader_enter(hook_chain" in fphook and
+        "hook_chain_reader_exit(hook_chain" in fphook and
+        "hook_chain_reap_slots_locked" in hook and
+        "hook_chain_reap_slots_locked" in fphook,
+    "callback owner refs cover the complete transit invocation":
+        "hook_chain_pin_callbacks(hook_chain" in hook and
+        "hook_chain_unpin_callbacks(hook_chain" in hook and
+        "hook_chain_pin_callbacks(hook_chain" in fphook and
+        "hook_chain_unpin_callbacks(hook_chain" in fphook and
+        "before_owners" in hook and "after_owners" in hook,
+    "transit loops no longer race on chain_items_max":
+        "i < hook_chain->chain_items_max" not in hook and
+        "i < hook_chain->chain_items_max" not in fphook,
+    "KPIMG hook allocator uses a dedicated registry lock":
+        "kp_private_spin_lock(&hook_mem_lock)" in hmem and
+        "kp_private_spin_lock(&hook_engine_spinlock)" in hmem,
+    "LKM hook allocator uses IRQ-safe spinlocks":
+        "DEFINE_RAW_SPINLOCK(kp_hook_lock)" in runtime and
+        "raw_spin_lock_irqsave(&kp_hook_lock, flags)" in runtime,
+    "unregister APIs report busy instead of clearing live tuples":
+        "int hook_unwrap_remove(" in hook and
+        "return -EBUSY;" in hook and
+        "int fp_hook_unwrap(" in fphook and
+        "return -EBUSY;" in fphook,
+    "KPM module managers provide persistent and transient owner refs":
+        "int kp_hook_owner_register(" in read("kernel/patch/module/module.c") and
+        "int kp_hook_owner_register(" in read("lkm/kpm/module.c") and
+        "hook_refs" in read("kernel/patch/include/module.h") and
+        "hook_refs" in read("lkm/kpm/module.h"),
+    "function-pointer patch uses atomic exchange and compare-restore":
+        "hotpatch_exchange64" in fphook and
+        "hotpatch_cmpxchg64" in fphook and
+        "kp_patch_exchange64" in read("lkm/infra/patch_memory.c") and
+        "kp_patch_cmpxchg64" in read("lkm/infra/patch_memory.c"),
     "inline and function-pointer lookup use explicit types":
         "hook_get_mem_from_origin_type(origin, INLINE)" in hook and
         "hook_get_mem_from_origin_type(origin, INLINE_CHAIN)" in hook and
