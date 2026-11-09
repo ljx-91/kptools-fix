@@ -968,7 +968,7 @@ static struct kp_module *kp_module_get_by_addr(unsigned long addr)
 		 * prevents teardown; nested callbacks may safely pin it. */
 		if (pos->state != KP_MODULE_LOADING &&
 		    pos->state != KP_MODULE_LIVE &&
-		    pos->state != KP_MODULE_UNLOADING)
+		    !(pos->state == KP_MODULE_UNLOADING && pos->active_calls))
 			continue;
 		start = (unsigned long)pos->start;
 		end = start + pos->text_size;
@@ -1324,6 +1324,12 @@ long kp_unload_module(const char *name, void __user *reserved)
 	if (mod->state != KP_MODULE_UNLOADING && mod->state != KP_MODULE_EXITING) {
 		spin_unlock_irqrestore(&module_lock, flags);
 		return -ENOENT;
+	}
+	/* EXITING with exit_called=false means another thread is currently
+	 * executing the exit callback outside module_lock. Never run it twice. */
+	if (mod->state == KP_MODULE_EXITING && !mod->exit_called) {
+		spin_unlock_irqrestore(&module_lock, flags);
+		return -EBUSY;
 	}
 	if (mod->active_calls) {
 		spin_unlock_irqrestore(&module_lock, flags);
