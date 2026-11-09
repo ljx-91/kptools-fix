@@ -155,6 +155,33 @@ def main():
     if "KP_MODULE_EXITING" in owner_lookup:
         raise AssertionError("new callback pins must be rejected during EXITING")
 
+    exec_alloc = body(module, "static void *kp_malloc_exec(")
+    exec_free = body(module, "static void kp_free_exec(")
+    permissions = body(module, "static int kp_clear_bti_gp(")
+    kpm_init = body(module, "int kp_kpm_init(void)")
+    need(r"switch\s*\(kp_exec_backend\)", exec_alloc,
+         "executable allocator must use the selected backend")
+    need(r"KP_EXEC_BACKEND_MODULE", exec_alloc, "module allocator backend")
+    need(r"KP_EXEC_BACKEND_EXECMEM", exec_alloc, "execmem allocator backend")
+    need(r"KP_EXEC_BACKEND_VMALLOC", exec_alloc, "vmalloc allocator backend")
+    for token in ("KP_EXEC_BACKEND_MODULE", "KP_EXEC_BACKEND_EXECMEM",
+                  "KP_EXEC_BACKEND_VMALLOC"):
+        need(re.escape(token), exec_free, f"matching executable free backend {token}")
+    need(r"kp_module_alloc\s*&&\s*kp_module_memfree", kpm_init,
+         "module allocator/free pair")
+    need(r"kp_execmem_alloc\s*&&\s*kp_execmem_free", kpm_init,
+         "execmem allocator/free pair")
+    need(r"!kp_kpm_init_mm", kpm_init, "init_mm must be available for permission verification")
+    need(r"pte_lockptr", permissions, "PTE permission updates must hold the page-table lock")
+    need(r"set_pte_at", permissions, "PTE permission update must use set_pte_at")
+    need(r"KP_LKM_PTE_PXN.*?KP_LKM_PTE_UXN.*?KP_LKM_PTE_GP", permissions,
+         "clear PXN/UXN/BTI GP bits")
+    need(r"return\s+-EFAULT", permissions, "unmapped or unsupported PTEs must fail closed")
+    need(r"kp_clear_bti_gp\(\(unsigned long\)mod->start,\s*mod->size\)", load,
+         "verify KPM image permissions before init")
+    need(r"if\s*\(rc\).*?goto free;", load,
+         "permission verification failure must prevent KPM init")
+
     safe_iter = body(module, "int kp_kpm_safe_kallsyms_on_each_symbol(")
     need(r"kp_module_get_by_addr", safe_iter, "kallsyms callback owner acquisition")
     need(r"kp_module_put\(owner\)", safe_iter, "kallsyms callback owner release")
