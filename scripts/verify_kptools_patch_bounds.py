@@ -138,6 +138,22 @@ def main():
     need(r"release_len\s*>=\s*sizeof\(release\)", banner,
          "linux release parser must bound its temporary version buffer")
 
+    markers = body(kallsym_src, "static int find_markers_internal(")
+    need(r"elem_size\s*!=\s*4.*?elem_size\s*!=\s*8", markers,
+         "marker scanner must accept only supported entry widths")
+    need(r"token_table_offset\s*>\s*imglen\s*-\s*elem_size", markers,
+         "marker scanner must validate its initial read")
+    need(r"marker_end64\s*>\s*imglen", markers,
+         "marker table end arithmetic must remain inside the image")
+
+    banner_match = body(kallsym_src, "static int correct_addresses_or_offsets_by_banner(")
+    need(r"table_end\s*>\s*imglen", banner_match,
+         "banner-based address matching must validate candidate table bounds")
+    need(r"max_base_pos\s*=\s*\(int64_t\)table_end\s*-\s*index_bytes\s*-\s*elem_size",
+         banner_match, "banner matching must bound indexed address reads")
+    need(r"target\s*>=\s*base\s*&&\s*target\s*-\s*base\s*<=\s*INT32_MAX",
+         banner_match, "banner address difference must be validated before narrowing")
+
     ikconfig = body(kallsym_src, "int find_ikconfig_blob(")
     need(r"!img\s*\|\|\s*imglen\s*<=\s*0\s*\|\|\s*!start\s*\|\|\s*!size",
          ikconfig, "IKCONFIG parser must validate input and output pointers")
