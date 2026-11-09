@@ -1195,8 +1195,11 @@ Changes committed on `y73s-cred-layout-guards-20261108`:
 - `198e52f`: correct verifier regex escaping.
 
 Verification status: the source changes and workflow configuration were
-re-fetched from the branch after commits. The GitHub combined-status endpoint
-returned no status checks for the latest commit at review time, and the
+re-fetched from the branch after commits. The branch files were re-fetched after the changes and the ten source-contract
+assertion groups were independently evaluated against the current LKM source;
+all 10/10 passed. This reproduces the verifier's source assertions but is not
+a Python process execution or a compiler/runtime test. The GitHub combined-status
+endpoint returned no status checks for the latest commit at review time, and the
 workflow-run query returned no PR-triggered runs. Therefore the new verifier
 has not yet been reported as executed by CI; no compile or device test is
 claimed. The branch remains unsuitable for untrusted KPM/device validation
