@@ -965,8 +965,8 @@ bool kp_kpm_cfi_allowed_addr(unsigned long addr)
 		spin_lock_irqsave(&module_lock, flags);
 		list_for_each_entry(pos, &modules.list, list) {
 			start = (unsigned long)pos->start;
-			end = start + pos->size;
-			if (addr >= start && addr < end) {
+			end = start + pos->text_size;
+			if (end >= start && addr >= start && addr < end) {
 				ok = true;
 				break;
 			}
