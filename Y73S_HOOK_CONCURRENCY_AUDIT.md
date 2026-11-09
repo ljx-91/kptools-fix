@@ -1204,3 +1204,41 @@ workflow-run query returned no PR-triggered runs. Therefore the new verifier
 has not yet been reported as executed by CI; no compile or device test is
 claimed. The branch remains unsuitable for untrusted KPM/device validation
 until CI and runtime tests pass.
+
+
+## 10. LKM cross-CPU instruction-cache publication (2026-11-09)
+
+A follow-up review found that the LKM KPM loader resolved the kernel's
+`flush_icache_all` function but did not call it. Instead, both freshly loaded
+KPM images and generated kallsyms callback trampolines used the local-PE
+`ic iallu` instruction. Since those entry points may execute on another CPU,
+local-only invalidation did not establish the required cross-CPU instruction
+cache visibility.
+
+### Production changes
+
+- `kp_flush_kpm_icache()` now calls the resolved kernel
+  `flush_icache_all()` helper, retaining the surrounding publication barriers.
+- KPM loader initialization now fails closed with `-ENOSYS` if that helper
+  cannot be resolved; executable code is not published under an unverified
+  cache-maintenance path.
+- Callback trampoline updates use the same shared flush helper rather than
+  issuing a separate local-only invalidation.
+
+### Regression coverage
+
+- Extended `scripts/verify_lkm_kpm_contract.py` to require the kernel-wide
+  flush call, the missing-symbol fail-closed guard, and use of the shared helper
+  for trampoline writes.
+- The updated verifier and source were re-fetched from the selected branch
+  after their commits. This is source inspection only; the Python verifier has
+  not yet been executed by a confirmed Actions run, and no LKM target-KDIR
+  compile or device runtime test is claimed.
+
+Changes committed on `y73s-cred-layout-guards-20261108`:
+- `5e68fd7`: use kernel-wide I-cache flush for KPM publication.
+- `6c760ba`: add I-cache publication contract assertions.
+- `88e01c4`, `64db78c`: correct the new verifier matcher.
+
+The repository remains not certified for device use or untrusted KPM loading
+until target-kernel compilation and runtime validation are completed.
