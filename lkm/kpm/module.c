@@ -76,7 +76,7 @@ static enum kp_exec_backend kp_exec_backend;
 /* Clear the Guarded-Page bit (BTI enable), Privileged-eXecute-Never and
  * User-eXecute-Never. Fail closed if any page cannot be inspected or made
  * executable: the KPM must never enter init on an NX/BTI-incompatible image. */
-static int kp_clear_bti_gp(unsigned long base, unsigned long size)
+static int kp_update_bti_gp(unsigned long base, unsigned long size, bool executable)
 {
 	unsigned long addr, end;
 
@@ -111,11 +111,15 @@ static int kp_clear_bti_gp(unsigned long base, unsigned long size)
 			return -EFAULT;
 		}
 		v = pte_val(*pte);
-		if (v & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) {
+		if (executable)
 			v &= ~(KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP);
-			set_pte_at(kp_kpm_init_mm, addr, pte, __pte(v));
-		}
-		if (pte_val(*pte) & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) {
+		else
+			v |= KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP;
+		set_pte_at(kp_kpm_init_mm, addr, pte, __pte(v));
+		if (executable ?
+		    (pte_val(*pte) & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) :
+		    ((pte_val(*pte) & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) !=
+		     (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP))) {
 			spin_unlock(ptl);
 			return -EACCES;
 		}
@@ -123,6 +127,18 @@ static int kp_clear_bti_gp(unsigned long base, unsigned long size)
 		flush_tlb_kernel_range(addr, addr + PAGE_SIZE);
 	}
 	return 0;
+}
+
+static int kp_clear_bti_gp(unsigned long base, unsigned long size)
+{
+	return kp_update_bti_gp(base, size, true);
+}
+
+static int kp_restore_nx_gp(unsigned long base, unsigned long size)
+{
+	if (kp_set_memory_nx)
+		kp_do_set_memory_nx(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
+	return kp_update_bti_gp(base, size, false);
 }
 
 /* Runtime-resolved kernel functions and raw KPM callbacks cannot participate
@@ -152,6 +168,12 @@ static void kp_free_exec(void *region)
 {
 	if (!region)
 		return;
+	/* Never return executable pages to a general allocator. If NX/BTI
+	 * restoration cannot be verified, deliberately leak the region. */
+	if (kp_restore_nx_gp((unsigned long)region, PAGE_ALIGN(1))) {
+		logke("KPM executable memory permission restore failed; leaking %px\\n", region);
+		return;
+	}
 	switch (kp_exec_backend) {
 	case KP_EXEC_BACKEND_MODULE:
 		kp_module_memfree(region);
