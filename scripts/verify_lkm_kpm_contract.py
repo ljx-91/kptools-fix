@@ -115,6 +115,21 @@ def main():
     require(r"return\s*-EOPNOTSUPP", rel,
             "unsupported LKM REL must fail closed, never report success")
 
+    # Executable KPM and trampoline code may run on any CPU. Require the
+    # kernel's architecture-aware inner-shareable I-cache flush, not local
+    # "ic iallu" invalidation.
+    flush = body(module, "static void kp_flush_kpm_icache(")
+    require(r"kp_flush_icache_all_fn\s*\(\s*\)", flush,
+            "KPM publication must call the kernel-wide I-cache flush")
+    if re.search(r'ic\\s+iallu', flush):
+        raise AssertionError("local-only I-cache invalidation is insufficient for KPM publication")
+    init = body(module, "int kp_kpm_init(")
+    require(r"!kp_flush_icache_all_fn", init,
+            "KPM loader must fail closed when flush_icache_all is unavailable")
+    require(r"kp_flush_kpm_icache\(words,\\s*KP_CALLBACK_TRAMP_SLOT_SIZE\\)",
+            body(module, "__attribute__((no_sanitize(\\"cfi\\")))\\nint kp_kpm_safe_kallsyms_on_each_symbol("),
+            "callback trampoline writes must use the shared I-cache flush helper")
+
     registry = body(module, "static struct kp_module *kp_module_get(")
     require(r"spin_lock_irqsave", registry, "LKM module lookup must hold registry lock")
     require(r"mod->state\s*!=\s*KP_MODULE_LIVE", registry,
@@ -142,6 +157,7 @@ def main():
     print("[PASS] checked LKM section layout and copy extents")
     print("[PASS] bounded RELA metadata, symbols, targets and rollback")
     print("[PASS] unsupported REL fails closed; 64-bit shifts are defined")
+    print("[PASS] cross-CPU I-cache flush required for KPM and trampolines")
     print("[PASS] serialized registry, callback pins and unload lifetime")
     print("[PASS] selected Y73S branch runs the independent LKM contract")
     
