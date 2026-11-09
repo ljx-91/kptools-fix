@@ -2,7 +2,7 @@
 /* LKM backends required by kernel/base/hook.c. */
 #include <linux/errno.h>
 #include <linux/list.h>
-#include <linux/mutex.h>
+#include <linux/spinlock.h>
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/types.h>
@@ -28,7 +28,20 @@ struct kp_hook_mem {
 };
 
 static LIST_HEAD(kp_hook_mems);
-static DEFINE_MUTEX(kp_hook_lock);
+static DEFINE_RAW_SPINLOCK(kp_hook_lock);
+static DEFINE_RAW_SPINLOCK(kp_hook_engine_lock);
+
+unsigned long hook_engine_lock(void)
+{
+	unsigned long flags;
+	raw_spin_lock_irqsave(&kp_hook_engine_lock, flags);
+	return flags;
+}
+
+void hook_engine_unlock(unsigned long flags)
+{
+	raw_spin_unlock_irqrestore(&kp_hook_engine_lock, flags);
+}
 /* Executable-memory allocators. module_alloc exists through 6.10 (__weak in
  * 6.6); 6.11+ replaced it with execmem_alloc() (EXECMEM_MODULE_TEXT).
  * vmalloc is the universal last resort (still needs set_memory_x to be
@@ -111,6 +124,7 @@ void *hook_mem_zalloc(uintptr_t origin, enum hook_type type)
 {
 	struct kp_hook_mem *mem;
 	size_t size;
+	unsigned long flags;
 
 	switch (type) {
 	case INLINE:
@@ -138,14 +152,14 @@ void *hook_mem_zalloc(uintptr_t origin, enum hook_type type)
 	mem->payload = mem->region;
 	mem->origin = origin;
 	mem->type = type;
-	mutex_lock(&kp_hook_lock);
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	/* Two first-wrap callers can both miss hook_get_mem_from_origin().
 	 * Recheck under the insertion lock so only one chain owns an origin. */
 	{
 		struct kp_hook_mem *pos;
 		list_for_each_entry(pos, &kp_hook_mems, list) {
 			if (pos->origin == origin) {
-				mutex_unlock(&kp_hook_lock);
+				raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 				kp_hook_exec_free(mem->region);
 				kfree(mem);
 				return NULL;
@@ -160,11 +174,12 @@ void *hook_mem_zalloc(uintptr_t origin, enum hook_type type)
 void *hook_get_mem_from_origin(uint64_t origin)
 {
 	struct kp_hook_mem *mem;
+	unsigned long flags;
 	void *result = NULL;
 
 	mutex_lock(&kp_hook_lock);
 	list_for_each_entry(mem, &kp_hook_mems, list) {
-		if (mem->origin == origin) {
+		if (mem->origin == origin && mem->ready) {
 			result = mem->payload;
 			break;
 		}
@@ -176,6 +191,7 @@ void *hook_get_mem_from_origin(uint64_t origin)
 void hook_mem_publish(void *payload)
 {
 	struct kp_hook_mem *mem;
+	unsigned long flags;
 
 	mutex_lock(&kp_hook_lock);
 	list_for_each_entry(mem, &kp_hook_mems, list) {
@@ -190,6 +206,7 @@ void hook_mem_publish(void *payload)
 void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
 {
 	struct kp_hook_mem *mem;
+	unsigned long flags;
 	void *result = NULL;
 
 	mutex_lock(&kp_hook_lock);
@@ -209,6 +226,7 @@ void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
 void hook_mem_retire(void *payload)
 {
 	struct kp_hook_mem *mem, *tmp;
+	unsigned long flags;
 
 	mutex_lock(&kp_hook_lock);
 	list_for_each_entry_safe(mem, tmp, &kp_hook_mems, list) {
@@ -225,6 +243,7 @@ void hook_mem_retire(void *payload)
 void hook_mem_free(void *payload)
 {
 	struct kp_hook_mem *mem, *tmp;
+	unsigned long flags;
 
 	mutex_lock(&kp_hook_lock);
 	list_for_each_entry_safe(mem, tmp, &kp_hook_mems, list) {
