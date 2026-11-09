@@ -630,7 +630,7 @@ int kp_hook_owner_register(unsigned long addr, void **owner)
     if (!owner) return -EINVAL;
     *owner = NULL; flags = module_lock_acquire();
     list_for_each_entry(pos, &modules.list, list) {
-        unsigned long start = (unsigned long)pos->start, end = start + pos->size;
+        unsigned long start = (unsigned long)pos->start, end = start + pos->text_size;
         if (end < start || addr < start || addr >= end) continue;
         if (pos->state != KP_MODULE_LOADING && pos->state != KP_MODULE_LIVE) { rc = -EBUSY; break; }
         pos->hook_refs++; *owner = pos; rc = 1; break;
