@@ -62,3 +62,17 @@
 - 下一步应获取精确匹配的 4.14.141 kernel source/build tree、生成头文件、`Module.symvers`、config 和 Clang 9.0.3 工具链，再针对 CFI/LTO/MODVERSIONS 审计并构建 LKM。
 - 仍未完成目标 KDIR 编译、动态 KPM 加载、设备启动、APatch 初始化或 root 验证。
 - 不执行 Fastboot、刷写、boot/vbmeta 修改或任何设备分区写入。
+
+
+## 6. 目标配置与当前 LKM/Kbuild 编译参数的交叉审计（2026-11-09 补充）
+
+本轮直接从上述原始 Boot 的 gzip kernel member 解压出 ARM64 Image，再从 Image 内部 IKCFG_ST / IKCFG_ED 容器解压 .config；编译器版本则来自同一 Image 内的 Linux version 字符串。可复核结果：
+
+- 编译器：Android Clang 9.0.3，clang revision 745b335211bb9eadfa6aa6301f84715cee4b37c5；LLD 9.0.3，revision 3ee225094a683a0f52ad9a00299a7f2004a2c997。
+- CONFIG_CFI=y、CONFIG_CFI_CLANG=y、CONFIG_CFI_CLANG_SHADOW=y、CONFIG_LTO_CLANG=y 均已设置。
+- 在该 .config 中未发现 CONFIG_SHADOW_CALL_STACK、CONFIG_ARM64_BTI 或 CONFIG_ARM64_PTR_AUTH 配置项；这不是启用这些功能的证据。旧内核可能使用不同命名/实现，不能仅凭配置项缺失断言 CPU 或内核绝不支持相应指令。
+- 当前仓库 lkm/Kbuild 对 hook/hook_engine.o 无条件追加 -mbranch-protection=bti、-fno-sanitize=shadow-call-stack、-fno-lto 等选项；同时对该对象关闭 CFI 与栈保护。其注释明确以较新的 Android 12/13 5.10 DDK、PAC/SCS/BTI 组合为背景。
+
+**审计判断：** 当前 Kbuild 的对象级编译参数没有被证明与 Y73s 的 Clang 9.0.3 / 4.14.141 vendor Kbuild 相容。尤其不能把 -mbranch-protection=bti 当作目标内核已启用 BTI 的证据，也不能把对单个对象关闭 CFI/LTO 的策略直接套用到启用 CONFIG_CFI_CLANG_SHADOW 的目标内核。此处暂不盲目改写参数：缺少精确目标 KDIR 的 arch/arm64/Makefile、scripts/Makefile.*、编译命令和生成头文件，无法安全判断内核对模块 LTO/CFI 元数据及间接调用检查的具体约定。
+
+**下一步的必要输入：** 与此 Boot 完全对应的 4.14.141 kernel source/build tree、.config、Module.symvers、生成头文件和 Clang/LLD 9.0.3 工具链。拿到后先执行 make V=1 dry-run/compile-command 审计，核对 hook_engine.o 实际参数、CFI type metadata/shadow ABI、LTO plugin/link flags 和 MODVERSIONS CRC；确认后再调整 Kbuild。不得用通用 DDK 成功结果替代。
