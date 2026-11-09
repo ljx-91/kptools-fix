@@ -89,6 +89,19 @@ def main():
             "RELA target offset must be bounded")
     require(r"width\s*>\s*targethdr->sh_size\s*-\s*rel\[i\]\.r_offset", rela,
             "RELA write width must fit target section")
+    require(r"backup\s*=\s*vmalloc\(targethdr->sh_size", rela,
+            "RELA application must snapshot the target section before writing")
+    require(r"memcpy\(backup,\s*\(void \*\)targethdr->sh_addr", rela,
+            "RELA transaction must save original target bytes")
+    require(r"goto rollback", rela,
+            "late relocation errors must enter transaction rollback")
+    require(r"memcpy\(\(void \*\)targethdr->sh_addr,\s*backup", rela,
+            "RELA rollback must restore the complete target section")
+    require(r"vfree\(backup\)", rela,
+            "RELA transaction must release its snapshot")
+    if data_reloc.find("return -ERANGE") > data_reloc.find("*(s16 *)place"):
+        raise AssertionError("data relocation must validate overflow before writing")
+
     require(r"int apply_relocate\([\s\S]*?return\s*-ENOEXEC", relo,
             "unsupported REL helper must fail closed")
 
