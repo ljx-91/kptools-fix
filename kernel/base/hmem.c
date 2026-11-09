@@ -6,6 +6,8 @@
 #include "hook.h"
 
 #include <stdint.h>
+#include <linux/string.h>
+#include <uapi/asm-generic/errno.h>
 #include <linux/spinlock.h>
 #include <kp_spinlock.h>
 
@@ -35,8 +37,12 @@ typedef struct
 int hook_mem_add(uint64_t start, int32_t size)
 {
     uint64_t end;
-    if (!start || size <= 0 || (uint64_t)size > (~0ULL - start))
+    if (!start || size <= 0 || (start & 0xf) ||
+        (uint64_t)size > (~0ULL - start) ||
+        ((uint64_t)size / sizeof(hook_mem_warp_t)) == 0)
         return -EINVAL;
+    if (hook_locks_ready)
+        return -EBUSY;
     end = start + (uint64_t)size;
     spin_lock_init(&hook_mem_lock);
     spin_lock_init(&hook_engine_spinlock);
@@ -51,7 +57,8 @@ int hook_mem_add(uint64_t start, int32_t size)
 void *hook_mem_zalloc(uintptr_t origin_addr, enum hook_type type)
 {
     uint64_t start, end;
-    if (!hook_locks_ready || !origin_addr)
+    if (!hook_locks_ready || !origin_addr ||
+        (type != INLINE && type != INLINE_CHAIN && type != FUNCTION_POINTER_CHAIN))
         return 0;
     unsigned long flags = kp_private_spin_lock(&hook_mem_lock);
     start = mem_region_start;
@@ -147,12 +154,21 @@ void *hook_get_mem_from_origin(uint64_t origin_addr)
 
 void *hook_get_mem_from_origin_type(uint64_t origin_addr, enum hook_type type)
 {
-    uint64_t start = mem_region_start;
-
-    for (uint64_t addr = start; addr < mem_region_end; addr += sizeof(hook_mem_warp_t)) {
+    uint64_t start, end;
+    unsigned long flags;
+    if (!hook_locks_ready) return 0;
+    flags = kp_private_spin_lock(&hook_mem_lock);
+    start = mem_region_start;
+    end = mem_region_end;
+    for (uint64_t addr = start; addr < end && sizeof(hook_mem_warp_t) <= end - addr;
+         addr += sizeof(hook_mem_warp_t)) {
         hook_mem_warp_t *wrap = (hook_mem_warp_t *)addr;
-        if (wrap->using == 1 && wrap->addr == origin_addr && wrap->type == type)
+        if (__atomic_load_n(&wrap->using, __ATOMIC_ACQUIRE) == 1 &&
+            wrap->addr == origin_addr && wrap->type == type) {
+            kp_private_spin_unlock(&hook_mem_lock, flags);
             return &wrap->chain;
+        }
     }
+    kp_private_spin_unlock(&hook_mem_lock, flags);
     return 0;
 }
