@@ -593,7 +593,8 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
 
     for (; cand < imglen - KSYM_MIN_NEQ_SYMS * elem_size; cand += elem_size) {
         int64_t raw_offset = int_unpack(img + cand, elem_size, info->is_be);
-        uint64_t offset = info->arch == ARM64 ? (uint32_t)raw_offset :\n            (raw_offset < 0 ? (1ull << 32) + (uint32_t)(-raw_offset) : (uint32_t)raw_offset);
+        uint64_t offset = info->arch == ARM64 ? (uint32_t)raw_offset :
+            (raw_offset < 0 ? (1ull << 32) + (uint32_t)(-raw_offset) : (uint32_t)raw_offset);
         if (!sym_num) {
             if (!raw_offset) continue;
             prev_offset = offset;
@@ -651,7 +652,8 @@ static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
     prev_offset = 0;
     for (; cand <= imglen - elem_size; cand += elem_size) {
         int64_t raw_offset = int_unpack(img + cand, elem_size, info->is_be);
-        uint64_t offset = info->arch == ARM64 ? (uint32_t)raw_offset :\n            (raw_offset < 0 ? (1ull << 32) + (uint32_t)(-raw_offset) : (uint32_t)raw_offset);
+        uint64_t offset = info->arch == ARM64 ? (uint32_t)raw_offset :
+            (raw_offset < 0 ? (1ull << 32) + (uint32_t)(-raw_offset) : (uint32_t)raw_offset);
         if (offset < prev_offset) break;
         prev_offset = offset;
     }
