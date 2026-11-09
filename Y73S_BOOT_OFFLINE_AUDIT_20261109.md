@@ -53,7 +53,7 @@
 
 ### 历史报告数值差异
 
-旧文件 `y73s-original-boot-kpimg-offline-injection-report.txt` 记录的候选 Footer 为 `original_image_size=17,680,384`、`vbmeta_offset=17,682,432`；但本次对资料库中上述确切 SHA-256 的候选文件直接解析，结果分别为 17,682,432 和 17,684,480，相差 2,048 字节。旧报告还记录 kptools unpack 后长度 47,818,272，而本次对候选 Boot 中 gzip member 直接解压得到 47,818,256，相差 16 字节。两组记录不能混为同一产物；后续审计应以文件 SHA-256 绑定证据，并查明旧报告对应的确切 artifact。
+旧文件 `y73s-original-boot-kpimg-offline-injection-report.txt` 记录的候选 Footer 为 `original_image_size=17,680,384`、`vbmeta_offset=17,682,432`；但本次对资料库中上述确切 SHA-256 的候选文件直接解析，结果分别为 17,682,432 和 17,684,480，相差 2,048 字节。旧报告还记录 kptools unpack 后长度 47,818,272，而本次对候选 Boot 中 gzip member 直接解压得到 47,818,256，相差 16 字节。两组记录不能混为同一产物；后续审计应以文件 SHA-256 绑定证据，并查明旧报告对应的确切 artifact。\n\n资料库中的旧日志 \`vivo-y73s-kpimg-patch-test.log\` 还记录 kernel size 为 16,661,916；但本次 SHA-256 为 \`c47e94f6…c9fe7cd5\` 的原始 \`boot.img\` Header 实际为 16,678,904。两者解压后的 gzip kernel member 长度都记录为 47,517,708，但 Header kernel-size 字段相差 16,988 字节。该日志不应继续作为当前这份原始 Boot 的 Header 解析依据，需追溯其输入文件 SHA 或旧版 kptools 的解析逻辑。
 
 ## 5. 结论与未完成项
 
