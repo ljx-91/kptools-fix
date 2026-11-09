@@ -26,6 +26,11 @@
 #include <linux/string.h>
 #include <linux/uaccess.h>
 #include <linux/vmalloc.h>
+
+/* The freestanding KPIMG header subset does not expose UINT_MAX. */
+#ifndef UINT_MAX
+#define UINT_MAX (~0U)
+#endif
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 
