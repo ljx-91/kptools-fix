@@ -19,8 +19,9 @@
 #define KP_PATCH_TEXT_FLUSH_DCACHE 1
 #define KP_PATCH_TEXT_FLUSH_ICACHE 2
 
-int kp_patch_memory_init(void); /* resolve aarch64_insn_patch_text_nosync */
+int kp_patch_memory_init(void); /* resolve init_mm and stop_machine */
 int kp_patch_text(void *dst, const void *src, size_t len, int flags);
+/* Apply all aligned instruction words as one stop_machine transaction. */
 int kp_patch_text_batch(void *addrs[], const u32 values[], int count);
 int kp_patch_exchange64(void *dst, u64 desired, u64 *original);
 int kp_patch_cmpxchg64(void *dst, u64 expected, u64 desired);
