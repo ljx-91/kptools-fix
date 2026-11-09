@@ -151,7 +151,7 @@ def main():
             "LKM contract workflow must trigger on the selected Y73S branch")
     require(r"verify_lkm_kpm_contract\.py", workflow,
             "selected branch CI must execute the LKM contract verifier")
-    require(r'GITHUB_REF_NAME.*y73s-cred-layout-guards-20261108[\\s\\S]*?export Y73S_TARGET=1',
+    require(r'GITHUB_REF_NAME.*y73s-cred-layout-guards-20261108[\s\S]*?export Y73S_TARGET=1',
             workflow, "selected branch KPIMG build must enable the Y73S target profile")
 
     print("[PASS] LKM ELF header, section and symbol bounds")
