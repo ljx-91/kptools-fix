@@ -159,6 +159,12 @@ _fp_transit4(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3)
     fp_hook_chain_t *hook_chain = current_fp_hook_chain();
     if (!hook_chain) return 0;
     hook_chain_reader_enter(hook_chain, 1);
+    int before_refs[FP_HOOK_CHAIN_NUM] = {0};
+    int after_refs[FP_HOOK_CHAIN_NUM] = {0};
+    int before_allowed[FP_HOOK_CHAIN_NUM] = {0};
+    int after_allowed[FP_HOOK_CHAIN_NUM] = {0};
+    hook_chain_pin_callbacks(hook_chain, 1, before_refs, after_refs,
+                             before_allowed, after_allowed);
     hook_fargs4_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
@@ -196,6 +202,12 @@ _fp_transit8(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64_
     fp_hook_chain_t *hook_chain = current_fp_hook_chain();
     if (!hook_chain) return 0;
     hook_chain_reader_enter(hook_chain, 1);
+    int before_refs[FP_HOOK_CHAIN_NUM] = {0};
+    int after_refs[FP_HOOK_CHAIN_NUM] = {0};
+    int before_allowed[FP_HOOK_CHAIN_NUM] = {0};
+    int after_allowed[FP_HOOK_CHAIN_NUM] = {0};
+    hook_chain_pin_callbacks(hook_chain, 1, before_refs, after_refs,
+                             before_allowed, after_allowed);
     hook_fargs8_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
@@ -239,6 +251,12 @@ _fp_transit12(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64
     fp_hook_chain_t *hook_chain = current_fp_hook_chain();
     if (!hook_chain) return 0;
     hook_chain_reader_enter(hook_chain, 1);
+    int before_refs[FP_HOOK_CHAIN_NUM] = {0};
+    int after_refs[FP_HOOK_CHAIN_NUM] = {0};
+    int before_allowed[FP_HOOK_CHAIN_NUM] = {0};
+    int after_allowed[FP_HOOK_CHAIN_NUM] = {0};
+    hook_chain_pin_callbacks(hook_chain, 1, before_refs, after_refs,
+                             before_allowed, after_allowed);
     hook_fargs12_t fargs;
     fargs.skip_origin = 0;
     fargs.arg0 = arg0;
