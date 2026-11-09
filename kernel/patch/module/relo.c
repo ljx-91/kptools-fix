@@ -234,7 +234,7 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
         overflow_check = true;
 
         /* Perform the static relocation. */
-        switch (ELF64_R_TYPE(rel[i].r_info)) {
+        switch (type) {
         /* Null relocations. */
         case R_ARM_NONE:
         case R_AARCH64_NONE:
