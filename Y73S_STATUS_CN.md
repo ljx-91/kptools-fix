@@ -222,3 +222,29 @@
 - 全程没有 Fastboot、刷写、分区写入或设备启动操作。
 
 资料库依据：原始 Boot 离线记录、原始 Boot 注入记录和既有 Kallsyms 日志。
+
+
+## 11. 2026-11-10：修复真实 Boot Token Table 起点偏移
+
+### 复现与根因
+
+使用 CI 构建的 kptools（HEAD `67ab6611`）解包资料库原始 Boot 后执行只读 `-d`：
+
+- Boot SHA-256 与第 10 节一致；解压内核大小为 47,517,708 bytes。
+- 新工具识别 Linux 4.14.141 和 banner，但在 `find_token_index()` 报错。
+- 进一步定位发现 `find_token_table()` 的反向扫描改成 `while` 后，循环退出时 `pos` 仍指向第 49 个 NUL；旧 `for` 循环退出时则已额外递减一次。
+- 旧的 `pos + 2` 算式没有随循环语义变化，导致 token table 起点从真实的 `0x01e4bd00` 错算成 `0x01e4bd04`。
+
+### 修复和独立镜像核对
+
+- `tools/kallsym.c` 改为 `pos + 1 - img`，并明确注释 pos 仍指向最后扫描到的 NUL。
+- `scripts/verify_kptools_patch_bounds.py` 新增回归断言，防止循环语义与偏移公式再次不一致。
+- 使用原始解压内核独立复算 256 个 token：token table 起点 `0x01e4bd00`，末端 `0x01e4c05a`；生成的 little-endian 512-byte token index 唯一命中 `0x01e4c100`。这与历史成功日志中的 token table/index 地址一致。
+- 源码修复提交：`0d66377b59062c29b50b9dfd0a2e14be85c774bf`；回归脚本提交：`b157e578888793e9155ccbba98bbcde5e2fdd59b`。
+
+### CI 状态
+
+- `b157e578` 触发 Linux kptools、GCC 14.2 KPIMG 和 Windows 工作流；截至本次记录，工作流处于 queued，尚无最终结果。
+- **尚未用包含此修复的最新 C 二进制完成真实 Boot 端到端解析。** 独立 Python token-table/index 计算确认了偏移根因与预期地址，但不能代替 C 工具测试。
+- 继续等待最新 CI，成功后下载该 run 的 kptools artifact，在解压内核副本上执行 `-d`，确认输出与历史日志一致。
+- 不使用 Fastboot，不刷写、不写设备分区，不进行真机启动测试。
