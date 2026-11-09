@@ -132,6 +132,8 @@ static long kp_redirect_to_sh(const struct pt_regs *regs, const char *what, uid_
 	 * fresh user stack space and redirect syscall argument x0 instead.
 	 */
 	sp = current_user_stack_pointer();
+	if (sp < strlen(target) + 1 + 8)
+		goto passthrough;
 	sp -= strlen(target) + 1;
 	sp &= ~(uintptr_t)7;
 	new_filename = (char __user *)sp;
@@ -143,7 +145,7 @@ static long kp_redirect_to_sh(const struct pt_regs *regs, const char *what, uid_
 	if (use_apd) {
 		char __user *arg0;
 
-		if (!uargv)
+		if (!uargv || sp < strlen(LEGACY_SU_PATH) + 1 + 8)
 			goto passthrough;
 		sp -= strlen(LEGACY_SU_PATH) + 1;
 		sp &= ~(uintptr_t)7;
