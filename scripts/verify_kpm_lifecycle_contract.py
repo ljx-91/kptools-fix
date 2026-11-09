@@ -59,18 +59,28 @@ checks = {
             "kp_kpm_owner_call_get", "kp_kpm_owner_call_put")),
     "LKM persistent owner pin increments hook_refs":
         "pos->hook_refs++" in body(lkm, "int kp_hook_owner_register("),
-    "LKM transient callback get pins only LIVE or LOADING":
+    "LKM rejects KPM data/rodata as a callback owner":
+        "addr >= image_end" in body(lkm, "int kp_hook_owner_register(") and
+        "addr >= text_end" in body(lkm, "int kp_hook_owner_register(") and
+        "rc = -EINVAL" in body(lkm, "int kp_hook_owner_register("),
+    "KPIMG rejects KPM data/rodata as a callback owner":
+        "addr >= image_end" in body(kpimg, "int kp_hook_owner_register(") and
+        "addr >= text_end" in body(kpimg, "int kp_hook_owner_register(") and
+        "rc = -EINVAL" in body(kpimg, "int kp_hook_owner_register("),
+    "LKM transient callback get pins only LIVE or LOADING and checks overflow":
         "mod->active_calls++" in body(lkm, "int kp_hook_owner_call_get(") and
         "mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING" in
-        body(lkm, "int kp_hook_owner_call_get("),
+        body(lkm, "int kp_hook_owner_call_get(") and
+        "mod->active_calls != UINT_MAX" in body(lkm, "int kp_hook_owner_call_get("),
     "LKM unload waits for async and hook owner pins":
         "mod->active_calls || mod->hook_refs" in body(lkm, "long kp_unload_module("),
     "KPIMG persistent owner pin increments hook_refs":
         "pos->hook_refs++" in body(kpimg, "int kp_hook_owner_register("),
-    "KPIMG transient callback get pins only LIVE or LOADING":
+    "KPIMG transient callback get pins only LIVE or LOADING and checks overflow":
         "mod->active_calls++" in body(kpimg, "int kp_hook_owner_call_get(") and
         "mod->state == KP_MODULE_LIVE || mod->state == KP_MODULE_LOADING" in
-        body(kpimg, "int kp_hook_owner_call_get("),
+        body(kpimg, "int kp_hook_owner_call_get(") and
+        "mod->active_calls != UINT_MAX" in body(kpimg, "int kp_hook_owner_call_get("),
     "KPIMG unload waits for async and hook owner pins":
         "mod->active_calls || mod->hook_refs" in body(kpimg, "long unload_module("),
 }
