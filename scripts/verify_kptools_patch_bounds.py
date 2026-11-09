@@ -31,7 +31,7 @@ def need(pattern, src, message):
 def verify_token_table_cursor_semantics():
     # Model the 49-NUL prefix used by the token-table backward scan.
     image = bytearray(b"X" * 64)
-    image[4:53] = b"\\0" * 49
+    image[4:53] = bytes(49)
     marker = 53
     pos = marker
     count = 0
