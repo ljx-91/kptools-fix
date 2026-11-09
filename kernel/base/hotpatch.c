@@ -173,7 +173,7 @@ static int hotpatch_ptr64_run(struct hotpatch_ptr64_t *patch)
         return -EINVAL;
     va = (uintptr_t)patch->addr;
     entry = pgtable_entry_kernel(va);
-    if (!entry || !pte_valid(*entry))
+    if (!entry)
         return -EFAULT;
 
     original_pte = *entry;
@@ -181,14 +181,10 @@ static int hotpatch_ptr64_run(struct hotpatch_ptr64_t *patch)
     dsb(ishst);
 
     if (patch->compare) {
-        seen = __atomic_compare_exchange_n((volatile uint64_t *)patch->addr,
-                                           &patch->expected, patch->desired,
-                                           false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST) ?
-               patch->expected : patch->expected;
-        /* compare_exchange writes the observed value back to expected on
-         * failure; use a second read only to distinguish success. */
-        old = __atomic_load_n((volatile uint64_t *)patch->addr, __ATOMIC_SEQ_CST);
-        if (old == patch->desired)
+        uint64_t expected = patch->expected;
+        if (__atomic_compare_exchange_n((volatile uint64_t *)patch->addr,
+                                        &expected, patch->desired, false,
+                                        __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
             patch->original = patch->expected;
         else
             rc = -EAGAIN;
