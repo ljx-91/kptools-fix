@@ -32,7 +32,7 @@ def main():
     src = (ROOT / "tools/patch.c").read_text(encoding="utf-8")
     kallsym_src = (ROOT / "tools/kallsym.c").read_text(encoding="utf-8")
     offsets = body(kallsym_src, "static int find_approx_offsets(")
-    need(r"elem_size\s*!=\s*4.*?elem_size\s*!=\s*8", offsets,
+    need(r"elem_size\s*!=\s*4", offsets,
          "relative kallsyms scan must accept only supported entry widths")
     need(r"cand\s*<\s*0\s*\|\|\s*cand\s*>\s*imglen\s*-\s*elem_size", offsets,
          "relative kallsyms backward scan must validate its starting range")
@@ -42,6 +42,12 @@ def main():
          "relative kallsyms forward scan must read only complete entries")
     if "for (;; cand -= elem_size)" in offsets:
         raise AssertionError("unbounded kallsyms_offsets backward scan reintroduced")
+
+    addresses = body(kallsym_src, "static int find_approx_addresses(")
+    need(r"imglen\\s*<\\s*KSYM_MIN_NEQ_SYMS\\s*\\*\\s*info->asm_PTR_size", addresses,
+         "absolute kallsyms scan must validate the minimum image size")
+    need(r"cand\\s*<=\\s*imglen\\s*-\\s*elem_size", addresses,
+         "absolute kallsyms tail scan must read only complete entries")
 
     token_table = body(kallsym_src, "static int find_token_table(")
     need(r"!info\s*\|\|\s*!img\s*\|\|\s*imglen\s*<=", token_table,
@@ -86,6 +92,9 @@ def main():
          "ARM64 relocation target must be range-checked before narrowing")
     if rela.find("info->kernel_base = kernel_va") < rela.find("rela_num < ARM64_RELO_MIN_NUM"):
         raise AssertionError("kernel base must not be committed before RELA candidate validation")
+
+    need(r"kernel_va\\s*==\\s*max_va", rela,
+         "ARM64 RELA scanner must reject a candidate without a resolved kernel base")
 
     preset = body(src, "preset_t *get_preset(")
     need(r"min_preset_size", preset, "preset search must require a complete minimum header")
