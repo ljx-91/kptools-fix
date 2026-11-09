@@ -141,6 +141,32 @@ jobs:
           test -d ../user/uapi
           test -s ../user/version
 
+      - name: Build Linux kptools and run source contracts
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          make -C tools -j"$(nproc)"
+          test -s tools/kptools
+          tools/kptools --version
+
+          python3 -m py_compile scripts/*.py
+          for verifier in \
+            verify_bootimg_io_contract.py \
+            verify_kptools_patch_bounds.py \
+            verify_kpm_loader_contract.py \
+            verify_kpm_lifecycle_contract.py \
+            verify_lkm_kpm_contract.py \
+            verify_lkm_kpm_loader_contract.py \
+            verify_lkm_hook_runtime_contract.py \
+            verify_lkm_supercall_input_contract.py \
+            verify_userd_file_contract.py \
+            verify_y73s_fphook_contract.py \
+            verify_y73s_memblock_contract.py \
+            verify_y73s_runtime_contract.py; do
+            python3 "scripts/$verifier"
+          done
+
       - name: Package kpimg and headers
         shell: bash
         run: |
@@ -154,6 +180,7 @@ jobs:
           cp -R user/uapi/. artifact/user/uapi/
           cp user/version artifact/user/version
           cp tools/preset.h artifact/tools/preset.h
+          cp tools/kptools artifact/tools/kptools-linux-x86_64
 
           find artifact -type f -print
 
