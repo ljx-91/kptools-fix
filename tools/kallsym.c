@@ -758,13 +758,773 @@ static int find_num_syms(kallsym_t *info, char *img, int32_t imglen)
     return 0;
 }
 
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* 
+ * Copyright (C) 2023 bmax121. All Rights Reserved.
+ */
+
+#define _GNU_SOURCE
+#define __USE_GNU
+
+#include <ctype.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <inttypes.h>
+
+#include "bootimg.h"
+#include "kallsym.h"
+#include "order.h"
+#include "insn.h"
+#include "common.h"
+#include "preset.h"
+
+#define IKCFG_ST "IKCFG_ST"
+#define IKCFG_ED "IKCFG_ED"
+#include "zlib.h"
+
+/*
+ * Fail closed when the stripped kernel does not provide enough evidence to
+ * identify the kallsyms address table.  This is especially important for
+ * older Android 4.14 vendor kernels with CONFIG_KALLSYMS_ALL=n, where a
+ * guessed symbol count can make the vector heuristic accept a false table.
+ * Define KP_STRICT_KALLSYMS=0 only for a deliberate compatibility bisect.
+ */
+#ifndef KP_STRICT_KALLSYMS
+#define KP_STRICT_KALLSYMS 1
+#endif
+
+int find_ikconfig_blob(char *img, int32_t imglen, size_t *start, size_t *size)
+{
+    if (!img || imglen <= 0 || !start || !size) return -1;
+
+    char *pos_start = memmem(img, (size_t)imglen, IKCFG_ST, strlen(IKCFG_ST));
+    if (!pos_start) return 1;
+
+    size_t kcfg_start = (size_t)(pos_start - img) + strlen(IKCFG_ST);
+    if (kcfg_start > (size_t)imglen) return 2;
+    char *pos_end = memmem(img + kcfg_start, (size_t)imglen - kcfg_start,
+                           IKCFG_ED, strlen(IKCFG_ED));
+    if (!pos_end) return 2;
+
+    while (kcfg_start < (size_t)imglen &&
+           (img[kcfg_start] == '\0' || img[kcfg_start] == '\n')) {
+        kcfg_start++;
+    }
+
+    size_t kcfg_bytes = (size_t)(pos_end - (img + kcfg_start));
+    if (!kcfg_bytes) return 3;
+
+    *start = kcfg_start;
+    *size = kcfg_bytes;
+    return 0;
+}
+
+int find_linux_banner(kallsym_t *info, char *img, int32_t imglen, void *opt)
+{
+    /*
+     * A vendor kernel image can contain multiple copies of linux_banner.
+     * Keep only the last four offsets, matching the fixed metadata capacity.
+     */
+    if (!info || !img || imglen <= 0) return -1;
+
+    int32_t *kver = (int32_t *)opt;
+    static const char linux_banner_prefix[] = "Linux version ";
+    const size_t prefix_len = sizeof(linux_banner_prefix) - 1;
+    char *imgend = img + imglen;
+    char *search = img;
+
+    info->banner_num = 0;
+    while (search < imgend) {
+        char *banner = (char *)memmem(search, (size_t)(imgend - search),
+                                      linux_banner_prefix, prefix_len);
+        if (!banner) break;
+
+        size_t remaining = (size_t)(imgend - banner);
+        if (remaining > prefix_len + 1 &&
+            isdigit((unsigned char)banner[prefix_len]) &&
+            banner[prefix_len + 1] == '.') {
+            int32_t slot;
+            if (info->banner_num < (int32_t)ARRAY_SIZE(info->linux_banner_offset)) {
+                slot = info->banner_num++;
+            } else {
+                memmove(info->linux_banner_offset, info->linux_banner_offset + 1,
+                        (ARRAY_SIZE(info->linux_banner_offset) - 1) *
+                            sizeof(info->linux_banner_offset[0]));
+                slot = (int32_t)ARRAY_SIZE(info->linux_banner_offset) - 1;
+            }
+            info->linux_banner_offset[slot] = (int32_t)(banner - img);
+            if (!kver)
+                tools_logi("linux_banner %d offset: 0x%lx\n",
+                           info->banner_num, (unsigned long)(banner - img));
+        }
+        search = banner + 1;
+    }
+
+    if (!info->banner_num) {
+        tools_loge("no valid linux_banner in image\n");
+        return -1;
+    }
+
+    char *banner = img + info->linux_banner_offset[info->banner_num - 1];
+    char *uts_release_start = banner + prefix_len;
+    char *space = (char *)memchr(uts_release_start, ' ',
+                                 (size_t)(imgend - uts_release_start));
+    if (!space) {
+        tools_loge("linux_banner release string is not terminated inside image\n");
+        return -1;
+    }
+
+    size_t release_len = (size_t)(space - uts_release_start);
+    char release[128];
+    if (!release_len || release_len >= sizeof(release)) {
+        tools_loge("linux_banner release string has invalid length\n");
+        return -1;
+    }
+    memcpy(release, uts_release_start, release_len);
+    release[release_len] = '\0';
+
+    char *cursor = release;
+    char *end = NULL;
+    unsigned long major = strtoul(cursor, &end, 10);
+    if (end == cursor || *end != '.' || major > UINT8_MAX) return -1;
+    cursor = end + 1;
+
+    if (!isdigit((unsigned char)*cursor)) return -1;
+    unsigned long minor = strtoul(cursor, &end, 10);
+    if (end == cursor || *end != '.' || minor > UINT8_MAX) return -1;
+    cursor = end + 1;
+
+    if (!isdigit((unsigned char)*cursor)) return -1;
+    unsigned long patch = strtoul(cursor, &end, 10);
+    if (end == cursor || (*end && *end != '+' && *end != '-')) return -1;
+
+    info->version.major = (uint8_t)major;
+    info->version.minor = (uint8_t)minor;
+    info->version.patch = patch <= UINT8_MAX ? (uint8_t)patch : UINT8_MAX;
+    if (kver)
+        *kver = (info->version.major << 16) |
+                (info->version.minor << 8) | info->version.patch;
+
+    if (!kver)
+        tools_logi("kernel version major: %d, minor: %d, patch: %d\n",
+                   info->version.major, info->version.minor, info->version.patch);
+    return 0;
+}
+
+static int dump_kernel_config(kallsym_t *info, char *img, int32_t imglen)
+{
+    // todo:
+    /*
+  kernel configuration
+  when CONFIG_IKCONFIG is enabled
+  archived in GZip format between the magic string 'IKCFG_ST' and 'IKCFG_ED' in
+  the built kernel.
+  */
+    tools_logw("not implemented\n");
+    return 0;
+}
+
+static int find_token_table(kallsym_t *info, char *img, int32_t imglen, void *opt)
+{
+    char nums_syms[20] = { '\0' };
+    char letters_syms[20] = { '\0' };
+    char *imgend;
+    char *pos;
+    char *num_start = NULL;
+    char *token_pos;
+    int32_t offset;
+
+    if (!info || !img || imglen <= (int32_t)(sizeof(nums_syms) + 2)) {
+        tools_loge("invalid image for kallsyms token table\n");
+        return -1;
+    }
+    imgend = img + imglen;
+
+    for (int32_t i = 0; i < 10; i++) {
+        nums_syms[i * 2] = '0' + i;
+        letters_syms[i * 2] = 'a' + i;
+    }
+
+    /*
+     * Locate the numeric tokens, then verify the expected alphabetic
+     * sequence without ever probing beyond the supplied image.
+     */
+    pos = img;
+    while (pos < imgend) {
+        char *num_end;
+        char *letter;
+        int32_t zero_count = 0;
+
+        num_start = (char *)memmem(pos, imgend - pos, nums_syms, sizeof(nums_syms));
+        if (!num_start) {
+            tools_loge("find kallsyms token_table error\n");
+            return -1;
+        }
+
+        num_end = num_start + sizeof(nums_syms);
+        if (imgend - num_end < 2 || !*num_end || !*(num_end + 1)) {
+            pos = num_start + 1;
+            continue;
+        }
+
+        letter = num_end;
+        while (letter < imgend && zero_count < 'a' - '9' - 1) {
+            if (!*letter) zero_count++;
+            letter++;
+        }
+        if (zero_count != 'a' - '9' - 1 ||
+            imgend - letter < (ptrdiff_t)sizeof(letters_syms) ||
+            memcmp(letter, letters_syms, sizeof(letters_syms))) {
+            pos = num_start + 1;
+            continue;
+        }
+        break;
+    }
+
+    if (!num_start || num_start >= imgend) {
+        tools_loge("find kallsyms token_table error\n");
+        return -1;
+    }
+
+    /*
+     * Walk back over the preceding token terminators. The historical
+     * layout includes a two-byte gap before the aligned token table.
+     */
+    pos = num_start;
+    int32_t preceding_terminators = 0;
+    while (pos > img && preceding_terminators < '0' + 1) {
+        --pos;
+        if (!*pos) preceding_terminators++;
+    }
+    if (preceding_terminators != '0' + 1) {
+        tools_loge("kallsyms token_table start is not bounded by the image\n");
+        return -1;
+    }
+
+    offset = (int32_t)(pos + 2 - img);
+    if (offset < 0 || offset > imglen - 4) {
+        tools_loge("kallsyms token_table offset is outside the image\n");
+        return -1;
+    }
+    offset = align_ceil(offset, 4);
+    if (offset < 0 || offset >= imglen) {
+        tools_loge("aligned kallsyms token_table offset is outside the image\n");
+        return -1;
+    }
+
+    info->kallsyms_token_table_offset = offset;
+    tools_logi("kallsyms_token_table offset: 0x%08x\n", offset);
+
+    token_pos = img + offset;
+    for (int32_t i = 0; i < KSYM_TOKEN_NUMS; i++) {
+        char *token_end;
+        if (token_pos >= imgend) {
+            tools_loge("kallsyms token_table is truncated at token %d\n", i);
+            return -1;
+        }
+        token_end = (char *)memchr(token_pos, '\0', imgend - token_pos);
+        if (!token_end) {
+            tools_loge("kallsyms token %d has no in-image terminator\n", i);
+            return -1;
+        }
+        info->kallsyms_token_table[i] = token_pos;
+        token_pos = token_end + 1;
+    }
+
+    return 0;
+}
+
+static int find_token_index(kallsym_t *info, char *img, int32_t imglen, void *opt)
+{
+    uint16_t le_index[KSYM_TOKEN_NUMS] = { 0 };
+    uint16_t be_index[KSYM_TOKEN_NUMS] = { 0 };
+    int32_t start;
+    int32_t offset;
+
+    if (!info || !img || imglen <= 0) {
+        tools_loge("invalid image for kallsyms token_index\n");
+        return -1;
+    }
+    start = info->kallsyms_token_table_offset;
+    if (start < 0 || start >= imglen) {
+        tools_loge("kallsyms token_table start is outside the image\n");
+        return -1;
+    }
+    offset = start;
+
+    /* Build both endian forms, validating every NUL-terminated token. */
+    for (int32_t i = 0; i < KSYM_TOKEN_NUMS; i++) {
+        char *token_end;
+        uint32_t token_offset;
+        if (offset < start || offset >= imglen) {
+            tools_loge("kallsyms token_table is truncated at token %d\n", i);
+            return -1;
+        }
+        token_offset = (uint32_t)(offset - start);
+        if (token_offset > UINT16_MAX) {
+            tools_loge("kallsyms token_table exceeds 16-bit token_index range\n");
+            return -1;
+        }
+        le_index[i] = u16le((uint16_t)token_offset);
+        be_index[i] = u16be((uint16_t)token_offset);
+        token_end = (char *)memchr(img + offset, '\0', imglen - offset);
+        if (!token_end) {
+            tools_loge("kallsyms token %d has no in-image terminator\n", i);
+            return -1;
+        }
+        offset = (int32_t)(token_end - img) + 1;
+    }
+
+    char *lepos = (char *)memmem(img, imglen, le_index, sizeof(le_index));
+    char *bepos = (char *)memmem(img, imglen, be_index, sizeof(be_index));
+    if (!lepos && !bepos) {
+        tools_loge("kallsyms_token_index error\n");
+        return -1;
+    }
+
+    tools_logi("endian: %s\n", lepos ? "little" : "big");
+    char *pos = lepos ? lepos : bepos;
+    info->is_be = lepos ? 0 : 1;
+    info->kallsyms_token_index_offset = (int32_t)(pos - img);
+    tools_logi("kallsyms_token_index offset: 0x%08x\n",
+               info->kallsyms_token_index_offset);
+    return 0;
+}
+
+static int get_markers_elem_size(kallsym_t *info)
+{
+    if (info->kallsyms_markers_elem_size) return info->kallsyms_markers_elem_size;
+
+    int32_t elem_size = info->asm_long_size;
+    if (info->version.major < 4 || (info->version.major == 4 && info->version.minor < 20))
+        elem_size = info->asm_PTR_size;
+
+    return elem_size;
+}
+
+static int get_num_syms_elem_size(kallsym_t *info)
+{
+    // the same as kallsyms_markers
+    int32_t elem_size = info->asm_long_size;
+    if (info->version.major < 4 || (info->version.major == 4 && info->version.minor < 20))
+        elem_size = info->asm_PTR_size;
+    return elem_size;
+}
+
+static inline int get_addresses_elem_size(kallsym_t *info)
+{
+    return info->asm_PTR_size;
+}
+
+static inline int get_offsets_elem_size(kallsym_t *info)
+{
+    return info->asm_long_size;
+}
+
+static int32_t decode_relative_symbol_offset(kallsym_t *info, const char *entry)
+{
+    int32_t raw = (int32_t)int_unpack((void *)entry, get_offsets_elem_size(info), info->is_be);
+
+    if (info->arch == X86_64 && info->has_absolute_percpu) {
+        if (raw >= 0) return raw;
+        return -1 - raw;
+    }
+
+    return (uint32_t)raw;
+}
+
+static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
+{
+    if (!info || !img || imglen < 24) {
+        tools_logw("invalid image for ARM64 relocation scan\n");
+        return -1;
+    }
+    if (!info->try_relo) return 0;
+
+    uint64_t min_va = ELF64_KERNEL_MIN_VA;
+    uint64_t max_va = ELF64_KERNEL_MAX_VA;
+    uint64_t kernel_va = max_va;
+    int32_t cand = 0;
+    int rela_num = 0;
+    while (cand < imglen - 24) {
+        uint64_t r_offset = uint_unpack(img + cand, 8, info->is_be);
+        uint64_t r_info = uint_unpack(img + cand + 8, 8, info->is_be);
+        uint64_t r_addend = uint_unpack(img + cand + 16, 8, info->is_be);
+        uint32_t r_type = r_info & 0xffffffff;
+        if ((r_offset & 0xffff000000000000) == 0xffff000000000000 && (r_type == 0x101 || r_type == 0x403)) {
+            if (!(r_addend & 0xfff) && r_addend >= min_va && r_addend < kernel_va) kernel_va = r_addend;
+            cand += 24;
+            rela_num++;
+        } else if (rela_num && !r_offset && !r_info && !r_addend) {
+            cand += 24;
+            rela_num++;
+        } else {
+            if (rela_num >= ARM64_RELO_MIN_NUM) break;
+            cand += 8;
+            rela_num = 0;
+            kernel_va = max_va;
+        }
+    }
+
+    if (rela_num < ARM64_RELO_MIN_NUM) {
+        tools_logw("can't find arm64 relocation table\n");
+        return 0;
+    }
+
+    int32_t cand_start = cand - 24 * rela_num;
+    int32_t cand_end = cand - 24;
+    if (cand_start < 0 || cand_end < cand_start || cand_end > imglen - 24) {
+        tools_logw("ARM64 relocation candidate range is outside the image\n");
+        return -1;
+    }
+
+    /*
+     * Ignore trailing all-zero RELA slots, but never walk before the
+     * candidate range. A truncated or zero-filled image must fail closed.
+     */
+    while (cand_end >= cand_start) {
+        uint64_t ro = uint_unpack(img + cand_end, 8, info->is_be);
+        uint64_t ri = uint_unpack(img + cand_end + 8, 8, info->is_be);
+        uint64_t ra = uint_unpack(img + cand_end + 16, 8, info->is_be);
+        if (ro || ri || ra) break;
+        cand_end -= 24;
+    }
+    if (cand_end < cand_start) {
+        tools_logw("ARM64 relocation candidate contains no complete nonzero entry\n");
+        return 0;
+    }
+    cand_end += 24;
+
+    rela_num = (cand_end - cand_start) / 24;
+    if (rela_num < ARM64_RELO_MIN_NUM) {
+        tools_logw("ARM64 relocation table is shorter than the required minimum\n");
+        return 0;
+    }
+
+    if (info->kernel_base) {
+        tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 ", try: %" PRIx64 "\n", kernel_va, info->kernel_base);
+        kernel_va = info->kernel_base;
+    } else {
+        if (kernel_va == max_va) {
+            tools_logw("ARM64 relocation entries do not provide a valid kernel base\n");
+            return 0;
+        }
+        info->kernel_base = kernel_va;
+        tools_logi("arm64 relocation kernel_va: 0x%" PRIx64 "\n", kernel_va);
+    }
+
+    tools_logi("arm64 relocation table range: [0x%08x, 0x%08x), count: 0x%08x\n", cand_start, cand_end, rela_num);
+
+    // apply relocations
+    int32_t max_offset = imglen - 8;
+    int32_t apply_num = 0;
+    for (cand = cand_start; cand < cand_end; cand += 24) {
+        uint64_t r_offset = uint_unpack(img + cand, 8, info->is_be);
+        uint64_t r_info = uint_unpack(img + cand + 8, 8, info->is_be);
+        uint64_t r_addend = uint_unpack(img + cand + 16, 8, info->is_be);
+        if (!r_offset && !r_info && !r_addend) continue;
+        if (r_offset <= kernel_va || r_offset >= max_va - imglen) {
+            // tools_logw("warn ignore arm64 relocation r_offset: 0x%08lx at 0x%08x\n", r_offset, cand);
+            continue;
+        }
+
+        uint64_t offset64 = r_offset - kernel_va;
+        if (offset64 >= (uint64_t)max_offset) {
+            /*
+             * Some vendor kernels (e.g. 5.4 qgki) carry a relocation whose target lies
+             * just past the loaded image (init/bss tail). Skipping it and continuing lets
+             * later relocations overwrite the kallsyms_offsets table with pointer values,
+             * which corrupts the monotonic offset sequence and truncates symbol resolution
+             * (memblock_phys_alloc_try_nid & co then cannot be found). Abort so the caller
+             * retries with a pristine image, as before 47a5014.
+             */
+            info->try_relo = 0;
+            return -1;
+        }
+
+        int32_t offset = (int32_t)offset64;
+        uint32_t r_type = r_info & 0xffffffff;
+        if (r_type == 0x101) {
+            r_addend += kernel_va;
+        }
+
+        uint64_t value = uint_unpack(img + offset, 8, info->is_be);
+        if (value == r_addend) continue;
+        *(uint64_t *)(img + offset) = value + r_addend;
+        apply_num++;
+    }
+    if (apply_num) apply_num--;
+    tools_logi("apply 0x%08x relocation entries\n", apply_num);
+
+    if (apply_num) info->relo_applied = 1;
+
+#if 0
+#include <stdio.h>
+    FILE *frelo = fopen("./kernel.relo", "wb+");
+    int w_len = fwrite(img, 1, imglen, frelo);
+    tools_logi("===== write relo kernel image: %d ====\n", w_len);
+    fclose(frelo);
+#endif
+
+    return 0;
+}
+
+static int find_approx_addresses(kallsym_t *info, char *img, int32_t imglen)
+{
+    if (!info || !img || imglen <= 0 ||
+        (info->asm_PTR_size != 4 && info->asm_PTR_size != 8) ||
+        imglen < KSYM_MIN_NEQ_SYMS * info->asm_PTR_size) {
+        tools_logw("invalid kallsyms_addresses scan range or element size\n");
+        return -1;
+    }
+
+    int32_t sym_num = 0;
+    int32_t elem_size = info->asm_PTR_size;
+    uint64_t prev_offset = 0;
+    int32_t cand = 0;
+
+    for (; cand < imglen - KSYM_MIN_NEQ_SYMS * elem_size; cand += elem_size) {
+        uint64_t address = uint_unpack(img + cand, elem_size, info->is_be);
+        if (!sym_num) { // first address
+            if (address & 0xff) continue;
+            if (elem_size == 4 && (address & 0xff800000) != 0xff800000) continue;
+            if (elem_size == 8 && (address & 0xffff000000000000) != 0xffff000000000000) continue;
+            prev_offset = address;
+            sym_num++;
+            continue;
+        }
+        if (address >= prev_offset) {
+            prev_offset = address;
+            if (sym_num++ >= KSYM_MIN_NEQ_SYMS) break;
+        } else {
+            prev_offset = 0;
+            sym_num = 0;
+        }
+    }
+    if (sym_num < KSYM_MIN_NEQ_SYMS) {
+        tools_loge("find approximate kallsyms_addresses error\n");
+        return -1;
+    }
+
+    cand -= KSYM_MIN_NEQ_SYMS * elem_size;
+    int32_t approx_offset = cand;
+    info->_approx_addresses_or_offsets_offset = approx_offset;
+
+    // approximate kallsyms_addresses end
+    prev_offset = 0;
+    for (; cand <= imglen - elem_size; cand += elem_size) {
+        uint64_t offset = uint_unpack(img + cand, elem_size, info->is_be);
+        if (offset < prev_offset) break;
+        prev_offset = offset;
+    }
+    // end is not include
+    info->_approx_addresses_or_offsets_end = cand;
+    info->has_relative_base = 0;
+    int32_t approx_num_syms = (cand - approx_offset) / elem_size;
+    info->_approx_addresses_or_offsets_num = approx_num_syms;
+    tools_logi("approximate kallsyms_addresses range: [0x%08x, 0x%08x) "
+               "count: 0x%08x\n",
+               approx_offset, cand, approx_num_syms);
+
+    //
+    if (info->relo_applied) {
+        tools_logw("ARM64 relocations were applied before the absolute-address scan; "
+                   "the candidate must pass exact symbol-count and vector checks\n");
+    }
+
+    return 0;
+}
+
+static int find_approx_offsets(kallsym_t *info, char *img, int32_t imglen)
+{
+    int32_t sym_num = 0;
+    int32_t elem_size = info->asm_long_size;
+    uint64_t prev_offset = 0;
+    int32_t cand = 0;
+    int32_t MAX_ZERO_OFFSET_NUM = 10;
+    int32_t zero_offset_num = 0;
+
+    if (!img || imglen <= 0 || elem_size != 4 ||
+        imglen < KSYM_MIN_NEQ_SYMS * elem_size) {
+        tools_logw("invalid kallsyms_offsets scan range or element size\n");
+        return -1;
+    }
+
+    for (; cand < imglen - KSYM_MIN_NEQ_SYMS * elem_size; cand += elem_size) {
+        int64_t raw_offset = int_unpack(img + cand, elem_size, info->is_be);
+        uint64_t offset = raw_offset < 0 ? (1ull << 32) + (uint32_t)(-raw_offset) : (uint32_t)raw_offset;
+        if (!sym_num) {
+            if (!raw_offset) continue;
+            prev_offset = offset;
+            sym_num++;
+            continue;
+        }
+        if (offset == prev_offset) {
+            continue;
+        } else if (offset > prev_offset) {
+            prev_offset = offset;
+            if (sym_num++ >= KSYM_MIN_NEQ_SYMS) break;
+        } else {
+            prev_offset = 0;
+            sym_num = 0;
+        }
+    }
+    if (sym_num < KSYM_MIN_NEQ_SYMS) {
+        tools_logw("find approximate kallsyms_offsets error\n");
+        return -1;
+    }
+
+    cand -= KSYM_MIN_NEQ_SYMS * elem_size;
+    if (cand < 0 || cand > imglen - elem_size) {
+        tools_logw("kallsyms_offsets candidate start is outside the image\n");
+        return -1;
+    }
+
+    /* Locate the zero sentinel before the relative-offset array. */
+    while (cand >= 0 && int_unpack(img + cand, elem_size, info->is_be))
+        cand -= elem_size;
+    if (cand < 0) {
+        tools_logw("kallsyms_offsets zero sentinel is not bounded by the image\n");
+        return -1;
+    }
+
+    /* Walk back across the bounded run of zero entries preceding the table. */
+    while (cand >= 0 && !int_unpack(img + cand, elem_size, info->is_be)) {
+        if (zero_offset_num++ >= MAX_ZERO_OFFSET_NUM) break;
+        cand -= elem_size;
+    }
+    if (cand < 0) {
+        tools_logw("kallsyms_offsets table start underflows the image\n");
+        return -1;
+    }
+
+    cand += elem_size;
+    if (cand < 0 || cand > imglen - elem_size) {
+        tools_logw("kallsyms_offsets table start has no complete entry\n");
+        return -1;
+    }
+    int32_t approx_offset = cand;
+    info->_approx_addresses_or_offsets_offset = approx_offset;
+
+    /* Read only complete elements; the kernel image may end with a short tail. */
+    prev_offset = 0;
+    for (; cand <= imglen - elem_size; cand += elem_size) {
+        int64_t raw_offset = int_unpack(img + cand, elem_size, info->is_be);
+        uint64_t offset = raw_offset < 0 ? (1ull << 32) + (uint32_t)(-raw_offset) : (uint32_t)raw_offset;
+        if (offset < prev_offset) break;
+        prev_offset = offset;
+    }
+
+    /* end is exclusive and never extends beyond imglen */
+    int32_t end = cand;
+    info->_approx_addresses_or_offsets_end = end;
+    info->has_relative_base = 1;
+    int32_t approx_num_syms = (end - approx_offset) / elem_size;
+    info->_approx_addresses_or_offsets_num = approx_num_syms;
+    tools_logi("approximate kallsyms_offsets range: [0x%08x, 0x%08x) "
+               "count: 0x%08x\n",
+               approx_offset, end, approx_num_syms);
+    return 0;
+}
+
+static int32_t find_approx_addresses_or_offset(kallsym_t *info, char *img, int32_t imglen)
+{
+    int32_t ret = 0;
+    if ((info->arch == ARM64 || info->arch == X86_64) && info->is_64) {
+        /*
+         * Vendor arm64 kernels can carry kallsyms_offsets even on older
+         * version strings such as 4.4, so don't gate the relative-base path
+         * purely on the reported kernel version.
+         */
+        tools_logi("try kallsyms_offsets first for 64-bit relative-base kernel\n");
+        ret = find_approx_offsets(info, img, imglen);
+        if (!ret) return 0;
+    }
+    tools_logi("fallback to kallsyms_addresses scan\n");
+    ret = find_approx_addresses(info, img, imglen);
+    return ret;
+}
+
+static int find_num_syms(kallsym_t *info, char *img, int32_t imglen)
+{
+#define NSYMS_MAX_GAP 10
+
+    if (!info || !img) {
+        tools_logw("invalid kallsyms_num_syms input\n");
+        return -1;
+    }
+
+    /* Do not allow a failed retry to leak a stale count into the next pass. */
+    info->kallsyms_num_syms = 0;
+    info->kallsyms_num_syms_offset = 0;
+
+    int32_t approx_end = info->kallsyms_names_offset;
+    const int32_t num_syms_elem_size = 4;
+    int32_t approx_num_syms = info->_approx_addresses_or_offsets_num;
+
+    if (imglen < num_syms_elem_size ||
+        approx_end < 0 || approx_end > imglen - num_syms_elem_size ||
+        approx_num_syms <= 0 || approx_num_syms > KSYM_MAX_SYMS) {
+        tools_logw("invalid kallsyms_num_syms search range or approximate count\n");
+        return -1;
+    }
+
+    int32_t lower = approx_end > 4096 ? approx_end - 4096 : 0;
+    for (int32_t cand = approx_end;
+         cand >= lower && cand <= imglen - num_syms_elem_size;
+         cand -= num_syms_elem_size) {
+        int nsyms = (int)int_unpack(img + cand, num_syms_elem_size, info->is_be);
+        if (nsyms <= 0 || nsyms > KSYM_MAX_SYMS) continue;
+        if (approx_num_syms > nsyms && approx_num_syms - nsyms > NSYMS_MAX_GAP) continue;
+        if (nsyms > approx_num_syms && nsyms - approx_num_syms > NSYMS_MAX_GAP) continue;
+
+        info->kallsyms_num_syms = nsyms;
+        info->kallsyms_num_syms_offset = cand;
+        break;
+    }
+
+    if (!info->kallsyms_num_syms_offset || !info->kallsyms_num_syms) {
+#if KP_STRICT_KALLSYMS
+        tools_logw("cannot verify exact kallsyms_num_syms (approximate count 0x%08x); "
+                   "rejecting this address-table candidate and retrying\n",
+                   approx_num_syms);
+        return -1;
+#else
+        if (approx_num_syms <= NSYMS_MAX_GAP) return -1;
+        info->kallsyms_num_syms = approx_num_syms - NSYMS_MAX_GAP;
+        tools_logw("can't find kallsyms_num_syms, try: 0x%08x\n", info->kallsyms_num_syms);
+#endif
+    } else {
+        tools_logi("kallsyms_num_syms offset: 0x%08x, value: 0x%08x\n",
+                   info->kallsyms_num_syms_offset, info->kallsyms_num_syms);
+    }
+
+    if (info->arch == X86_64 && info->has_relative_base) {
+        int32_t begin = info->kallsyms_num_syms_offset - 32;
+        if (begin < 0) begin = 0;
+        for (int32_t pos = info->kallsyms_num_syms_offset - 8;
+             pos >= begin && pos <= imglen - 8; pos -= 8) {
+            uint64_t value = uint_unpack(img + pos, 8, info->is_be);
+            if ((value & 0xffff000000000000ull) == 0xffff000000000000ull) {
+                info->kallsyms_relative_base = value;
+                info->kernel_base = value;
+                tools_logi("kallsyms_relative_base offset: 0x%08x, value: 0x%llx\n",
+                           pos, (unsigned long long)value);
+                break;
+            }
+        }
+    }
+    return 0;
+}
+
 static int find_markers_internal(kallsym_t *info, char *img, int32_t imglen, int32_t elem_size)
 {
     if (!info || !img || imglen <= 0 ||
         (elem_size != 4 && elem_size != 8) ||
         info->kallsyms_token_table_offset < 0 ||
         info->kallsyms_token_table_offset > imglen - elem_size) {
-        tools_logw("invalid kallsyms_markers scan range\\n");
+        tools_logw("invalid kallsyms_markers scan range\n");
         return -1;
     }
 
@@ -793,7 +1553,7 @@ static int find_markers_internal(kallsym_t *info, char *img, int32_t imglen, int
 
     int64_t marker_end64 = (int64_t)cand + (int64_t)count * elem_size + elem_size;
     if (cand < 0 || marker_end64 < cand || marker_end64 > imglen) {
-        tools_logw("kallsyms_markers range exceeds the image\\n");
+        tools_logw("kallsyms_markers range exceeds the image\n");
         return -1;
     }
     int32_t marker_end = (int32_t)marker_end64;
