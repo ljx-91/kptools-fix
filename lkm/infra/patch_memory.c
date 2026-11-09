@@ -22,6 +22,7 @@
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/barrier.h>
+#include <asm/cmpxchg.h>
 
 #include "../include/kp_lkm.h"
 
@@ -123,6 +124,58 @@ int kp_patch_memory_init(void)
 	if (!kp_patch_init_mm)
 		logkw("failed to resolve init_mm; data (sys_call_table) patch disabled\n");
 	logki("patch memory ready (fixmap poke; aarch64_insn_patch_text not used)\n");
+	return 0;
+}
+
+/* Atomic 64-bit pointer patching for function-pointer hooks. The fixmap
+ * alias is normal cacheable memory; arm64 cmpxchg keeps the two halves from
+ * being observed as a torn pointer by concurrent CPUs. */
+int kp_patch_exchange64(void *dst, u64 desired, u64 *original)
+{
+	unsigned long phy, phy_off;
+	void *map;
+	u64 old, seen;
+
+	if (!dst || !original || ((unsigned long)dst & 7))
+		return -EINVAL;
+	phy = kp_phys_from_virt((unsigned long)dst);
+	if (!phy)
+		return -ENOENT;
+	phy_off = phy & ~PAGE_MASK;
+	map = (void *)set_fixmap_offset(FIX_TEXT_POKE0, phy & PAGE_MASK) + phy_off;
+	old = READ_ONCE(*(volatile u64 *)map);
+	for (;;) {
+		seen = cmpxchg((volatile u64 *)map, old, desired);
+		if (seen == old)
+			break;
+		old = seen;
+	}
+	clear_fixmap(FIX_TEXT_POKE0);
+	kp_flush_dcache((unsigned long)dst, sizeof(u64));
+	dsb(ishst);
+	*original = old;
+	return 0;
+}
+
+int kp_patch_cmpxchg64(void *dst, u64 expected, u64 desired)
+{
+	unsigned long phy, phy_off;
+	void *map;
+	u64 seen;
+
+	if (!dst || ((unsigned long)dst & 7))
+		return -EINVAL;
+	phy = kp_phys_from_virt((unsigned long)dst);
+	if (!phy)
+		return -ENOENT;
+	phy_off = phy & ~PAGE_MASK;
+	map = (void *)set_fixmap_offset(FIX_TEXT_POKE0, phy & PAGE_MASK) + phy_off;
+	seen = cmpxchg((volatile u64 *)map, expected, desired);
+	clear_fixmap(FIX_TEXT_POKE0);
+	if (seen != expected)
+		return -EAGAIN;
+	kp_flush_dcache((unsigned long)dst, sizeof(u64));
+	dsb(ishst);
 	return 0;
 }
 
