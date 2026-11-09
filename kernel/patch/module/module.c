@@ -39,6 +39,30 @@
 
 #define ARCH_SHF_SMALL 0
 
+/* The minimal KPIMG Linux headers intentionally expose only a subset of the
+ * slab helpers. Keep these wrappers local and overflow-safe. */
+static char *kp_module_strdup(const char *src, gfp_t flags)
+{
+    size_t len;
+    char *copy;
+
+    if (!src) return NULL;
+    len = strlen(src) + 1;
+    copy = kmalloc(len, flags);
+    if (copy) memcpy(copy, src, len);
+    return copy;
+}
+
+static void *kp_module_kcalloc(size_t count, size_t size, gfp_t flags)
+{
+    void *ptr;
+
+    if (size && count > (~0UL / size)) return NULL;
+    ptr = kmalloc(count * size, flags);
+    if (ptr) memset(ptr, 0, count * size);
+    return ptr;
+}
+
 static bool elf_range_valid(unsigned long offset, unsigned long size, unsigned long total)
 {
     return offset <= total && size <= total - offset;
@@ -848,7 +872,7 @@ long module_control0(const char *name, const char *ctl_args, char *__user out_ms
 {
     struct module *mod; char *args_copy; long rc;
     if (!name || !ctl_args || !*ctl_args) return -EINVAL;
-    args_copy = kstrdup(ctl_args, GFP_KERNEL);
+    args_copy = kp_module_strdup(ctl_args, GFP_KERNEL);
     if (!args_copy) return -ENOMEM;
     mod = module_get_live(name);
     if (!mod) { kfree(args_copy); return -ENOENT; }
@@ -883,7 +907,7 @@ long notify_modules_event(const char *event, const char *args, void *__user rese
         list_for_each_entry(pos, &modules.list, list)
             if (pos->state == KP_MODULE_LIVE && pos->event && *pos->event) capacity++;
         module_lock_release(flags);
-        snapshot = kcalloc(capacity ? capacity : 1, sizeof(*snapshot), GFP_KERNEL);
+        snapshot = kp_module_kcalloc(capacity ? capacity : 1, sizeof(*snapshot), GFP_KERNEL);
         if (!snapshot) return -ENOMEM;
         flags = module_lock_acquire();
         n = 0;
@@ -932,7 +956,7 @@ int list_modules(char *out_names, int size)
         int written;
         if (pos->state != KP_MODULE_LIVE || off >= size - 1) continue;
         written = snprintf(out_names + off, size - off, "%s\n", pos->info.name);
-        if (written > 0) off += min(written, size - off - 1);
+        if (written > 0) off += (size_t)written < size - off - 1 ? (size_t)written : size - off - 1;
     }
     module_lock_release(flags);
     if (off > 0 && out_names[off - 1] == '\n') off--;
