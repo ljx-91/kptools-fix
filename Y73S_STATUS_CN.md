@@ -98,3 +98,15 @@
 - [历史只读构建记录](BUILD_VALIDATION_CN.md)：旧版本本机编译和用户提供 boot 的只读解析数据；不是当前 CI 状态。
 
 旧的分支阶段摘要和重复的 map/stack follow-up 记录不再作为当前状态入口；其仍有价值的技术结论已并入上述深度审计或本文。
+
+## 10. 2026-11-09 后续 CI 复核
+
+本轮重新读取 GitHub Actions 最新两条记录：
+- Run `42639258362`：Android KPIMG / Ubuntu 构建成功；Windows kptools 构建成功。
+- Run `42639298642`：Android KPIMG / Ubuntu 构建成功；Windows kptools 构建成功。
+
+这两条记录确认所选分支的通用 KPIMG 与 kptools 构建流水线正常；它们仍不是 Y73s Linux 4.14.141 的目标 KDIR 编译，也不覆盖 .ko 的 modpost、设备端加载或运行时验证。
+
+继续检查了 `lkm/kpm/module.c`、`lkm/kpm/relo.c`、`lkm/kpm/symbols.c`、`lkm/Kbuild` 和 LKM 源码契约验证器。现有 ELF/RELA 边界检查、RELA 失败回滚、跨 CPU I-cache 刷新和缺少关键运行时符号时失败关闭的逻辑均能在源码中定位；但契约脚本是源代码模式断言，不等价于目标内核编译或运行时证明。
+
+当前仍未获得与设备固件精确匹配的 Linux 4.14.141 内核构建目录、生成头文件、`Module.symvers` 和 vendor Kbuild 配置。下一步应继续做不依赖这些文件的源码审计；涉及结构体布局、编译器参数、CFI/LTO 元数据和 MODVERSIONS 的改动，必须等目标构建材料到位后再定。
