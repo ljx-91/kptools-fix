@@ -103,7 +103,7 @@ def main():
     need(r"active_calls--", put, "active callback reference release")
 
     exit_call = body(module, "static long kp_call_exit(")
-    need(r"fn\s*\\?\s*\\(\\*fn\\)", exit_call,
+    need(r"return\s+fn\s*\?\s*\(\*fn\)\(reserved\)\s*:\s*0", exit_call,
          "optional exit callback must be null-safe")
     unload = body(module, "long kp_unload_module(")
     need(r"KP_MODULE_EXITING\s*&&\s*!mod->exit_called", unload,
