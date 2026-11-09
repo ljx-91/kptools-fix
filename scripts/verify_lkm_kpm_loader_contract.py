@@ -229,6 +229,10 @@ def main():
     data = body(relo, "static int reloc_data(")
     need(r"len\s*==\s*64", data, "explicit 64-bit relocation width")
     need(r"1ULL\s*<<\s*len", data, "unsigned 64-bit narrow mask")
+    need(r"op\s*==\s*RELOC_OP_PREL", data,
+         "PREL data relocations must use signed overflow semantics")
+    need(r"value\s*>=\s*\(1LL\s*<<\s*\(len\s*-\s*1\)\)", data,
+         "PREL positive signed-width overflow boundary")
     if re.search(r"\(1\s*<<\s*len\)", data):
         raise AssertionError("undefined 32-bit full-width shift reintroduced")
 
