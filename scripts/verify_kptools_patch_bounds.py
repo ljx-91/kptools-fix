@@ -198,6 +198,8 @@ def main():
     need(r"end\s*>\s*imglen\s*\|\|\s*end\s*<\s*start", generic,
          "resolved kallsyms table coverage must be validated before subtraction")
 
+    need(r"static int arm64_verify_pid_vnr\(kallsym_t \*info,\s*char \*img,\s*int32_t imglen,\s*int32_t offset,\s*int wide\);",
+         kallsym_src, "ARM64 verifier must be forward-declared before banner fallback")
     banner_match = body(kallsym_src, "static int correct_addresses_or_offsets_by_banner(")
     need(r"table_end\s*>\s*imglen", banner_match,
          "banner-based address matching must validate candidate table bounds")
