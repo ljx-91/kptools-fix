@@ -109,7 +109,7 @@ def main():
          "symbol decompressor must validate the input cursor")
     need(r"len\s*>\s*limit\s*-\s*pos", decoder,
          "symbol decompressor must bound compressed name bytes")
-    need(r"memchr\(token,\s*'\0',\s*token_remaining\)", decoder,
+    need(r"memchr\(token,\s*'\\0',\s*token_remaining\)", decoder,
          "symbol decompressor must validate token string termination")
     need(r"append_len\s*>\s*KSYM_SYMBOL_LEN\s*-\s*1\s*-\s*used", decoder,
          "symbol decompressor must bound expanded output")
