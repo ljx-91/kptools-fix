@@ -49,11 +49,11 @@ hook_install = function_body(hook, "int hook_install(")
 checks = {
     "LKM hook executable pages clear BTI guard and verify permissions":
         "kp_hook_init_mm" in runtime and
-        "pte_lockptr(kp_hook_init_mm, pmd)" in hook_make_exec and
-        "set_pte_at(kp_hook_init_mm, addr, pte" in hook_make_exec and
-        "KP_HOOK_PTE_PXN" in hook_make_exec and
-        "KP_HOOK_PTE_UXN" in hook_make_exec and
-        "KP_HOOK_PTE_GP" in hook_make_exec,
+        "pte_lockptr(kp_hook_init_mm, pmd)" in hook_update_exec and
+        "set_pte_at(kp_hook_init_mm, addr, pte" in hook_update_exec and
+        "KP_HOOK_PTE_PXN" in hook_update_exec and
+        "KP_HOOK_PTE_UXN" in hook_update_exec and
+        "KP_HOOK_PTE_GP" in hook_update_exec,
     "LKM hook allocator fails closed when executable page setup fails":
         "kp_hook_make_exec(p, alloc_size)" in hook_exec_alloc and
         "kp_hook_exec_free(p, alloc_size);" in hook_exec_alloc and
