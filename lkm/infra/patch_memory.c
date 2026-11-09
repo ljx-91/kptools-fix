@@ -15,6 +15,7 @@
 #include "symbol_resolver.h"
 
 #include <linux/compiler.h>
+#include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
 #include <asm/cacheflush.h>
@@ -52,6 +53,11 @@
  * direct kernel text alias, so we poke it through a fixmap). init_mm is cached
  * at init (not exported to modules on GKI). */
 static struct mm_struct *kp_patch_init_mm;
+
+/* FIX_TEXT_POKE0 is a single global fixmap slot. Serialize every user so
+ * concurrent text/data/function-pointer patches cannot remap it underneath
+ * another CPU. */
+static DEFINE_RAW_SPINLOCK(kp_fixmap_patch_lock);
 
 __attribute__((no_sanitize("cfi")))
 static unsigned long kp_phys_from_virt(unsigned long addr)
@@ -100,17 +106,30 @@ static unsigned long kp_phys_from_virt(unsigned long addr)
 __attribute__((no_sanitize("cfi")))
 static int kp_patch_data(void *dst, const void *src, size_t len)
 {
-	unsigned long phy = kp_phys_from_virt((unsigned long)dst);
+	unsigned long phy, phy_off, flags;
+	void *map;
+	int ret;
+
+	if (!dst || !src || !len)
+		return -EINVAL;
+	phy = kp_phys_from_virt((unsigned long)dst);
 	if (!phy) {
-		logke("no phys for data patch dst 0x%lx\n", (unsigned long)dst);
+		logke("no phys for data patch dst 0x%lx\\n", (unsigned long)dst);
 		return -ENOENT;
 	}
-	unsigned long phy_off = phy & ~PAGE_MASK;
-	void *map = (void *)set_fixmap_offset(FIX_TEXT_POKE0, phy & PAGE_MASK) + phy_off;
-	int ret = (int)copy_to_kernel_nofault(map, src, len);
+	phy_off = phy & ~PAGE_MASK;
+	/* One fixmap slot maps one page. Callers must split a cross-page patch
+	 * into independently translated pieces before reaching this helper. */
+	if (len > PAGE_SIZE - phy_off)
+		return -E2BIG;
+
+	raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags);
+	map = (void *)set_fixmap_offset(FIX_TEXT_POKE0, phy & PAGE_MASK) + phy_off;
+	ret = (int)copy_to_kernel_nofault(map, src, len);
 	clear_fixmap(FIX_TEXT_POKE0);
 	if (!ret)
 		kp_flush_dcache((unsigned long)dst, len);
+	raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags);
 	return ret;
 }
 
@@ -132,7 +151,7 @@ int kp_patch_memory_init(void)
  * being observed as a torn pointer by concurrent CPUs. */
 int kp_patch_exchange64(void *dst, u64 desired, u64 *original)
 {
-	unsigned long phy, phy_off;
+	unsigned long phy, phy_off, flags;
 	void *map;
 	u64 old, seen;
 
@@ -142,6 +161,9 @@ int kp_patch_exchange64(void *dst, u64 desired, u64 *original)
 	if (!phy)
 		return -ENOENT;
 	phy_off = phy & ~PAGE_MASK;
+	if (sizeof(u64) > PAGE_SIZE - phy_off)
+		return -E2BIG;
+	raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags);
 	map = (void *)set_fixmap_offset(FIX_TEXT_POKE0, phy & PAGE_MASK) + phy_off;
 	old = READ_ONCE(*(volatile u64 *)map);
 	for (;;) {
@@ -153,13 +175,14 @@ int kp_patch_exchange64(void *dst, u64 desired, u64 *original)
 	clear_fixmap(FIX_TEXT_POKE0);
 	kp_flush_dcache((unsigned long)dst, sizeof(u64));
 	dsb(ishst);
+	raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags);
 	*original = old;
 	return 0;
 }
 
 int kp_patch_cmpxchg64(void *dst, u64 expected, u64 desired)
 {
-	unsigned long phy, phy_off;
+	unsigned long phy, phy_off, flags;
 	void *map;
 	u64 seen;
 
@@ -169,14 +192,18 @@ int kp_patch_cmpxchg64(void *dst, u64 expected, u64 desired)
 	if (!phy)
 		return -ENOENT;
 	phy_off = phy & ~PAGE_MASK;
+	if (sizeof(u64) > PAGE_SIZE - phy_off)
+		return -E2BIG;
+	raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags);
 	map = (void *)set_fixmap_offset(FIX_TEXT_POKE0, phy & PAGE_MASK) + phy_off;
 	seen = cmpxchg((volatile u64 *)map, expected, desired);
 	clear_fixmap(FIX_TEXT_POKE0);
-	if (seen != expected)
-		return -EAGAIN;
-	kp_flush_dcache((unsigned long)dst, sizeof(u64));
-	dsb(ishst);
-	return 0;
+	if (seen == expected) {
+		kp_flush_dcache((unsigned long)dst, sizeof(u64));
+		dsb(ishst);
+	}
+	raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags);
+	return seen == expected ? 0 : -EAGAIN;
 }
 
 /* Patch dst with src bytes, then make the change visible to the I-cache.
