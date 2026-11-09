@@ -1199,17 +1199,27 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		/* Keep the image registered while failure cleanup runs. */
 		spin_lock_irqsave(&module_lock, flags);
 		mod->state = KP_MODULE_EXITING;
-		mod->exit_called = true;
 		spin_unlock_irqrestore(&module_lock, flags);
 	}
 	set_load_error(info, "module init failed");
 	logkfi("[%s] failed with [%s] error: %ld, try exit ...\n", mod->info.name,
 	       args ? args : "", rc);
-	if (mod->exit)
-		kp_call_exit(mod->exit, reserved);
+	if (mod->exit) {
+		long exit_rc = kp_call_exit(mod->exit, reserved);
+		if (exit_rc == -EBUSY) {
+			unsigned long flags;
+			spin_lock_irqsave(&module_lock, flags);
+			mod->state = KP_MODULE_UNLOADING;
+			mod->exit_called = false;
+			spin_unlock_irqrestore(&module_lock, flags);
+			rc = -EBUSY;
+			goto out;
+		}
+	}
 	{
 		unsigned long flags;
 		spin_lock_irqsave(&module_lock, flags);
+		mod->exit_called = true;
 		if (mod->hook_refs || mod->active_calls) {
 			spin_unlock_irqrestore(&module_lock, flags);
 			logke("failed KPM init left hook refs; retaining image %s\n", mod->info.name);
@@ -1265,10 +1275,16 @@ long kp_unload_module(const char *name, void __user *reserved)
 	}
 	if (!mod->exit_called) {
 		mod->state = KP_MODULE_EXITING;
-		mod->exit_called = true;
 		spin_unlock_irqrestore(&module_lock, flags);
 		rc = kp_call_exit(mod->exit, reserved);
 		spin_lock_irqsave(&module_lock, flags);
+		if (rc == -EBUSY) {
+			mod->state = KP_MODULE_UNLOADING;
+			mod->exit_called = false;
+			spin_unlock_irqrestore(&module_lock, flags);
+			return -EBUSY;
+		}
+		mod->exit_called = true;
 	}
 	if (mod->active_calls || mod->hook_refs) {
 		spin_unlock_irqrestore(&module_lock, flags);
