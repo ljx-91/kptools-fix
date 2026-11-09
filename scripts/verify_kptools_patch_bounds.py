@@ -63,6 +63,7 @@ def main():
     verify_token_table_cursor_semantics()
     src = (ROOT / "tools/patch.c").read_text(encoding="utf-8")
     kallsym_src = (ROOT / "tools/kallsym.c").read_text(encoding="utf-8")
+    symbol_src = (ROOT / "tools/symbol.c").read_text(encoding="utf-8")
     kallsym_header = (ROOT / "tools/kallsym.h").read_text(encoding="utf-8")
     offsets = body(kallsym_src, "static int find_approx_offsets(")
     need(r"elem_size\s*!=\s*4", offsets,
@@ -134,6 +135,19 @@ def main():
 
     need(r"ret\s*=\s*find_approx_offsets\(info,\s*img,\s*imglen\);\s*if\s*\(!ret\)\s*return\s+0;.*?ret\s*=\s*find_approx_addresses\(info,\s*img,\s*imglen\)",
          dispatcher, "unsupported relative-offset layouts must fall back to the absolute-address scan")
+    map_area = body(symbol_src, "void select_map_area(")
+    need(r"!kallsym\s*\|\|\s*!image_buf\s*\|\|\s*imglen\s*<=\s*0\s*\|\|\s*!map_start\s*\|\|\s*!max_size",
+         map_area, "map-area selection must reject invalid image and output pointers")
+    need(r"addr\s*<=\s*0\s*\|\|\s*addr\s*>=\s*imglen\s*\|\|\s*\(addr\s*&\s*3\)",
+         map_area, "map-area anchor must be positive, in range, and instruction aligned")
+    need(r"hole_size\s*<=\s*0\s*\|\|\s*\(int64_t\)hole_size\s*\*\s*2\s*>\s*imglen",
+         map_area, "map-hole size must not overflow the image or doubled sync range")
+    need(r"aligned_start\s*\+\s*hole_size\s*>\s*imglen",
+         map_area, "non-GKI map hole must remain inside the kernel image")
+    need(r"\(int64_t\)addr\s*\+\s*\(int64_t\)hole_size\s*\*\s*2\s*>\s*imglen",
+         map_area, "GKI PAC scan must bound both instruction windows before reading")
+    need(r"if\s*\(!second_pos\)\s*\{\s*tools_loge_exit",
+         map_area, "unpaired PAC must fail closed if no matching second-window instruction exists")
     num_syms = body(kallsym_src, "static int find_num_syms(")
     need(r"approx_end\s*<\s*0\s*\|\|\s*approx_end\s*>\s*imglen\s*-\s*num_syms_elem_size",
          num_syms, "symbol-count scan must validate its image range")
