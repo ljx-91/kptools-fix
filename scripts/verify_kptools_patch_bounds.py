@@ -124,6 +124,26 @@ def main():
         if "decompress_symbol_name(info, img, &pos" not in fn or "return -1;" not in fn:
             raise AssertionError(f"{call} must propagate bounded decoder failures")
 
+    banner = body(kallsym_src, "int find_linux_banner(")
+    need(r"!info\\s*\\|\\|\\s*!img\\s*\\|\\|\\s*imglen\\s*<=\\s*0", banner,
+         "linux_banner parser must reject invalid image inputs")
+    need(r"remaining\\s*>\\s*prefix_len\\s*\\+\\s*1", banner,
+         "linux_banner parser must bound version-prefix lookahead")
+    need(r"info->banner_num\\s*<\\s*\\(int32_t\\)ARRAY_SIZE", banner,
+         "linux_banner parser must cap stored banner offsets")
+    need(r"if\\s*\\(!info->banner_num\\)", banner,
+         "linux_banner parser must reject images without a valid banner")
+    need(r"memchr\\(uts_release_start,\\s*' ',", banner,
+         "linux release parser must find a bounded in-image delimiter")
+    need(r"release_len\\s*>=\\s*sizeof\\(release\\)", banner,
+         "linux release parser must bound its temporary version buffer")
+
+    ikconfig = body(kallsym_src, "int find_ikconfig_blob(")
+    need(r"!img\\s*\\|\\|\\s*imglen\\s*<=\\s*0\\s*\\|\\|\\s*!start\\s*\\|\\|\\s*!size",
+         ikconfig, "IKCONFIG parser must validate input and output pointers")
+    need(r"imglen\\s*-\\s*kcfg_start", ikconfig,
+         "IKCONFIG end-marker search must stay inside the image")
+
     preset = body(src, "preset_t *get_preset(")
     need(r"min_preset_size", preset, "preset search must require a complete minimum header")
     need(r"tail\s*>=\s*min_preset_size", preset, "preset candidate must fit inside input")
