@@ -127,9 +127,12 @@ checks = {
         "DEFINE_RAW_SPINLOCK(kp_fixmap_patch_lock)" in patch_memory and
         "raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags)" in patch_memory and
         "raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags)" in patch_memory,
-    "fixmap data writes reject cross-page ranges":
+    "fixmap data writes reject cross-page and non-word patches":
+        "len != sizeof(u32)" in patch_data and
+        "((unsigned long)dst & 3)" in patch_data and
         "len > PAGE_SIZE - phy_off" in patch_data and
-        "copy_to_kernel_nofault(map, src, len)" in patch_data,
+        "WRITE_ONCE(*(volatile u32 *)map" in patch_data and
+        "READ_ONCE(*(const u32 *)src)" in patch_data,
     "atomic pointer patchers hold the shared fixmap lock":
         "raw_spin_lock_irqsave(&kp_fixmap_patch_lock, flags)" in patch_exchange and
         "raw_spin_unlock_irqrestore(&kp_fixmap_patch_lock, flags)" in patch_exchange and
