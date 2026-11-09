@@ -86,6 +86,11 @@ checks = {
         body(sucompat, "static long kp_redirect_to_sh(") and
         "copy_to_user(ufilename" not in
         body(sucompat, "static long kp_redirect_to_sh("),
+    "execve redirect checks user-stack arithmetic before staging":
+        "sp < strlen(target) + 1 + 8" in
+        body(sucompat, "static long kp_redirect_to_sh(") and
+        "sp < strlen(LEGACY_SU_PATH) + 1 + 8" in
+        body(sucompat, "static long kp_redirect_to_sh("),
 }
 
 for label, ok in checks.items():
