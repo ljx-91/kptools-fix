@@ -938,6 +938,9 @@ static int is_symbol_name_pos(kallsym_t *info, char *img, int32_t pos, char *sym
     return symidx == symbol_len;
 }
 
+static int arm64_verify_pid_vnr(kallsym_t *info, char *img, int32_t imglen,
+                                int32_t offset, int wide);
+
 static int correct_addresses_or_offsets_by_banner(kallsym_t *info, char *img, int32_t imglen)
 {
     if (!info || !img || imglen <= 0 || info->image_size != imglen ||
