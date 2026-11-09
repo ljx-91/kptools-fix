@@ -63,6 +63,12 @@ def main():
     common_case = symbols[symbols.index("case SHN_COMMON"):symbols.index("case SHN_ABS")]
     need(r"ret\s*=\s*-ENOEXEC", common_case,
          "unsupported SHN_COMMON symbols must be rejected")
+    for pattern, message in [
+        (r"st_value\s*>\s*symsh->sh_size", "symbol section offset"),
+        (r"st_size\s*>\s*symsh->sh_size\s*-\s*sym\[i\]\.st_value", "symbol section extent"),
+        (r"ULONG_MAX\s*-\s*secbase", "runtime symbol address overflow"),
+    ]:
+        need(pattern, symbols, f"defined ELF symbols must validate {message}")
 
     layout = body(module, "static int layout_sections(")
     need(r"get_offset\(", layout, "checked section reservation")
