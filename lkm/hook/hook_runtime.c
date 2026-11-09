@@ -101,8 +101,9 @@ static int kp_hook_make_exec(void *region, unsigned long size)
 	    (base & (PAGE_SIZE - 1)) || size > ULONG_MAX - base)
 		return -EINVAL;
 	end = base + size;
-	if (kp_hook_set_memory_x)
-		kp_hook_set_memory_x(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
+	if (kp_hook_set_memory_x &&
+	    kp_hook_set_memory_x(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT))
+		return -EACCES;
 
 	for (addr = base; addr < end; addr += PAGE_SIZE) {
 		pgd_t *pgd = pgd_offset(kp_hook_init_mm, addr);
@@ -212,6 +213,10 @@ int kp_hook_runtime_init(void)
 	kp_hook_init_mm = (struct mm_struct *)kp_resolve_symbol("init_mm");
 	if (!kp_hook_init_mm) {
 		logke("init_mm unavailable; cannot verify executable Hook memory permissions\n");
+		return -ENOSYS;
+	}
+	if (!kp_hook_flush_icache_all) {
+		logke("flush_icache_all unavailable; cannot publish executable Hook trampolines\n");
 		return -ENOSYS;
 	}
 	/* Select a matched allocator/free pair. Never pass memory from one
