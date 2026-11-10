@@ -191,14 +191,15 @@ int main(void)
         kp_before_prepare_binprm(&chained, NULL);
         chained.ret = 128;
         kp_after_prepare_binprm(&chained, NULL);
-        if (chained.local.data0 != 2 || cred.uid != 0 || cred.gid != 0 ||
-            cred.euid != 0 || cred.egid != 0 || apply_calls != 1 ||
+        if (chained.local.data0 != 2 || (long)chained.ret >= 0 ||
+            cred.uid != 0 || cred.gid != 0 || cred.euid != test_uid ||
+            cred.egid != test_uid || apply_calls != 1 ||
             strcmp(last_sctx, "u:r:magisk:s0")) {
-            fprintf(stderr, "script interpreter hop lost pending SU credentials\\n");
+            fprintf(stderr, "script interpreter hop was not rejected fail-closed\\n");
             return 1;
         }
     }
-    puts("[PASS] repeated prepare_binprm restores effective root IDs without reapplying SELinux context");
+    puts("[PASS] repeated prepare_binprm interpreter chain is rejected fail-closed");
 
     {
         struct file old = { .id = 3 };
