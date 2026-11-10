@@ -441,3 +441,19 @@
 - 已找到同版本、同 SoC、同板级命名的 4.14.141 源码候选（Huawei 开源包），以及较老的 Realme 4.14.141 和较新的 Vivo 4.14.186 参考；仍没有可证明对应 2022-02-15 Y73s 原厂构建的源码提交、生成头文件和 `Module.symvers`。
 - 不会拿 4.14.186 或 Huawei/Realme 不完全匹配的源码生成 `.ko` 并声称可加载；也不会把近似 defconfig 当成原始完整配置。
 - 下一步优先比对 Realme V5 4.14.141 候选与 Y73s Boot 的驱动目录、关键结构体/函数、Kbuild 和完整配置差异；在确认源码基线前继续只做静态审计和 Host/KPIMG 离线测试。
+
+
+## 20. 2026-11-10：对照上游 vivo Y73s / KernelPatch #189 故障记录
+
+- 找到上游 KernelPatch issue #189，设备、内核 banner 和构建时间与当前资料库 Boot 完全对应：vivo Y73s / PD2031，Linux `4.14.141+`，Clang 9.0.3，`#1 SMP PREEMPT Tue Feb 15 12:32:17 CST 2022`。该记录报告旧 kptools 0.12.0 虽然显示 patch done，但 Manager Authentication Failed，连接 Wi-Fi 后 crash。
+- issue #189 旧日志的 Kallsyms 结果为猜测符号数 `0x1a2bc`、`vectors=0x0032f800`、`pid_vnr=0x01846128`、kernel base `0xffffff8008153b00`，并出现 `mismatch relo applied`。这些正是不能接受的近似候选。
+- 当前分支对同一份原始 Boot 的离线结果为精确 `kallsyms_num_syms=0x1a5b9`、`vectors=0x2800`、`pid_vnr=0x01912460`、kernel base `0xffffff8008080000`；`pid_vnr` 入口 veneer 跳转至 `0xd5384108`（SP_EL0 读取），且真实导出符号数精确匹配。这证明当前严格 Kallsyms 路径已纠正 issue #189 中的错误符号定位问题；但不证明 Wi-Fi crash、Manager 鉴权或所有 Vivo 安全模块问题已解决。
+- issue 评论建议应用未合并的 KernelPatch PR #208（严格 Kallsyms 启发式）并回退 PR #225（PAC/map-area NOP 修改）。当前分支已经实现 PR #208 的核心 fail-closed 行为，并加上边界检查；PR #225 类 PAC 扫描仅在 `is_gki=true` 路径运行。原始 Y73s Boot 的注入路径判定为 non-GKI，因此不会执行该 PAC NOP 分支；本轮实测 map anchor 的 0x2000 字节同步区域与原始内核逐字节一致。
+- 另查到作者的 `vivo-4.x-kernel-autopatch` 将 `do_mount_check` 作为**可选 Magisk 兼容补丁**，并明确部分设备不需要；mount fix 也被提示可能导致 boot failure。原始 Y73s kernel 在 `0x01b2944c` 处命中其 9-byte `do_mount_check` 数据模式，但本轮没有修改它。该二进制补丁不是 Kallsyms 修复，也没有证据证明 APatch 必须应用，禁止因搜索命中就自动写入。
+- 下一阶段重点应转向 APatch/KPM 初始化后可能触发的 Vivo 安全模块交互与 Wi-Fi crash 根因；需要可复现的启动日志 / dmesg 或匹配 KDIR 后的动态测试。继续保持离线分析，不刷写设备。
+
+参考：
+- KernelPatch issue #189：https://github.com/bmax121/KernelPatch/issues/189
+- 严格 Kallsyms PR #208：https://github.com/bmax121/KernelPatch/pull/208
+- PAC/map-area PR #225：https://github.com/bmax121/KernelPatch/pull/225
+- Vivo 4.x autopatch：https://github.com/4accccc/vivo-4.x-kernel-autopatch
