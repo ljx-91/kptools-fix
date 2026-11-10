@@ -286,3 +286,46 @@ The same-target fallback option was checked against the actual relocation implem
 This is a useful fail-closed property for a same-target double hook, but it does not repair the current distinct-target problem: KPIMG still writes 16 bytes over four neighboring CFI stubs at `0x019305cc`. It also means simply renaming KPIMG's syscall table entry is likely to make one supercall handler fail to install, not create a shared chain.
 
 The next implementation decision must therefore be an explicit single-owner dispatch design with a proven bridge for the other component, or a deliberate removal/rerouting of one handler. Do not rely on independent Hook Engine copies to compose.
+
+
+### Single-owner feasibility: command-surface and authentication comparison (2026-11-11)
+
+The two syscall-45 handlers are not interchangeable drop-in implementations. Their command surfaces and authorization rules were compared:
+
+| Capability | KPIMG `kernel/patch/common/supercall.c` | LKM `lkm/supercall/dispatch.c` |
+|---|---|---|
+| HELLO / version / kernel version | Yes | Yes |
+| Build time | Yes | Explicit unsupported stub |
+| SU query / task / allowlist / profile | Yes | Yes, through LKM SU state |
+| SU get/reset path | Yes | Yes |
+| SU allow SELinux context get/set | Yes | Not present in LKM dispatch switch |
+| SU safe mode | Android-only | Not present |
+| KStorage read/write/list/remove | Yes | Not present |
+| Superkey get/set/root enable | Yes | Not present |
+| AP package config | Android-only | Not present |
+| KPM load/unload/control/list/info | Yes, KPIMG's own KPM loader | Yes, LKM's separate KPM loader |
+| Control feature | Yes | Stub returns `-ENOENT` |
+| KLOG / bootlog / panic / test | Yes | Not present |
+
+Authentication also differs:
+- KPIMG accepts a preset superkey (read from syscall argument 0), a trusted manager UID, or an SU-allowlisted UID. It sets `is_authed` only for the superkey or trusted manager; KPM and superkey-management commands are behind that stronger authenticated flag.
+- LKM accepts manager UID or SU-allowlisted UID and dispatches its command set without the KPIMG superkey authentication path.
+- Both handlers use the same command-number range and the same syscall number 45, but their implementations are not semantically equivalent.
+
+KPM is especially important: the KPIMG command calls KPIMG's own `kernel/patch/module/module.c` loader and its private symbol resolver. The LKM command calls `lkm/kpm/module.c` and its Linux-kallsyms/LKM compatibility resolver. They are separate module registries and symbol namespaces. Replacing one handler with the other changes which KPM loader owns user-requested modules; it is not just changing the syscall hook owner.
+
+### Consequence for single-owner design
+
+Neither naive removal is currently safe to recommend:
+
+- **Remove KPIMG handler, keep LKM:** LKM can serve its own SU and KPM subset, but KPIMG-only commands and KPIMG's private-symbol KPM loading path become unreachable through the existing syscall ABI. The LKM's current KPM resolver does not automatically gain access to KPIMG private exports.
+- **Remove LKM handler, keep KPIMG:** KPIMG's own SU/KPM interfaces remain, but LKM-specific SU state/commands and its LKM KPM loader are no longer reachable through the manager's current syscall path. The LKM's exec compatibility hook and its SU credential path cannot be assumed to share KPIMG's allowlist/profile state.
+
+A correct consolidation needs an explicit command ownership map and a versioned cross-component dispatch ABI. That ABI must define:
+- which component owns authentication and how the authenticated identity/privilege level is conveyed;
+- which component owns SU policy/profile state and how the LKM exec hook observes the same policy;
+- which KPM loader owns modules, symbol namespaces, module lifetime, and unload;
+- how KPIMG-only commands are preserved or intentionally deprecated;
+- how registration, callback invocation, teardown, and Gate closure are ordered.
+
+Do not implement a handler removal or command forwarding yet. The existing sources do not provide a proven LKM-visible KPIMG registration endpoint, and no shared policy-state ABI was found in this pass. The immediate blocker is now more specific: the Gate needs a real cross-component control/dispatch contract, not merely an exported function name.
