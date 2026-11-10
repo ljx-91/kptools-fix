@@ -39,6 +39,10 @@ long kp_su_sc(const struct su_profile __user *uprofile)
 	profile = memdup_user(uprofile, sizeof(*profile));
 	if (IS_ERR(profile))
 		return PTR_ERR(profile);
+	if (!memchr(profile->scontext, '\0', sizeof(profile->scontext))) {
+		kfree(profile);
+		return -EINVAL;
+	}
 
 	logki("SU requested for to_uid=%u scontext=%.*s\n", profile->to_uid,
 	      (int)sizeof(profile->scontext), profile->scontext);
@@ -50,18 +54,9 @@ long kp_su_sc(const struct su_profile __user *uprofile)
 
 long kp_su_task_sc(pid_t pid, const struct su_profile __user *uprofile)
 {
-	struct su_profile *profile;
-	long rc;
-
-	if (!uprofile)
-		return -EINVAL;
-	profile = memdup_user(uprofile, sizeof(*profile));
-	if (IS_ERR(profile))
-		return PTR_ERR(profile);
-
-	rc = kp_task_su(pid, profile->to_uid, profile->scontext);
-	kfree(profile);
-	return rc;
+	(void)pid;
+	(void)uprofile;
+	return -EOPNOTSUPP;
 }
 
 long kp_su_grant_uid_sc(const struct su_profile __user *uprofile)
@@ -74,6 +69,10 @@ long kp_su_grant_uid_sc(const struct su_profile __user *uprofile)
 	profile = memdup_user(uprofile, sizeof(*profile));
 	if (IS_ERR(profile))
 		return PTR_ERR(profile);
+	if (!memchr(profile->scontext, '\0', sizeof(profile->scontext))) {
+		kfree(profile);
+		return -EINVAL;
+	}
 
 	rc = kp_su_add_allow_uid(profile->uid, profile->to_uid, profile->scontext);
 	kfree(profile);
