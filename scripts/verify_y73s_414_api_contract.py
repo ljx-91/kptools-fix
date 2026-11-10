@@ -99,8 +99,8 @@ require("p4d_offset(pgd, addr)" in patch and
 
 # Exact Y73S 4.14.141 symbol profile: data symbols sys_call_table/init_mm are
 # absent, while text SyS_truncate.cfi and module_alloc/module_memfree exist.
-require('"SyS_truncate.cfi"' in supercall and
-        "sys_truncate" not in supercall.split("kp_install_inline_supercall(", 1)[1].split(";", 1)[0],
+require('kp_install_inline_supercall("SyS_truncate.cfi"' in supercall and
+        'kp_install_inline_supercall("sys_truncate"' not in supercall,
         "Y73S supercall hooks the CFI implementation, not the 4-byte syscall stub")
 require("static long kp_supercall_handler_legacy(long arg0, long arg1," in supercall,
         "4.14 syscall handler uses ordinary ARM64 argument ABI with x0-x5")
