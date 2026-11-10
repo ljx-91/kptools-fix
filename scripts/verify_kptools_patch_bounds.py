@@ -253,6 +253,12 @@ def main():
     need(r"target\s*\+\s*4\s*<=\s*imglen", arm64_stub,
          "CFI branch target must fit inside the image")
 
+    strict_count = body(kallsym_src, "static int find_num_syms(")
+    need(r"#ifndef KP_STRICT_KALLSYMS\s+#define KP_STRICT_KALLSYMS 1",
+         kallsym_src, "Y73S kptools must default to strict kallsyms validation")
+    need(r"#if KP_STRICT_KALLSYMS[\s\S]*?return -1;[\s\S]*?#else[\s\S]*?approx_num_syms - NSYMS_MAX_GAP",
+         strict_count, "unverified symbol count must fail closed instead of using an approximate count")
+
     vectors = body(kallsym_src, "static int correct_addresses_or_offsets_by_vectors(")
     need(r"info->arch\s*!=\s*ARM64", vectors,
          "ARM64 vector heuristic must reject non-ARM64 architectures")
@@ -260,6 +266,8 @@ def main():
          "vector search end arithmetic must use 64-bit intermediates")
     need(r"candidate\s*\+\s*3LL\s*\*\s*elem_size\s*>\s*table_end", vectors,
          "strict alias check must fit all three entries inside the table")
+    need(r"uint64_t\s+first[\s\S]*?candidate\s*\+\s*elem_size[\s\S]*?candidate\s*\+\s*2LL\s*\*\s*elem_size",
+         vectors, "strict ARM64 kallsyms validation must check the first three alias entries")
     need(r"vector_raw\s*<\s*base", vectors,
          "vector address subtraction must reject underflow")
     need(r"vector_next_delta\s*<\s*vector_delta", vectors,
