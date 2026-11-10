@@ -136,7 +136,7 @@ static u64 do_reloc(enum ENUM_OP op, void *place, u64 val)
     return val;
 }
 """.replace("ENUM_OP", enum_op)
-    return prefix + "\n" + function + r"""
+    return (prefix + "\n" + function + r"""
 
 static int run_data_case(const char *name, u64 value, int len, int op,
                          int expected, int unchanged, u64 expected_low)
