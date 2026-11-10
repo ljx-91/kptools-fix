@@ -2,7 +2,7 @@
 
 > 更新时间：2026-11-10  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 当前源码 HEAD（本次文档更新前）：`5ace9911f3996ddfe6866514f0989ef84c6955fd`  
+> 当前源码 HEAD（本次文档更新前）：`26dc2e1bf4acfb9f605c18751f59a6787f6c71a8`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -10,7 +10,7 @@
 本轮完成了 KPIMG 启动映射、LKM/KPM ELF 与 ARM64 重定位、凭据偏移保护、任务扩展身份校验及 Kbuild 条件参数优化。
 
 - 2026-11-09 代码基线的 Y73S GCC 14.2 KPIMG、Host kptools 和 Windows 构建曾通过。
-- 2026-11-10 新增 Kallsyms/RELA/名称解析修改后，最新 HEAD 的 Actions 结果尚未取得；不能沿用旧 Run 作为最新通过证明。
+- 2026-11-10 的 Kallsyms/RELA/名称解析、Boot repack 和 map-hole/PAC 边界修改已由当前 HEAD 的 Linux Host、GCC 14.2 KPIMG、Windows 三条 Actions 全部验证成功（Run 见第 17 节）。
 - 目标 Linux 4.14.141 的真实 `.ko` 编译、KPM 动态加载、设备启动和 APatch/root 验证：尚未完成。
 
 **因此当前结论是源码与 KPIMG 构建阶段取得进展，不是设备可用或可刷入版本。**
@@ -18,13 +18,13 @@
 ## 2. 分支与最近 CI（历史基线）
 
 - 分支：[y73s-cred-layout-guards-20261108](https://github.com/ljx-91/kptools-fix/tree/y73s-cred-layout-guards-20261108)
-- 本次文档更新前最近代码与契约提交：[5ace991](https://github.com/ljx-91/kptools-fix/commit/3f69f882ba5c5b4d98bcfb4976623b99dd3a1b69)
+- 本次文档更新前最近代码与契约提交：[26dc2e1](https://github.com/ljx-91/kptools-fix/commit/26dc2e1bf4acfb9f605c18751f59a6787f6c71a8)
 
 | 工作流 | Run | 结果 | 证明范围 |
 |---|---:|---|---|
-| Y73S Android KPIMG / GCC 14.2 | [42653184629](https://github.com/ljx-91/kptools-fix/actions/runs/42653184629) | 成功 | Y73S KPIMG 构建、栈帧与映射审计、打包 |
-| Y73S host kptools + source contracts | [42653184913](https://github.com/ljx-91/kptools-fix/actions/runs/42653184913) | 成功 | Host 工具构建、12 项源码契约验证 |
-| KernelPatch Windows Build | [42653184632](https://github.com/ljx-91/kptools-fix/actions/runs/42653184632) | 成功 | Android KPIMG 与 Windows kptools.exe 构建及打包 |
+| Y73S Android KPIMG / GCC 14.2 | [42678135541](https://github.com/ljx-91/kptools-fix/actions/runs/42678135541) | 成功 | 当前 HEAD KPIMG 构建、栈帧与映射审计、打包 |
+| Y73S host kptools + source contracts | [42678135670](https://github.com/ljx-91/kptools-fix/actions/runs/42678135670) | 成功 | Host 工具构建、全量源码契约验证 |
+| KernelPatch Windows Build | [42678135438](https://github.com/ljx-91/kptools-fix/actions/runs/42678135438) | 成功 | Windows kptools.exe 构建及打包 |
 
 上述 Run 是 2026-11-09 旧代码基线的历史结果，不代表 2026-11-10 最新 HEAD。全量源码契约审计包含 bootimg I/O、kptools patch bounds、KPIMG loader、KPM lifecycle、LKM/KPM contract、ELF/RELA loader、Hook runtime、supercall input、userd file、Y73s fphook、memblock 和 runtime contract 检查。
 
@@ -373,3 +373,19 @@
 - 当前验证提交：`e42ee0031f1c10b2ecf68d67c5029d3db095df76`。
 
 剩余门槛仍是匹配 4.14.141 的源码/KDIR、生成头文件和 `Module.symvers`，以及真实目标配置下的 `.ko` 编译/modpost、KPM 动态 load/unload、Hook 压力测试。没有进行 Fastboot、刷写、分区写入或真机启动。
+
+
+## 17. 2026-11-10：当前 HEAD 的最新 Linux kptools 真实 Boot 复测
+
+- 当前 HEAD：`26dc2e1bf4acfb9f605c18751f59a6787f6c71a8`（map-hole/PAC 扫描边界契约）。
+- 最新相关 Actions：
+  - Linux Host + 全量源码契约：Run `42678135670`，success。
+  - GCC 14.2 ARM64 KPIMG：Run `42678135541`，success。
+  - Windows kptools：Run `42678135438`，success。
+- 从 Host Run 下载的 `kptools-linux-x86_64` SHA-256：`2b5cca0c94abc9826c8f737b974d11d8816e10c91ff5b40f32e2b5615a1979a7`。
+- 资料库原始 `boot.img` SHA-256：`c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`；解压内核 Image 47,517,708 bytes，SHA-256 `345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`。
+- 用当前 HEAD 的 Host 二进制执行 `kptools -d -i kernel`，退出码 `0`；实际导出 107,961 条符号，与 `kallsyms_num_syms=0x1a5b9` 精确一致。
+- Token Table `0x01e4bd00`；Token Index `0x01e4c100`；Markers `[0x01e4af00, 0x01e4bc30)`；Names `0x01cef600`；Addresses `0x01c1c700`；kernel base `0xffffff8008080000`。
+- `vectors` 导出地址 `0x00002800`；`pid_vnr` 的 CFI stub/veneer 校验成功，跳转目标 `0x0011bc10`，指令 `0xd5384108`，识别为 SP_EL0 读取路径。
+- 日志中的候选回退警告对应不匹配候选被拒绝后继续尝试；最终候选通过精确 symbol count、vectors 和 pid_vnr 验证。没有出现工具崩溃或非零退出。
+- 以上是当前 HEAD 对原始 Boot 解压内核的真实离线 Kallsyms 测试，不是设备启动或 APatch 初始化测试。没有使用 Fastboot、没有刷写、没有写设备分区。
