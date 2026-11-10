@@ -486,3 +486,71 @@ Minimum privilege levels:
 The exact mapping of legacy commands to these levels must be reviewed against the manager application before changing behavior. Do not silently upgrade or downgrade existing callers.
 
 Status: the SU auth mismatch, duplicated allowlist state, command behavior differences, and persistent path pointer contract are source-confirmed. No production changes were made. The proposed ABI is a design constraint, not yet an implementation. No vendor-KDIR build or device test is claimed.
+
+
+### Dual KPM loader audit: independent registries, symbol universes, and executable-memory policy (Y73s / Linux 4.14.141, 2026-11-11)
+
+This pass compared the KPIMG loader (`kernel/patch/module/module.c`) and LKM loader (`lkm/kpm/module.c`) rather than assuming their similarly named APIs form one subsystem.
+
+#### 1. They are two independent module registries
+
+KPIMG owns `struct module`, `modules.list`, and its own `module_lock`. LKM owns `struct kp_module`, a separate `modules.list`, and a different `module_lock`. Each registry independently tracks `LOADING/LIVE/UNLOADING/EXITING/DEAD`, `active_calls`, and `hook_refs`.
+
+Consequences:
+- Both loaders can accept the same KPM `.kpm.info` name because duplicate-name checks are local to each registry. No cross-registry uniqueness check exists.
+- KPIMG list/count/info/control/unload operate only on KPIMG's registry; LKM equivalents operate only on LKM's registry. The same visible name can therefore identify two different images depending on which supercall dispatcher receives the command.
+- Each loader owns its own callback owner tokens. KPIMG `kp_kpm_owner_pin/unpin/call_get/call_put` are KPIMG-private exports; LKM's identically named functions are local to the LKM KPM implementation and are used by the LKM Hook Engine. A token from one registry is not valid in the other.
+- Their unload state machines are similar in broad outline, but the registry locks, module objects, executable allocations, and in-flight reference counts are not shared.
+
+This is a real namespace split, not just duplicate front-end wrappers.
+
+#### 2. The symbol universes are deliberately different
+
+KPIMG's `simplify_symbols()` resolves undefined KPM symbols using KPIMG's private `symbol_lookup_name()`. The source explicitly leaves Linux `kallsyms_lookup_name()` fallback disabled in that path.
+
+LKM's `simplify_symbols()` resolves in this order:
+1. LKM's own `kp_kpm_symbol_lookup()` compatibility table;
+2. Linux `kallsyms_lookup_name()`.
+
+Neither loader calls the other loader's private resolver or shares an export table. `KP_EXPORT_SYMBOL` records are KPIMG-private `.kp.symbol` entries, not Linux module exports. Consequently, moving a KPM binary from one loader to the other is not a transparent operation: an undefined symbol may resolve in one namespace and fail in the other, or resolve to a different provider. A unified loader would need a versioned, collision-checked symbol ABI and a compatibility audit of every KPM import; adding guessed aliases is not safe.
+
+#### 3. Executable-memory and CFI/BTI handling are not equivalent
+
+The LKM loader:
+- resolves matched allocator/free pairs (`module_alloc/module_memfree`, `execmem_alloc/execmem_free`, or a guarded vmalloc backend);
+- verifies executable page permissions and BTI/GP state before entering KPM init;
+- flushes the KPM instruction cache;
+- restores NX/GP before freeing, and deliberately leaks the region if permission restoration cannot be verified;
+- installs a KPM CFI-range bypass before exposing KPM commands when `CONFIG_CFI_CLANG` is enabled, and refuses to initialize the KPM loader if that bypass is unavailable.
+
+The inspected KPIMG loader's `move_module()` allocates with KPIMG `kp_malloc_exec()`, copies sections, and later calls `flush_icache_all()`; that path does not contain the LKM loader's per-image executable-PTE/BTI verification and NX/GP restoration protocol. KPIMG uses its own earlier `bypass_kcfi()` startup path. These are distinct mitigation and memory-lifecycle implementations; one cannot be assumed to validate or protect the other's KPM images.
+
+For Y73s 4.14.141 specifically, the LKM runtime probes `module_alloc` and `module_memfree` by symbol name and chooses that pair when both exist. This is a runtime selection, not proof that the vendor allocator's exact PTE/BTI properties have been validated. The original Y73s boot evidence and vendor KDIR are still required to close that target-specific property.
+
+#### 4. The current syscall command IDs cannot identify which KPM registry is intended
+
+Both dispatchers expose the same KPM command IDs from the shared supercall UAPI:
+- `SUPERCALL_KPM_LOAD`
+- `SUPERCALL_KPM_UNLOAD`
+- `SUPERCALL_KPM_CONTROL`
+- `SUPERCALL_KPM_LIST`
+- `SUPERCALL_KPM_INFO`
+- module count query.
+
+The command payload does not include a loader namespace/version selector. Today the receiving dispatcher implicitly selects the registry. If syscall 45 becomes KPIMG-owned and blindly forwards all these commands to the LKM backend, existing KPIMG-loaded KPMs become invisible/unmanageable through those commands; if it keeps all commands in KPIMG, existing LKM KPMs become invisible/unmanageable. Forwarding by module name is ambiguous when both registries contain the same name.
+
+#### 5. Safe consolidation options
+
+No safe one-line choice exists. The viable choices require an explicit compatibility migration:
+
+A. **KPIMG owns the syscall and keeps the KPIMG KPM registry.** LKM-only KPM features and existing LKM KPM images need a migration/import/export plan. The KPIMG resolver must not be extended with arbitrary Linux symbols without a reviewed export manifest.
+
+B. **KPIMG owns the syscall and routes a separately versioned LKM-KPM namespace through the per-call `__symbol_get()` bridge.** This preserves both registries temporarily, but it is not one KPM loader: the UAPI must expose the namespace explicitly, list/info/control/unload must be namespace-qualified, duplicate names must be unambiguous, and each loader's own CFI/BTI and owner-lifetime policy remains separate. This is a compatibility bridge, not final consolidation.
+
+C. **One loader becomes canonical and the other is retired.** Before retirement, inventory deployed KPM binaries and all imports, test relocation compatibility, define migration of module state and hooks, and prove that the canonical loader can safely load every supported image on Y73s 4.14.141. No such inventory or compatibility proof currently exists.
+
+The safest immediate design is option B as a transitional ABI only if backward compatibility requires both existing KPM populations to remain manageable. It must be treated as two explicit namespaces, not as one merged name space. Final consolidation should wait until a KPM compatibility inventory exists.
+
+#### 6. No production changes in this pass
+
+The dual-registry behavior, duplicate-name ambiguity, separate owner tokens, private-vs-Linux symbol lookup, common command IDs, and differing executable-memory mitigation paths are source-confirmed. No production code was changed. No KPM migration was attempted, no vendor-KDIR build was run, and no device test is claimed.
