@@ -186,11 +186,17 @@ require(sucompat_install.index("kp_prepare_binprm_addr = addr") <
         sucompat_install.index("hook_wrap1(") and
         "return hook_wrap1(" in sucompat_install,
         "prepare_binprm target is recorded before patching so uncertain installs remain cleanable")
-require("hook_unwrap_remove(" in sucompat_exit and
+unwrap_wait = sucompat.split("static int kp_unwrap_wait(", 1)[1].split(
+    "/* ---- getname_flags", 1
+)[0]
+require("kp_unwrap_wait(" in sucompat_exit and
         "hook_unwrap(" not in sucompat_exit and
+        "hook_unwrap_remove(" in unwrap_wait and
+        "while (rc == -EBUSY)" in unwrap_wait and
+        "cond_resched();" in unwrap_wait and
         "if (!unhook_rc || unhook_rc == -ENOENT)" in sucompat_exit and
         "return rc;" in sucompat_exit,
-        "sucompat teardown checks transit-reader retirement and retains live-hook state on failure")
+        "sucompat teardown retries active transit readers and retains live-hook state on failure")
 init_body = init_source
 require(init_body.index("sucompat_installed = true;") <
         init_body.index("rc = kp_sucompat_hook_init();") and
