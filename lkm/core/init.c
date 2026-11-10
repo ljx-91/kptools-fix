@@ -155,7 +155,7 @@ err_unwind:
 	/* module_init() failure does not invoke module_exit(). Undo every hook
 	 * installed by this init attempt before the loader frees this module. */
 	if (supercall_installed)
-		kp_supercall_uninstall();
+		BUG_ON(kp_supercall_uninstall());
 	if (sucompat_installed)
 		BUG_ON(kp_sucompat_hook_exit());
 	if (kpm_initialized)
@@ -169,9 +169,10 @@ err_unwind:
 
 static void __exit kernelpatch_exit(void)
 {
+	/* Remove the externally reachable control entry first. */
+	BUG_ON(kp_supercall_uninstall());
 	BUG_ON(kp_sucompat_hook_exit());
 	BUG_ON(hook_rename_lsm_exit());
-	kp_supercall_uninstall();
 	/* Unhook the CFI bypass last so it shields the other teardown from
 	 * spurious CFI failures on LKM/KPM text. */
 	/* module_exit() cannot veto unload: stop rather than free module text if
