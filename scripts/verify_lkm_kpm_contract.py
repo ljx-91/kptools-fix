@@ -205,6 +205,21 @@ def main():
     require(r"else\s*\{[\s\S]*?rc = kp_kpm_init\(\)",
             init_entry, "Clang CFI builds may initialize KPM only after bypass success")
 
+    # module_init() failure does not call module_exit(); hooks installed by
+    # a partially completed init must be explicitly unwound before returning.
+    require(r"bool\s+cfi_bypass_installed\s*=\s*false", init_entry,
+            "LKM init must track whether the CFI bypass was installed")
+    require(r"bool\s+supercall_installed\s*=\s*false", init_entry,
+            "LKM init must track whether the supercall hook was installed")
+    require(r"bool\s+sucompat_installed\s*=\s*false", init_entry,
+            "LKM init must track whether the sucompat hook was installed")
+    require(r"kp_supercall_install\(\)[\s\S]*?if\s*\(rc\)\s*goto\s+err_unwind",
+            init_entry, "supercall install failure must enter init rollback")
+    require(r"kp_sucompat_hook_init\(\)[\s\S]*?if\s*\(rc\)\s*goto\s+err_unwind",
+            init_entry, "sucompat install failure must enter init rollback")
+    require(r"err_unwind:[\s\S]*?if\s*\(sucompat_installed\)\s*kp_sucompat_hook_exit\(\)[\s\S]*?if\s*\(supercall_installed\)\s*kp_supercall_uninstall\(\)[\s\S]*?if\s*\(cfi_bypass_installed\)\s*kp_bypass_kcfi_exit\(\)[\s\S]*?return rc",
+            init_entry, "failed module init must unwind sucompat, supercall and CFI hooks in reverse order")
+
     unload_gate = body(module, "long kp_unload_module(")
     require(r"mod->active_calls\s*\|\|\s*mod->hook_refs[\s\S]*?return\s*-EBUSY",
             unload_gate, "KPM image must remain resident while callbacks or hooks reference it")
