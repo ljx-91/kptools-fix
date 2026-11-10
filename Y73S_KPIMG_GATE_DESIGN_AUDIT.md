@@ -201,3 +201,28 @@ Therefore the syscall-45 collision is a concrete architectural hazard, but the e
 
 Do not build a Gate bridge on top of either current syscall-45 handler until a single owner/dispatch contract is established. The robust direction is to define one resident owner for syscall-45 dispatch and an explicit, versioned registration ABI for the other component, or to remove one of the competing handlers. Merely adding another hook callback in one image cannot register it with the other image's chain.
 
+
+### Y73S Boot symbol cross-check: syscall 45 alias versus CFI body
+
+The previously uploaded `vivo-y73s-kallsym-test.log` was searched directly for the exact truncate symbols. It contains two distinct symbol regions:
+
+- `SyS_truncate.cfi` at Image offset `0x003cd6b8` (the implementation body selected by the LKM).
+- `SyS_truncate` and `sys_truncate` aliases at Image offset `0x019305cc`.
+- The following aliases are densely adjacent at four-byte intervals: `compat_SyS_truncate` at `0x019305d0`, `SyS_ftruncate` at `0x019305d4`, and `compat_SyS_ftruncate` at `0x019305d8`.
+
+The LKM source explicitly documents that Linux 4.14 ARM64's public `sys_truncate` alias is a four-byte CFI jump-table stub and intentionally resolves `SyS_truncate.cfi` instead. Its resolver uses `kallsyms_lookup_name("SyS_truncate.cfi")`, which matches the Y73S symbol log at `0x003cd6b8`.
+
+KPIMG `syscalln_name_addr()` uses a different name-resolution policy: for a table name it tries prefixes `__arm64_` then empty, and suffixes `.cfi_jt`, `.cfi`, then empty. If (as expected for native syscall number 45) the KPIMG table entry name is `sys_truncate`, the Y73S KALLSYMS contains no `__arm64_sys_truncate`, no `sys_truncate.cfi_jt`, and no `sys_truncate.cfi`; the final fallback is the plain `sys_truncate` alias at `0x019305cc`. The actual table initializer for entry 45 was not located in the reviewed file set, so this last mapping remains a high-confidence conditional rather than a fully closed proof.
+
+The consequence if that mapping is confirmed is severe and concrete: KPIMG's `hook_prepare()` emits a 4-instruction absolute branch (`branch_absolute()`), and `hook_install()` patches `tramp_insts_num` words. At a four-byte CFI stub this writes 16 bytes beginning at `0x019305cc`, spanning the four adjacent entries at `0x019305cc`, `0x019305d0`, `0x019305d4`, and `0x019305d8`. `hook_prepare()` also snapshots six words from that address. This is exactly the adjacent-CFI-entry corruption the LKM's explicit target-selection comment is designed to avoid.
+
+Therefore do not assume KPIMG and LKM simply hook the same function body. The likely current arrangement is KPIMG hooking the CFI jump-table stub while LKM hooks the implementation body; these hooks could execute in series for truncate, but KPIMG's 16-byte overwrite can also damage neighboring CFI entries and its trampoline may relocate adjacent branch stubs. The exact runtime branch chain is not established from KALLSYMS alone.
+
+### Required closure before Gate work
+
+1. Locate the exact KPIMG native syscall-name table initializer and prove `syscall_name_table[45].name` (or `.addr`) for this build.
+2. Disassemble the original Y73S Image bytes at offsets `0x019305cc..0x019305e0` and `0x003cd6b8`, recording all four jump-table instructions and the implementation entry.
+3. If KPIMG resolves the plain alias, treat its current syscall-45 inline hook as unsafe on this target; fix the resolver/table to select the canonical implementation body or remove the competing KPIMG handler, then add a regression test that rejects a 4-byte CFI-jump-table target.
+4. Re-audit install/uninstall order and trampoline composition after the target is corrected. Do not infer safety merely because the two entry addresses differ.
+
+This is still a source/symbol audit; no Y73S runtime trace, vendor-KDIR build, or device test has been performed. No production hook code was changed in this pass.
