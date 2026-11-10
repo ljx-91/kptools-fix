@@ -1069,3 +1069,38 @@ Host harness 使用 ELF64 的 `Elf64_Shdr`、`Elf64_Sym`、`Elf64_Rela` 构造�
 - 修正提交对应的 GCC KPIMG 构建 run `42795362369` 已完成编译和审计步骤，最后的 workflow 收尾状态当时仍在进行；Windows 构建另有对应任务，待最终状态确认。
 
 此项验证是 Host 合成符号表 + 真实函数体执行，并非完整 ELF 端到端加载。它不是 Y73s 真机验证，也不替代精确 Linux 4.14.141 KDIR 编译。
+
+
+## 33. 双加载器 section layout 与最终映像复制 Host Fixture（2026-11-10）
+
+### 新增测试
+
+新增 `scripts/test_kpm_layout_copy.py`，直接从 LKM 与 KPIMG 生产源码提取并执行：
+- 两套 `get_offset()`；
+- 两套 page-alignment helper；
+- 两套 `layout_sections()`；
+- 两套 `move_module()`。
+
+合成 ELF fixture 包含 executable、RO、RW、NOBITS 和 `.kpm.info` 节，检查最终模块大小、text/RO 边界、节偏移、PROGBITS 内容复制、NOBITS 零初始化、init/exit 入口地址，以及搬迁后 name/version 指针是否仍指向新映像中的 metadata。
+
+另覆盖：
+1. 非 2 次幂 section alignment 被两套 loader 拒绝；
+2. 最终目的映像复制范围越界被拒绝；
+3. executable allocation 失败返回错误。
+
+### Harness 修正
+
+首轮编译发现提取函数后，测试没有同步改写被提取的 helper 调用名；已在 fixture 中显式映射到各自的 LKM/KPIMG helper。之后发现两套实现对非法 alignment 返回的负 errno 不同（LKM 将 helper 错误映射为 `-EOVERFLOW`，KPIMG 返回 `-ENOEXEC`），测试改为验证双方均 fail-closed，不强求内部 errno 一致。这些是 Host harness 的适配问题，不是生产代码故障。
+
+### CI
+
+- 测试脚本提交：`e36d099a1b0f4e98606e7be5455bbe1f4252d0c6`
+- workflow 接入提交：`67251633381239cc22adbc686fddcc25853ea98d`
+- helper 调用映射修正：`7d0d8793e05743e0e990141aa90929a9fa6d09dd`
+- errno 断言修正：`50a3a8a8fefd2eb26b7651a51a3840686993d247`
+- Host run `42795923519` 的 `Audit LKM KPM ELF loader source` job 成功；日志明确输出 LKM、KPIMG layout/copy 及 3 类失败路径的全部 `[PASS]`。同一 run 的 `build-kptools` 已完成编译和打包步骤，artifact 上传当时仍在收尾。
+- 符号转换 Host run `42795362396` 成功；GCC KPIMG run `42795362369` 成功；Windows kptools 在 run `42795484540` 成功（该 Windows run 对应符号修复后的提交）。
+
+### 验证边界
+
+这是合成 ELF fixture 执行生产布局/复制函数，不等于任意真实 KPM 文件的完整端到端加载；尚未在精确 Y73s Linux 4.14.141 KDIR 编译，也未在 Y73s 真机加载。最新布局测试提交对应的 GCC / Windows CI 仍需单独确认。
