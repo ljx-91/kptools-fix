@@ -150,12 +150,6 @@ int kp_supercall_install(void)
 			      KP_SUPERCALL_NR);
 			return 0;
 		}
-		if (rc == -EUCLEAN) {
-			/* Failed rollback leaves the table slot uncertain. A second
-			 * backend cannot make returning from init safe. */
-			logke("syscall-table patch rollback is uncertain; refusing fallback\n");
-			BUG_ON(1);
-		}
 		logkw("syscall-table supercall unavailable (%d); falling back to wrapper hook\n", rc);
 	}
 	rc = kp_install_inline_supercall("__arm64_sys_truncate",
