@@ -416,3 +416,73 @@ The current boot sequence supports resolving the module-symbol helpers before sy
 - A single-owner KPIMG route should resolve the actual `SyS_truncate.cfi` implementation body (present in the original Y73s KALLSYMS) rather than the `sys_truncate` alias, and the LKM must stop installing its own syscall-45 hook. The LKM then exposes only the versioned command backend export, acquired per call with `__symbol_get()`.
 
 This is a candidate migration sequence, not an implemented change. Before modifying the name table, the resolver must be tested against the exact Y73s symbol spellings and its generated target address must be asserted as `0x003cd6b8` (the `SyS_truncate.cfi` body), never `0x019305cc` (the unsafe alias). The LKM hook removal and KPIMG backend forwarding must land atomically or in an order that never leaves syscall 45 unhandled or double-hooked.
+
+
+### SU authorization and policy-state ownership audit (Y73s / Linux 4.14.141, 2026-11-11)
+
+This pass compared the actual KPIMG and LKM entry checks, dispatch switches, SU allowlist storage, profile handling, and KPM command handlers.
+
+#### 1. Authentication levels are not equivalent
+
+KPIMG `kernel/patch/common/supercall.c::before()` computes two separate facts:
+
+- `is_trusted_caller`: preset superkey accepted, trusted manager UID, or SU-allowlisted UID.
+- `is_authed`: preset superkey accepted or trusted manager UID. An ordinary SU-allowlisted UID does not set this bit.
+
+The KPIMG `supercall()` dispatcher applies `if (!is_authed) return -EPERM;` before the Superkey management and KPM command groups. Therefore KPIMG distinguishes SU access from management-level KPM/Superkey access.
+
+The LKM `lkm/supercall/supercall.c::kp_supercall_handler()` accepts manager UID or `kp_is_su_allow_uid(uid)`, then calls `kp_handle_supercall()` without passing a stronger-authentication bit. `lkm/supercall/dispatch.c` routes KPM load, unload, control, list, count, and info directly to the KPM handlers; `lkm/kpm/kpm.c` has no second manager/superkey authorization check in those handlers.
+
+Both implementations initialize UID 2000 (Android shell) and UID 0 in their allowlists. Consequently, the LKM path permits an ordinary allowlisted UID, including the default shell entry, to reach LKM KPM management commands. The KPIMG path denies those commands to an allowlisted-only caller unless it also satisfies the stronger authentication rule.
+
+**Severity: high.** Forwarding LKM KPM commands through a bridge that merely carries “caller is allowed” would preserve the weaker LKM policy and widen KPM-management access. The bridge ABI must carry a KPIMG-derived privilege class (at minimum `SU_ALLOWED` versus `MANAGER_AUTHENTICATED`) and LKM KPM handlers must reject requests below the required class. The backend must not independently re-infer privilege from a caller-supplied UID or a boolean supplied by userspace.
+
+#### 2. The two SU allowlists are independent state stores
+
+- KPIMG `kernel/patch/common/sucompat.c` owns a private `su_kstorage_gid` allocated from KPIMG's own KStorage implementation.
+- LKM `lkm/supercall/sucompat.c` owns a separate `su_group` allocated from the LKM's own KStorage implementation.
+- Both seed UID 2000 and UID 0 with the Magisk SELinux context, but subsequent grant/revoke operations update only the backend that receives the command.
+- No shared backing store, synchronization, generation counter, or cross-backend invalidation mechanism was found.
+
+Therefore a manager granting an app through one dispatcher does not establish that the other backend's SU exec hooks will recognize that UID. A split-owner transition can create contradictory authorization state. The unified design must nominate exactly one canonical allowlist owner and make every SU execution path query that owner through a stable interface, or deliberately disable the duplicate path. Mirroring writes asynchronously is not sufficient for security decisions.
+
+#### 3. SU command semantics differ
+
+| Command | KPIMG | LKM | Finding |
+|---|---|---|---|
+| `SU` | `commit_su()` | `kp_commit_su()` | Separate credential implementations; both must retain fail-closed SELinux behavior |
+| `SU_TASK` | `task_su()` | `-EOPNOTSUPP` | Not equivalent; LKM intentionally refuses cross-task cred replacement |
+| `SU_GRANT_UID/REVOKE_UID` | KPIMG KStorage | LKM KStorage | Independent allowlists; LKM validates NUL in profile context, KPIMG forces final byte to NUL |
+| `SU_NUMS/LIST/PROFILE` | KPIMG allowlist | LKM allowlist | Reads can disagree because stores are independent |
+| `SU_GET_PATH/RESET_PATH` | KPIMG pointer-backed path | LKM fixed 128-byte buffer | Different lifetime and validation semantics |
+| `SU_GET/SET_ALLOW_SCTX` | Implemented in KPIMG | Not exposed in LKM dispatcher | KPIMG-only global context controls |
+| `SU_GET_SAFEMODE` | Android-only KPIMG | Absent | KPIMG-only |
+| SU exec interception | KPIMG `sucompat.c` hooks | LKM port explicitly allowlist-only; exec hooks out of scope | LKM cannot replace KPIMG exec compatibility path as-is |
+
+The KPIMG `su_reset_path()` stores the passed pointer directly and has no allocation/free or lifetime management in the setter; the caller path uses `strndup_user()`. The LKM copies the path into a fixed static buffer and rejects overlong paths. These are not interchangeable contracts. The unified ABI should copy and validate the path into backend-owned storage, and should not forward a transient userspace-derived pointer into a persistent KPIMG field.
+
+#### 4. Privilege boundaries for non-KPM commands also need an explicit policy
+
+KPIMG currently places SU grant/revoke, path reset, global SELinux context set, control-feature, and generic KStorage read/write/list/remove before its `is_authed` gate. Thus these operations are available to any caller that passed the outer trusted-caller check, including an ordinary SU-allowlisted UID. The generic KStorage commands accept a caller-selected group and data ID, so their effective authority is broader than a narrowly scoped SU allowlist API.
+
+LKM has no generic KStorage supercall surface and does not expose KPIMG's global SELinux context commands. It does expose SU grant/revoke/path commands to the outer manager-or-allowlisted caller. This is a policy design question, not merely a dispatch mismatch: the bridge must explicitly state which commands require SU privilege, manager privilege, or superkey authentication. It must not accidentally make KPIMG's broad legacy pre-auth command surface the permanent new policy.
+
+#### 5. Safe ABI contract derived from this audit
+
+The versioned request must include:
+- ABI version and structure size;
+- command ID and fixed-width arguments;
+- a kernel-derived privilege enum, not a userspace-supplied UID/authorization boolean;
+- a separate `handled` result from the operation's errno/result, so “backend does not own this command” cannot be confused with “owned operation failed”;
+- explicit pointer direction/length rules for every user buffer;
+- one canonical owner for SU allowlist, profile, default SELinux context, and SU path state.
+
+Minimum privilege levels:
+- `PUBLIC_QUERY`: only explicitly safe version/hello queries;
+- `SU_ALLOWED`: SU self-operation and narrowly scoped SU status;
+- `MANAGER_AUTHENTICATED`: grant/revoke/configuration and KPM management;
+- `SUPERKEY_AUTHENTICATED`: only commands whose existing contract specifically requires preset superkey authentication.
+
+The exact mapping of legacy commands to these levels must be reviewed against the manager application before changing behavior. Do not silently upgrade or downgrade existing callers.
+
+Status: the SU auth mismatch, duplicated allowlist state, command behavior differences, and persistent path pointer contract are source-confirmed. No production changes were made. The proposed ABI is a design constraint, not yet an implementation. No vendor-KDIR build or device test is claimed.
