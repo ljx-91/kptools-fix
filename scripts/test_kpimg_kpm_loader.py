@@ -243,7 +243,7 @@ int main(void)
 
     if (setup(&info) || strcmp(info.info.name, "fixture") ||
         strcmp(info.info.version, "1.0") || !info.info.base ||
-        !info.info.license == 0) {
+        info.info.license != NULL) {
         fprintf(stderr, "valid KPIMG metadata fixture rejected or parsed incorrectly: %s\n",
                 info.info.error_msg);
         return 1;
