@@ -153,7 +153,9 @@ require("kp_syscall_table_init()" in sucompat_init and
         sucompat_init.index("kp_syscall_table_init()") < sucompat_init.index("kp_syscall_hook("),
         "sucompat initializes the syscall table before attempting the syscall hook")
 require("return kp_hook_prepare_binprm()" in sucompat_hook and
-        "kp_resolve_symbol(\"prepare_binprm.cfi\")" in sucompat_hook,
+        "kp_resolve_symbol(\"prepare_binprm.cfi\")" in sucompat_hook and
+        'kp_resolve_symbol("open_exec")' in sucompat_hook and
+        "kp_open_exec(KP_SH_PATH)" in sucompat_hook,
         "Y73S sucompat falls back to the real 4.14 prepare_binprm text symbol when sys_call_table is hidden")
 require("bprm->file = shell_file" in sucompat_hook and
         "bprm->filename = KP_SH_PATH" in sucompat_hook and
