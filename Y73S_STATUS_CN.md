@@ -2084,3 +2084,40 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 - 未完成：没有目标 KDIR，因此未验证 vendor waitqueue 布局、sidecar 的目标编译偏移或 Clang 9.0.3 汇编链接；未修改生产 Hook ABI 或 Gate 代码，也没有把本地 440-byte 原型标记为可用。
 - LKM 卸载竞态仍未修复；此前 511 状态/12 终态只是抽象协议模型，不替代生产 Gate。
 - 不使用 Fastboot，不刷写、不修改分区，不执行真机启动测试。
+
+
+## 68. 2026-11-11：LKM 直接 Hook 参数数量与 Gate 覆盖面盘点
+
+本轮从当前分支的 `lkm/infra/secpass.c`、`lkm/supercall/supercall.c`、`lkm/manager/manager.c` 和 `kernel/include/hook.h` 逐项检查 Hook API 调用方式，为后续显式 argno 的 direct-Hook API 做迁移清单。
+
+### 直接 hook() 调用点
+
+| 目标符号 / 路径 | 当前 replacement 原型 | Gate argno | 依据 |
+|---|---|---:|---|
+| `find_check_fn` | `__replace_find_check_fn(unsigned long addr)` | 1 | replacement 的 C 原型 |
+| `report_cfi_failure` | `__replace_report_cfi_failure(struct pt_regs *, unsigned long, unsigned long *, u32)` | 4 | replacement 的 C 原型 |
+| `__cfi_slowpath_diag` / `__cfi_slowpath` | `__replace_cfi_slowpath(uint64_t, void *, void *)` | 3 | replacement 的 C 原型 |
+| syscall wrapper 配置 | `kp_supercall_handler(const struct pt_regs *)` | 1 | `CONFIG_ARCH_HAS_SYSCALL_WRAPPER` 路径 |
+| Y73s Linux 4.14 legacy | `kp_supercall_handler_legacy(long, long, ulong, ulong, ulong, ulong)` | 6 | 无 syscall wrapper；replacement 明确接收 x0–x5 |
+
+注意：legacy syscall 的原始 `SyS_truncate.cfi` 业务原型只有两个参数，但当前 replacement 使用六参数 ABI 读取 supercall payload。Gate 必须按 replacement ABI 保存/恢复六个参数寄存器，不能按原始函数声明的两个参数截断。
+
+### 现有 chain API
+
+- manager 的 `security_path_rename` / `security_inode_rename` 使用 `hook_wrap5()`。
+- `hook_wrap()` 本身已有 argno，范围 0–12。
+- 当前 `hook()` 只有 `hook(void *func, void *replace, void **backup)`，缺少参数数量；Gate 无法安全地从函数指针推导参数数目。
+- 因此未来需要显式参数数量的 direct API（例如新增 `hook_abi(func, argno, replace, backup)`），保留旧 `hook()` 作为兼容入口只能在明确策略下进行；不得把未知 argno 默认成 0，也不得悄悄对外改变旧 API 的调用 ABI。
+
+### Gate 覆盖要求与风险边界
+
+- 所有 inline direct hook 与 chain hook 都必须先经过 resident Gate；只迁移 `hook_wrap()` 不足以保护 secpass 与 syscall direct hooks。
+- manager 当前通过 `hook_wrap5()` 已明确参数数目；后续还需盘点 sucompat 的 `prepare_binprm` 和任何函数指针 Hook backend，确保不存在绕过 Gate 的执行入口。
+- Gate closed 分支必须只读取永久保留的 sidecar 状态与 original trampoline；不能访问已卸载 LKM 的 replacement、transit 或静态数据。
+- 以上 argno 是按当前 replacement 函数原型盘点的源码事实，不等同于已通过目标 Clang 9.0.3 编译、CFI 检查或设备运行验证。
+
+### 本轮结论
+
+已明确 direct-Hook 的 5 条配置路径参数数目（1、4、3、1、6），并确认现有 `hook()` API 无法向 Gate 提供这些信息。尚未改动 API 或生产 Hook backend：在没有匹配 Y73s KDIR 时贸然改共享头文件和 Hook ABI，无法完成目标构建与 MODPOST 验证。下一步先完成全 LKM hook/fp_hook 调用点盘点，再设计向后兼容的 argno API 与 sidecar 发布/撤销顺序。
+
+卸载竞态仍未修复；Host 结构布局测试及最新 CI 运行结果需要单独确认。无 Fastboot、刷写、分区写入或真机启动测试。
