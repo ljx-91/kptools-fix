@@ -37,6 +37,10 @@ def main():
     relo = read("lkm/kpm/relo.c")
     header = read("lkm/kpm/module.h")
     workflow = read(".github/workflows/build.yml")
+    hook_source = read("kernel/base/hook.c")
+    hook_header = read("kernel/include/hook.h")
+    secpass = read("lkm/infra/secpass.c")
+    core_init = read("lkm/core/init.c")
 
     elf = body(module, "static int elf_header_check(")
     for token in ("ELFMAG", "ELFCLASS64", "ELFDATA2LSB", "EV_CURRENT",
@@ -242,6 +246,35 @@ def main():
             kpm_exit, "KPM rollback must disable callbacks before freeing its trampoline")
     require(r"kp_callback_tramp\s*=\s*NULL[\s\S]*?kp_exec_backend\s*=\s*KP_EXEC_BACKEND_NONE",
             kpm_exit, "KPM rollback must clear stale runtime pointers and allocator state")
+
+    # CFI teardown must know whether original kernel text was restored.
+    checked_unhook = body(hook_source, "int unhook_checked(void *func)")
+    require(r"hook_uninstall\(hook\)[\s\S]*?if\s*\(!rc\)[\s\S]*?return\s+rc",
+            checked_unhook, "checked unhook must propagate text restoration failures")
+    require(r"int\s+unhook_checked\(void\s*\*func\)", hook_header,
+            "checked unhook API must be declared for LKM callers")
+    legacy_unhook = body(hook_source, "void unhook(void *func)")
+    require(r"unhook_checked\(func\)", legacy_unhook,
+            "legacy unhook API must delegate to checked implementation")
+    cfi_exit = body(secpass, "int kp_bypass_kcfi_exit(void)")
+    require(r"unhook_checked\(\(void\s*\*\)kp_find_check_fn_addr\)",
+            cfi_exit, "find_check_fn teardown must check patch restoration")
+    require(r"unhook_checked\(\(void\s*\*\)kp_report_cfi_failure_addr\)",
+            cfi_exit, "report_cfi_failure teardown must check patch restoration")
+    require(r"unhook_checked\(\(void\s*\*\)kp_cfi_slowpath_addr\)",
+            cfi_exit, "CFI slowpath teardown must check patch restoration")
+    require(r"kp_find_check_fn_addr\s*=\s*0",
+            cfi_exit, "CFI hook state may be cleared only after successful or absent removal")
+    cfi_install = body(secpass, "int kp_bypass_kcfi(void)")
+    require(r"kp_find_check_fn_addr\s*=\s*addr[\s\S]*?hook\(",
+            cfi_install, "uncertain CFI hook installs must retain their target address for rollback")
+    require(r"kp_cfi_slowpath_addr\s*=\s*addr[\s\S]*?hook\(",
+            cfi_install, "uncertain slowpath installs must retain their target address for rollback")
+    init_exit = body(core_init, "static void __exit kernelpatch_exit(void)")
+    require(r"BUG_ON\(kp_bypass_kcfi_exit\(\)\)",
+            init_exit, "module unload must fail closed if CFI text restoration fails")
+    require(r"err_unwind:[\s\S]*?BUG_ON\(kp_bypass_kcfi_exit\(\)\)",
+            core_init, "module init failure must not return while a CFI branch may remain installed")
 
     unload_gate = body(module, "long kp_unload_module(")
     require(r"mod->active_calls\s*\|\|\s*mod->hook_refs[\s\S]*?return\s*-EBUSY",
