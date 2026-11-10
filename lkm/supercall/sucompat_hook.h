@@ -9,6 +9,6 @@
 int kp_sucompat_hook_init(void);
 
 /* Restore the execve hook. */
-void kp_sucompat_hook_exit(void);
+int kp_sucompat_hook_exit(void);
 
 #endif /* _KP_LKM_SUCOMPAT_HOOK_H_ */
