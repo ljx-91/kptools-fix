@@ -271,3 +271,18 @@ Do not simply rename the table entry, increase trampoline size, or patch only th
 - LKM target `SyS_truncate.cfi` at `0x003cd6b8`: **confirmed**.
 - Safe single-owner syscall-45 design: **not yet selected/implemented**.
 - No production hook code was changed. No vendor-KDIR build, runtime trace, or device test was performed.
+
+
+### Same-target double-hook composition check
+
+The same-target fallback option was checked against the actual relocation implementation rather than assumed to chain:
+
+- `branch_absolute()` emits `LDR X17, #8; BR X17; .quad target`. Thus the first instruction's literal address is inside the four-word prologue range that `hook_install()` replaces.
+- `hook_prepare()` computes `tramp_insts_num = 4` for this branch form, then relocates each of the four original words.
+- `relo_ldr()` explicitly returns `-HOOK_BAD_RELO` when an LDR-literal target falls inside the range `[origin_addr, origin_addr + tramp_insts_num * 4)`; `is_in_tramp()` implements that exact range check.
+- Therefore, if KPIMG is changed to target `SyS_truncate.cfi`, the other independent Hook Engine cannot simply install a second absolute-branch hook over the already-patched entry and expect the first branch literal to be relocated. The second `hook_prepare()` should reject that prologue as `HOOK_BAD_RELO` (subject to confirming each caller propagates the error without unsafe fallback).
+- The same reasoning applies in reverse order: the first absolute branch installed by either engine places its literal inside the overwritten four-word range, so the second engine's relocation check rejects it.
+
+This is a useful fail-closed property for a same-target double hook, but it does not repair the current distinct-target problem: KPIMG still writes 16 bytes over four neighboring CFI stubs at `0x019305cc`. It also means simply renaming KPIMG's syscall table entry is likely to make one supercall handler fail to install, not create a shared chain.
+
+The next implementation decision must therefore be an explicit single-owner dispatch design with a proven bridge for the other component, or a deliberate removal/rerouting of one handler. Do not rely on independent Hook Engine copies to compose.
