@@ -27,7 +27,7 @@ jobs:
         run: |
           set -euxo pipefail
           python3 -m py_compile scripts/*.py
-          python3 scripts/test_aarch64_reloc_insn_imm.py
+          python3 scripts/test_aarch64_relocations.py
           for verifier in \
             verify_bootimg_io_contract.py \
             verify_kptools_patch_bounds.py \
