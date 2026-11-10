@@ -161,3 +161,26 @@ The repository also contains `kernel/patch/module/module.c`, the KPIMG-side KPM 
 - The LKM loader's `simplify_symbols()` does not call the KPIMG-side loader or KPIMG `symbol_lookup_name()`.
 
 Thus, the presence of a working KPIMG-side KPM resolver does not by itself solve the LKM handoff. Any bridge based on a resident KPM must explicitly route its load/registration through a proven KPIMG entrypoint, and its KPM image must remain resident until the LKM Gate has been closed and drained. The current source does not establish that route.
+
+### Additional check: both KPIMG and LKM own syscall-45 supercall handlers
+
+A further call-graph audit found an important control-plane path that was not covered by the earlier namespace-only review:
+
+- KPIMG kernel/patch/common/supercall.c implements its own SUPERCALL_KPM_LOAD/UNLOAD/CONTROL/NUMS/LIST/INFO commands. Its KPM load path calls KPIMG load_module_path()/load_module() from kernel/patch/module/module.c.
+- KPIMG installs that handler with hook_syscalln_override(__NR_supercall, 6, before, 0, 0), where __NR_supercall is syscall 45. Its before() callback sets skip_origin and returns the command result when the caller is trusted.
+- KPIMG kernel/patch/common/syscall.c uses a global dispatcher only when syscall-wrapper support and a suitable handler-granularity target are available. Otherwise hook_syscalln_override() falls back to the syscall-table or inline per-syscall hook path.
+- The LKM independently implements syscall 45 in lkm/supercall/supercall.c. Its SUPERCALL_KPM_* cases dispatch to kp_kpm_*_sc() and therefore to the LKM-side loader in lkm/kpm/module.c, not the KPIMG-side loader.
+- On the Y73S target, the LKM init comments explicitly record that syscall-table data symbols are absent with KALLSYMS_ALL=n; the LKM then resolves and inline-hooks SyS_truncate.cfi. The target is Linux 4.14.141, so the modern syscall-wrapper/global-dispatch path must not be assumed.
+
+This establishes that KPIMG has a userspace control plane for its own KPM loader. It does not establish a kernel-callable LKM-to-KPIMG registration API. The two implementations also use separate Hook Engine copies and separate KPM registries. Their use of the same syscall number creates a potential hook-order/dispatch collision: depending on the exact Y73S syscall-name resolution and patch composition, one handler may short-circuit syscall 45 before the other handler can run, or the second inline patch may fail/compose unsafely. The reviewed source alone does not prove which outcome occurs on the device.
+
+The shared syscall-45 interface therefore cannot be treated as an implicit Gate bridge. Issuing or forwarding a KPM supercall from LKM code is not equivalent to directly calling KPIMG's private load_module() or symbol_lookup_name() functions. The KPIMG loader entrypoints are still not exported through Linux kallsyms or an established LKM-visible ABI.
+
+### Required next checks
+
+1. Resolve the exact syscall-45 name-table entry used by this KPIMG build and compare its final resolved address with the LKM's SyS_truncate.cfi target on the Y73S Boot symbol set.
+2. Trace both Hook Engine install paths against the same target, including whether the second patch is rejected, chains through the first trampoline, or can leave stale/overwritten hook state.
+3. Establish which supercall handler actually receives trusted-manager SUPERCALL_KPM_LOAD requests when both KPIMG and LKM are present. Do not infer this from command IDs alone.
+4. Only after the collision is resolved, design an explicit registration ABI. A userspace KPM command path is a control plane, not by itself a safe in-kernel Gate handoff.
+
+No Gate assembly or production Hook changes are justified by this finding. The KPIMG-resident Gate remains unimplemented; ordinary LKM unload safety remains unproven.
