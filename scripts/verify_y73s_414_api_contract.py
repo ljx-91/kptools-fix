@@ -137,20 +137,28 @@ require('if (!addr)\n\t\taddr = kallsyms_lookup_name("__cfi_slowpath")' in secpa
         "Y73S CFI bypass falls back to the present __cfi_slowpath when newer CFI hooks are absent")
 require('kp_resolve_symbol("security_secctx_to_secid")' in accctl and
         "kp_selinux_cred_offset = 0" in accctl and
+        "!defined(CONFIG_SECURITY_APPARMOR)" in accctl and
+        "!defined(CONFIG_SECURITY_SMACK)" in accctl and
+        "!defined(CONFIG_SECURITY_TOMOYO)" in accctl and
         "kp_selinux_blob_sizes hidden" in accctl,
         "4.14 SELinux translabel resolves secctx dynamically and uses the verified single-LSM cred offset")
 require("kp_apply_su_cred" in accctl and
         "prepare_kernel_cred(NULL)" in accctl and
         "put_cred(new)" in accctl,
         "pending exec credentials can be relabeled with a fail-closed kernel-cred fallback")
-require("kp_syscall_table_init()" in sucompat_hook and
-        "return kp_hook_prepare_binprm()" in sucompat_hook and
+const sucompat_init = body(sucompat_hook, "int kp_sucompat_hook_init(")
+require(sucompat_init.indexOf("kp_syscall_table_init()") >= 0 &&
+        sucompat_init.indexOf("kp_syscall_table_init()") < sucompat_init.indexOf("kp_syscall_hook("),
+        "sucompat initializes the syscall table before attempting the syscall hook")
+require("return kp_hook_prepare_binprm()" in sucompat_hook and
         "kp_resolve_symbol(\"prepare_binprm.cfi\")" in sucompat_hook,
         "Y73S sucompat falls back to the real 4.14 prepare_binprm text symbol when sys_call_table is hidden")
 require("bprm->file = shell_file" in sucompat_hook and
         "bprm->filename = KP_SH_PATH" in sucompat_hook and
         "bprm->interp = KP_SH_PATH" in sucompat_hook and
-        "kp_apply_su_cred(&new, 0, sctx)" in sucompat_hook,
+        "kp_apply_su_cred(&new, 0, sctx)" in sucompat_hook and
+        "if (!args->local.data0 || (long)args->ret < 0)" in sucompat_hook and
+        "bprm->argc = 0" in sucompat_hook,
         "prepare_binprm fallback redirects only execs and updates the pending cred after SELinux bprm hooks")
 require('kallsyms_lookup_name("module_alloc")' in kpm and
         'kallsyms_lookup_name("module_memfree")' in kpm,
