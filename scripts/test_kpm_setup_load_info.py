@@ -86,7 +86,7 @@ static const char symbol_names[] = "\0foo\0";
 
 static unsigned int name_offset(const char *name)
 {
-    const char *p = section_names;
+    const char *p = section_names + 1;
     const char *end = section_names + sizeof(section_names);
     while (p < end && *p) {
         if (!strcmp(p, name))
