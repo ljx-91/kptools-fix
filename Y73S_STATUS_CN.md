@@ -794,3 +794,25 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 - 已确认提交 diff 仅增加该契约断言。
 - 对应 GitHub Actions：Linux Host/offline audit、GCC 14.2 KPIMG、Windows 构建均已触发；本记录写入时仍在运行，结果待回查。
 - 这是源码契约覆盖，不是畸形 ELF 实际加载测试，也不是目标 4.14.141 KDIR 编译或真机测试。
+
+
+## 24. KPM ELF section 对齐边界补强（2026-11-10）
+
+本轮继续检查独立 LKM KPM ELF loader 的输入边界，发现原有检查验证了 section 的 `sh_addralign` 必须为 0、1 或 2 的幂，但没有验证文件内 section 起始偏移是否满足该声明；同时，ELF section-header table 的 `e_shoff` 也没有显式验证其满足 `Elf_Shdr` 的自然对齐。
+
+这会让格式不合规或恶意构造的 ELF 把 SYMTAB、RELA 等 typed table 放在不满足其声明对齐的位置。AArch64 对部分非对齐访问可能有硬件支持，但不能用这一点替代 ELF 输入格式约束和 C 语言对象对齐要求。
+
+本轮修改：
+- `elf_header_check()` 在访问 section-header table 前，拒绝不满足 `__alignof__(Elf_Shdr)` 的 `e_shoff`。
+- `rewrite_section_headers()` 对非 `SHT_NOBITS` section 检查 `sh_offset` 是否满足其有效 `sh_addralign`；NOBITS 没有文件内容，不对其文件偏移套用此约束。
+- 独立 loader contract verifier 增加上述两项回归断言，并移除此前重复的 RELA 元数据断言。
+
+提交：
+- `add39691e05352590df417d0743d71ca02192a50`：loader 输入对齐检查。
+- `f66d00720c95c18b118a85fa40204d2e669e7fc6`：增加回归契约。
+- `57c49a075f9f5d5f5734ff77432b910444ccf82c`：清理重复断言。
+
+验证边界：
+- 此项目前完成了代码与 verifier 的静态一致性复核；新提交触发的 CI 仍需等待最终结果。
+- 这不是实际执行内核 loader 的 ELF fixture 测试，也不等同于真实 KPM 加载验证。
+- Y73s 精确 4.14.141 KDIR、Clang 9.0.3 + LLD 9.0.3 LTO/MODVERSIONS 构建以及真机运行仍未验证。
