@@ -12,6 +12,7 @@ REQUIRED = {
     "kallsyms_lookup_name", "kallsyms_on_each_symbol",
     "__flush_dcache_area", "flush_icache_range", "stop_machine",
     "security_secctx_to_secid", "prepare_binprm", "prepare_binprm.cfi",
+    "open_exec", "open_exec.cfi",
 }
 ABSENT = {
     "init_mm", "sys_call_table", "set_memory_x", "set_memory_nx",
