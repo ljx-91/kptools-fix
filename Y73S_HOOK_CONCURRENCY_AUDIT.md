@@ -1282,3 +1282,38 @@ Changes:
 - `90c5a17`, `78a416e`: add and correct the branch-profile verifier assertion.
 
 No target-kernel LKM compile or device-side test has been performed.
+
+
+## 13. LKM inline-transit entry lifetime versus module unload (2026-11-10)
+
+### Confirmed implementation facts
+
+- `lkm/hook/hook_engine.c` includes `kernel/base/hook.c`; therefore the `_transit0/_transit4/_transit8/_transit12` C functions execute from the LKM image, not from the separately allocated chain payload.
+- The chain stub stores its chain pointer in x16 (`LDR X16, #12`) and branches through an absolute x17 stub (`LDR X17; RET X17`). The resident transit function reads x16 through `current_inline_hook_chain()`.
+- `_transit4()` increments `active_readers` only after control has already entered the LKM transit function. Callback owner references are pinned later, after reader entry.
+- `kp_sucompat_hook_exit()` retries `hook_unwrap_remove()` while it returns `-EBUSY`; `kernelpatch_exit()` then continues module teardown after a zero return.
+- KPM callback owner registration only resolves addresses inside the KPM registry. LKM callback addresses are not thereby pinned as KPM owners.
+- LKM `hook_mem_retire()` removes the chain metadata record but deliberately does not free the executable region. KPIMG's hook arena likewise marks retired slots unavailable for reuse. This protects stale chain-payload pointers, but does not retain the LKM text containing `_transit4()`.
+
+### Potential unload race (not yet proven by runtime reproduction)
+
+There is a narrow ordering window in which a CPU may have branched from the patched kernel function into the chain stub / LKM transit path but has not yet executed `hook_chain_reader_enter()`. Teardown can observe `active_readers == 0`, retire the callback slots, restore the original kernel text and return from `kp_sucompat_hook_exit()`. If the LKM image is then unmapped before that CPU has left the transit code, the in-flight return path may execute unmapped LKM text.
+
+The current reader counter and callback owner pins do not, by themselves, close the pre-reader entry window. The retained chain allocation does not retain the LKM text. The source review therefore treats this as a **high-priority unresolved lifetime risk**, not as a demonstrated crash.
+
+### Required closure criteria
+
+- Establish a lifetime barrier that covers execution from the first instruction of the chain stub through the final return from LKM transit, including the interval before `active_readers` increments.
+- The barrier must be safe against CPU preemption/interrupts and must complete before the Linux module loader can free the LKM image.
+- Do not assume `stop_machine()`, callback owner pins, the chain reader counter, or retained trampoline allocation alone proves this property.
+- Add a deterministic concurrency/lifetime regression test and target-kernel validation before marking LKM unload safe.
+
+### ABI/build observations
+
+- `lkm/Kbuild` intentionally disables CFI, LTO, stack protector, and (when configured) shadow-call-stack for `hook_engine.o`; this matches its raw callback dispatch and its non-standard transit entry/return path. These flags are now guarded by the LKM hook source-contract verifier.
+- The chain stub's x16/x17 instruction roles and reader/pin/unpin ordering are also covered by source-contract assertions.
+- A local Clang AArch64 probe of a structurally similar C transit function showed the compiler saving ordinary callee-saved registers and capturing x16 before the first helper call; this is only a compiler probe, not a substitute for disassembly of the actual vendor-KDIR object.
+
+### Status
+
+No production behavior was changed in this audit step. LKM unload safety remains unverified until the pre-reader transit lifetime window is closed. Y73S vendor KDIR, module CFI/SCS configuration, and device runtime evidence are still unavailable.
