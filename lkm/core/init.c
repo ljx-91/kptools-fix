@@ -115,11 +115,15 @@ int __init kernelpatch_init(void)
 		rc = kp_kpm_init();
 		if (rc)
 			logkw("kpm loader init failed: %d (KPM supercalls will return -ENOSYS)\n", rc);
+		else
+			kpm_initialized = true;
 	}
 #else
 	rc = kp_kpm_init();
 	if (rc)
 		logkw("kpm loader init failed: %d (KPM supercalls will return -ENOSYS)\n", rc);
+	else
+		kpm_initialized = true;
 #endif
 
 	/* Install the optional execve compatibility hook before publishing the
