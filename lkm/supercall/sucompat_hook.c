@@ -475,7 +475,7 @@ int kp_sucompat_hook_exit(void)
 		   kp_prepare_binprm_addr) {
 		unhook_rc = kp_unwrap_wait((void *)kp_prepare_binprm_addr,
 					       kp_before_prepare_binprm,
-					       kp_after_prepare_binprm, 1);
+					       kp_after_prepare_binprm);
 		if (!unhook_rc || unhook_rc == -ENOENT) {
 			kp_prepare_binprm_addr = 0;
 			kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
@@ -488,7 +488,7 @@ int kp_sucompat_hook_exit(void)
 
 	if (kp_getname_flags_addr) {
 		unhook_rc = kp_unwrap_wait((void *)kp_getname_flags_addr,
-					       0, kp_after_getname_flags, 1);
+					       0, kp_after_getname_flags);
 		if (!unhook_rc || unhook_rc == -ENOENT)
 			kp_getname_flags_addr = 0;
 		else {
