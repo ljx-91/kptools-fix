@@ -70,25 +70,41 @@ int android_sepolicy_flags_fix();
 static void before_rest_init(hook_fargs4_t *args, void *udata)
 {
     int rc = 0;
+    int early_init_failed = 0;
     log_boot("entering init ...\n");
 
-    if ((rc = hotpatch_init())) goto out;
+    if ((rc = hotpatch_init())) {
+        early_init_failed = 1;
+        goto out;
+    }
     log_boot("hotpatch_init done: %d\n", rc);
 
-    if ((rc = bypass_kcfi())) goto out;
+    if ((rc = bypass_kcfi())) {
+        early_init_failed = 1;
+        goto out;
+    }
     log_boot("bypass_kcfi done: %d\n", rc);
 
     /* Must precede supercall_install/su_compat_init so their hook_syscalln
      * calls register with the dispatcher instead of patching the table. */
     syscall_dispatch_init();
 
-    if ((rc = resolve_struct())) goto out;
+    if ((rc = resolve_struct())) {
+        early_init_failed = 1;
+        goto out;
+    }
     log_boot("resolve_struct done: %d\n", rc);
 
-    if ((rc = bypass_selinux())) goto out;
+    if ((rc = bypass_selinux())) {
+        early_init_failed = 1;
+        goto out;
+    }
     log_boot("bypass_selinux done: %d\n", rc);
 
-    if ((rc = task_observer())) goto out;
+    if ((rc = task_observer())) {
+        early_init_failed = 1;
+        goto out;
+    }
     log_boot("task_observer done: %d\n", rc);
 
     rc = supercall_install();
@@ -115,6 +131,17 @@ static void before_rest_init(hook_fargs4_t *args, void *udata)
 
 out:
     hotpatch_set_early_boot(0);
+
+    /*
+     * Y73S 4.14.141 has rest_init but omits the local kernel_init symbol from
+     * KALLSYMS. Preserve the default PRE_KERNEL_INIT KPM event at the verified
+     * rest_init entry point. Do not synthesize POST_KERNEL_INIT here: there is
+     * no proven equivalent return point when kernel_init cannot be hooked.
+     */
+    if (!early_init_failed && patch_config->rest_init && !patch_config->kernel_init) {
+        log_boot("emit pre-kernel-init from rest_init fallback\n");
+        extra_event_init(EXTRA_EVENT_PRE_KERNEL_INIT);
+    }
     return;
 }
 
@@ -199,6 +226,10 @@ int patch()
     unsigned long kernel_init_addr = patch_config->kernel_init;
     if (kernel_init_addr) {
         rc = hook_wrap4((void *)kernel_init_addr, before_kernel_init, after_kernel_init, 0);
+    } else if (patch_config->rest_init) {
+        log_boot("kernel_init symbol unavailable; PRE_KERNEL_INIT uses rest_init fallback; POST_KERNEL_INIT unavailable\n");
+    } else {
+        log_boot("kernel_init/rest_init symbols unavailable; kernel-init KPM events unavailable\n");
     }
     if (rc || !init_addr) hotpatch_set_early_boot(0);
     return rc;
