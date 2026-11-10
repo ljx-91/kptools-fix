@@ -35,7 +35,7 @@ enum kp_supercall_backend {
 
 static enum kp_supercall_backend kp_supercall_backend;
 static kp_syscall_fn_t kp_orig_truncate_regs;
-static long (*kp_orig_truncate_args)(const char __user *path, long length);
+static long (*kp_orig_truncate_args)(long arg0, long arg1);
 static void *kp_supercall_inline_target;
 
 /* Inline-hook backups are generated trampolines and have no kernel CFI
@@ -47,9 +47,9 @@ static long kp_call_original_regs_inline(const struct pt_regs *regs)
 }
 
 __attribute__((no_sanitize("cfi")))
-static long kp_call_original_truncate_args(const char __user *path, long length)
+static long kp_call_original_truncate_args(long arg0, long arg1)
 {
-	return kp_orig_truncate_args ? kp_orig_truncate_args(path, length) : -ENOSYS;
+	return kp_orig_truncate_args ? kp_orig_truncate_args(arg0, arg1) : -ENOSYS;
 }
 
 static long kp_supercall_handler(const struct pt_regs *regs)
@@ -79,22 +79,24 @@ static long kp_supercall_handler(const struct pt_regs *regs)
 }
 
 /*
- * Linux 4.14 ARM64 syscall table entries point directly at sys_* functions,
- * whose ABI is the ordinary C argument list, not struct pt_regs *. The
- * truncate syscall receives x0-x5 from el0_svc; the extra four registers are
- * deliberately accepted here for the KP supercall payload.
+ * Linux 4.14 ARM64 has no pt_regs syscall wrapper. SYSCALL_DEFINE2 emits a
+ * four-byte sys_truncate alias/jump-table entry and a real SyS_truncate.cfi
+ * implementation with two long arguments. Hook the implementation, never
+ * overwrite the adjacent four-byte CFI jump-table entries. el0_svc preserves
+ * x0-x5 across the alias branch, so the four supercall payload registers are
+ * still available to this six-argument replacement.
  */
-static long kp_supercall_handler_legacy(const char __user *path, long length,
+static long kp_supercall_handler_legacy(long arg0, long arg1,
 					unsigned long arg2, unsigned long arg3,
 					unsigned long arg4, unsigned long arg5)
 {
 	uid_t uid = from_kuid(current_user_ns(), current_uid());
-	long cmd = (unsigned long)length & 0xFFFF;
+	long cmd = (unsigned long)arg1 & 0xFFFF;
 
 	if (!kp_is_manager_uid(uid) && !kp_is_su_allow_uid(uid))
-		return kp_call_original_truncate_args(path, length);
+		return kp_call_original_truncate_args(arg0, arg1);
 	if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX)
-		return kp_call_original_truncate_args(path, length);
+		return kp_call_original_truncate_args(arg0, arg1);
 	return kp_handle_supercall(cmd, arg2, arg3, arg4, arg5);
 }
 
@@ -156,11 +158,11 @@ int kp_supercall_install(void)
 					 KP_SUPERCALL_BACKEND_INLINE_REGS);
 #else
 	/*
-	 * Linux 4.14.141 ARM64 has no ARCH_HAS_SYSCALL_WRAPPER. sys_truncate
-	 * is a text symbol, while sys_call_table is a hidden data symbol when
-	 * CONFIG_KALLSYMS_ALL=n. Hook the real two-argument syscall entry.
+	 * Linux 4.14.141 ARM64 has no ARCH_HAS_SYSCALL_WRAPPER. The public
+	 * sys_truncate alias is a 4-byte CFI jump-table stub; hook its full
+	 * SyS_truncate.cfi implementation instead.
 	 */
-	rc = kp_install_inline_supercall("sys_truncate",
+	rc = kp_install_inline_supercall("SyS_truncate.cfi",
 					 (void *)kp_supercall_handler_legacy,
 					 (void **)&kp_orig_truncate_args,
 					 KP_SUPERCALL_BACKEND_INLINE_ARGS);
