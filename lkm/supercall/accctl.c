@@ -156,7 +156,6 @@ static int su_cred(struct cred *new, uid_t uid)
 int kp_apply_su_cred(struct cred **cred, uid_t to_uid, const char *sctx)
 {
 	struct cred *new;
-	struct cred *kernel;
 	const char *target_sctx = sctx && sctx[0] ? sctx : ALL_ALLOW_SCONTEXT_MAGISK;
 	int rc;
 
@@ -170,13 +169,14 @@ int kp_apply_su_cred(struct cred **cred, uid_t to_uid, const char *sctx)
 	if (!rc)
 		return 0;
 
-	logkw("SELinux translabel failed (%d), falling back to kernel cred\n", rc);
-	kernel = prepare_kernel_cred(NULL);
-	if (!kernel)
-		return -ENOMEM;
-	put_cred(new);
-	*cred = kernel;
-	return 0;
+	/*
+	 * Never replace a caller's pending exec cred with init_cred. That would
+	 * silently discard the requested UID and SELinux domain and could expose
+	 * kernel credentials to a userspace exec. The caller still owns *cred
+	 * and must abort it on error.
+	 */
+	logkw("SELinux translabel failed (%d); refusing SU credential commit\n", rc);
+	return rc;
 }
 
 /* no_sanitize("cfi") keeps credential helpers outside legacy CFI checks. */
