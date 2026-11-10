@@ -187,6 +187,8 @@ def verify_hidden_kernel_init():
     need(r"PRE/POST_KERNEL_INIT events unavailable", patch,
          "unresolved kernel_init must fail closed and report both events unavailable")
     need(r"\"kernel_thread.cfi\"", profile,
+    need(r"\"kthreadd.cfi\"", profile,
+         "Y73S KALLSYMS fixture must include the distinct kthreadd CFI target")
          "Y73S KALLSYMS fixture must require kernel_thread CFI call target")
     need(r"\"rest_init\",\s*\"cgroup_init\"", profile,
          "Y73S KALLSYMS fixture must require rest_init and cgroup_init")
