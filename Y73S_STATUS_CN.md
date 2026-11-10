@@ -2006,3 +2006,19 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 - Gate token 在 closed 状态降为 0 时调用 __wake_up（TASK_NORMAL=3）唤醒卸载等待者。
 - Clang 17 AArch64 汇编结果为 440 bytes，ELF relocation table 为空；这是代码位置无关性的初步证据。
 - 该原型没有目标 hook_t 结构体静态偏移断言，没有与 Clang 9.0.3/KDIR 链接，也没有 QEMU/真机执行；不能视为可用 Gate，更没有提交到生产源码。
+
+
+### LKM Gate 覆盖范围与调用约定清单
+
+已核对当前 LKM 直接/链式 Hook 调用点，生产 Gate 必须覆盖全部入口：
+
+| 调用点 | 目标回调 | 参数数 |
+|---|---|---:|
+| secpass find_check_fn | __replace_find_check_fn | 1 |
+| secpass report_cfi_failure | __replace_report_cfi_failure | 4 |
+| secpass __cfi_slowpath | __replace_cfi_slowpath | 3 |
+| supercall syscall-45 | kp_supercall_handler_legacy | 6 |
+| manager rename | kp_after_security_path_rename / kp_after_security_inode_rename | 5 |
+| sucompat prepare_binprm | kp_before/after_prepare_binprm | 1 |
+
+当前这些入口均不超过 8 个参数；Gate 仍需保留 9-12 参数栈参数路径，以免破坏通用 Hook API。直接 hook() 目前没有显式 argno，因此集成 Gate 前必须增加带 argno 的 API，并更新所有直接调用点；不能根据函数指针猜参数数量。
