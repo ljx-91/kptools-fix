@@ -11,6 +11,7 @@
 #include "accctl.h"
 #include "sucompat.h"
 
+#include <linux/binfmts.h>
 #include <linux/cred.h>
 #include <linux/err.h>
 #include <linux/fs.h>
@@ -24,6 +25,7 @@
 
 #include "../include/kp_lkm.h"
 #include "../infra/syscall_table.h"
+#include "../infra/symbol_resolver.h"
 #include "../manager/manager.h"
 #include <hook.h>
 
@@ -31,9 +33,15 @@
 #define KP_SH_PATH SH_PATH       /* /system/bin/sh */
 
 static kp_syscall_fn_t kp_orig_execve;
-/* Resolved getname_flags address, kept so the inline hook can be removed on
- * module exit (otherwise rmmod leaves a branch into freed module memory). */
+enum kp_sucompat_backend {
+	KP_SUCOMPAT_BACKEND_NONE,
+	KP_SUCOMPAT_BACKEND_SYSCALL,
+	KP_SUCOMPAT_BACKEND_BINPRM,
+};
+static enum kp_sucompat_backend kp_sucompat_backend;
+/* Resolved hook targets are retained for exact teardown. */
 static unsigned long kp_getname_flags_addr;
+static unsigned long kp_prepare_binprm_addr;
 
 /*
  * A full-size strncpy_from_user() result means no NUL was found in range.
@@ -176,6 +184,112 @@ passthrough:
 		return kp_orig_execve(regs);
 	return -ENOSYS;
 }
+/*
+ * Linux 4.14 vendor kernels may hide sys_call_table with CONFIG_KALLSYMS_ALL=n.
+ * prepare_binprm() is a text symbol and runs only on the exec path, after the
+ * filename and file are attached to linux_binprm but before argv is copied.
+ * Redirect the file itself to sh here, then update the pending exec cred after
+ * the kernel's security_bprm_set_creds() has completed.
+ */
+static void kp_before_prepare_binprm(hook_fargs1_t *args, void *udata)
+{
+	struct linux_binprm *bprm = (struct linux_binprm *)args->arg0;
+	struct file *shell_file;
+	struct file *old_file;
+	uid_t uid;
+	const char *su_path;
+	bool su_exec;
+	bool supercmd;
+
+	if (!bprm || !bprm->filename || !bprm->file)
+		return;
+
+	uid = from_kuid(current_user_ns(), current_uid());
+	if (!kp_is_su_allow_uid(uid) && !kp_is_manager_uid(uid))
+		return;
+
+	su_path = kp_su_get_path();
+	su_exec = !strcmp(bprm->filename, su_path) ||
+		  !strcmp(bprm->filename, LEGACY_SU_PATH) ||
+		  !strcmp(bprm->filename, SU_PATH) ||
+		  !strcmp(bprm->filename, "su") ||
+		  !strcmp(bprm->filename, "kp");
+	supercmd = !strcmp(bprm->filename, SUPERCMD);
+	if (!su_exec && !supercmd)
+		return;
+
+	shell_file = filp_open(KP_SH_PATH, O_RDONLY | O_NOFOLLOW, 0);
+	if (IS_ERR(shell_file)) {
+		logkw("sucompat: open shell for %s failed: %ld\n",
+		      bprm->filename, PTR_ERR(shell_file));
+		return;
+	}
+
+	old_file = bprm->file;
+	bprm->file = shell_file;
+	bprm->filename = KP_SH_PATH;
+	bprm->interp = KP_SH_PATH;
+	if (supercmd)
+		bprm->argc = 0; /* SUPERCMD is a root-shell request, not shell argv. */
+	fput(old_file);
+
+	args->local.data0 = 1;
+	args->local.data1 = uid;
+	args->local.data2 = supercmd;
+}
+
+static void kp_after_prepare_binprm(hook_fargs1_t *args, void *udata)
+{
+	struct linux_binprm *bprm;
+	struct cred *new;
+	char sctx_buf[SUPERCALL_SCONTEXT_LEN];
+	const char *sctx;
+	uid_t uid;
+	int rc;
+
+	if (!args->local.data0 || (long)args->ret < 0)
+		return;
+
+	bprm = (struct linux_binprm *)args->arg0;
+	if (!bprm || !bprm->cred)
+		return;
+
+	uid = (uid_t)args->local.data1;
+	sctx = kp_default_sctx(uid, sctx_buf, sizeof(sctx_buf));
+	new = bprm->cred;
+	rc = kp_apply_su_cred(&new, 0, sctx);
+	if (rc) {
+		logke("sucompat: prepare exec cred failed: %d\n", rc);
+		args->ret = (unsigned long)(long)rc;
+		return;
+	}
+	bprm->cred = new;
+	current_thread_info()->flags &= ~_TIF_SECCOMP;
+	logki("sucompat: prepare_binprm redirected to shell; root cred prepared (uid=%u)\n",
+	      uid);
+}
+
+static int kp_hook_prepare_binprm(void)
+{
+	unsigned long addr;
+
+	addr = kp_resolve_symbol("prepare_binprm.cfi");
+	if (!addr)
+		addr = kp_resolve_symbol("prepare_binprm");
+	if (!addr) {
+		logke("sucompat: prepare_binprm not found; no safe execve fallback\n");
+		return -ENOENT;
+	}
+
+	logki("sucompat: prepare_binprm at %px\n", (void *)addr);
+	if (hook_wrap1((void *)addr, kp_before_prepare_binprm,
+		       kp_after_prepare_binprm, 0))
+		return -EIO;
+	kp_prepare_binprm_addr = addr;
+	kp_sucompat_backend = KP_SUCOMPAT_BACKEND_BINPRM;
+	return 0;
+}
+
 /* ---- getname_flags path-probe redirect -------------------------------- */
 
 static void kp_after_getname_flags(hook_fargs4_t *args, void *udata)
@@ -302,23 +416,42 @@ passthrough:
 }
 int kp_sucompat_hook_init(void)
 {
-	int rc = kp_syscall_hook(KP_EXECVE_NR, kp_execve_handler, &kp_orig_execve);
-	if (rc)
-		return rc;
-	logki("sucompat: execve hook installed (su path %s -> %s)\n", kp_su_get_path(), KP_SH_PATH);
+	int rc;
 
-	rc = kp_hook_getname_flags();
-	if (rc)
-		logkfd("sucompat: getname_flags hook failed: %d\n", rc);
-	else
-		logki("sucompat: getname_flags hook installed\n");
-	return 0;
+	/* The syscall table is hidden on Y73s (CONFIG_KALLSYMS_ALL=n). */
+	rc = kp_syscall_table_init();
+	if (!rc)
+		rc = kp_syscall_hook(KP_EXECVE_NR, kp_execve_handler, &kp_orig_execve);
+	if (!rc) {
+		kp_sucompat_backend = KP_SUCOMPAT_BACKEND_SYSCALL;
+		logki("sucompat: execve syscall hook installed (su path %s -> %s)\n",
+		      kp_su_get_path(), KP_SH_PATH);
+		rc = kp_hook_getname_flags();
+		if (rc)
+			logkfd("sucompat: getname_flags hook failed: %d\n", rc);
+		else
+			logki("sucompat: getname_flags hook installed\n");
+		return 0;
+	}
+
+	logkw("sucompat: syscall-table execve hook unavailable (%d); using prepare_binprm fallback\n",
+	      rc);
+	return kp_hook_prepare_binprm();
 }
 
 void kp_sucompat_hook_exit(void)
 {
-	kp_syscall_unhook(KP_EXECVE_NR, kp_orig_execve);
-	kp_orig_execve = NULL;
+	if (kp_sucompat_backend == KP_SUCOMPAT_BACKEND_SYSCALL) {
+		kp_syscall_unhook(KP_EXECVE_NR, kp_orig_execve);
+		kp_orig_execve = NULL;
+	} else if (kp_sucompat_backend == KP_SUCOMPAT_BACKEND_BINPRM &&
+		   kp_prepare_binprm_addr) {
+		hook_unwrap((void *)kp_prepare_binprm_addr,
+			    kp_before_prepare_binprm, kp_after_prepare_binprm);
+		kp_prepare_binprm_addr = 0;
+	}
+	kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
+
 	if (kp_getname_flags_addr) {
 		/* Installed as hook_wrap3(addr, 0, kp_after_getname_flags, 0); pass the
 		 * same (before, after) pair to unwrap so the chain item matches. */
