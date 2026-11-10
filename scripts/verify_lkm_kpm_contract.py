@@ -218,8 +218,11 @@ def main():
 
     # module_init() failure does not call module_exit(); hooks installed by
     # a partially completed init must be explicitly unwound before returning.
-    require(r"bool\s+cfi_bypass_installed\s*=\s*false", init_entry,
-            "LKM init must track whether the CFI bypass was installed")
+    # CFI bypass setup is attempted before the only remaining fallible
+    # publication steps. Its teardown is unconditional: secpass tracks each
+    # installed target internally, including uncertain patch outcomes.
+    require(r"BUG_ON\(kp_bypass_kcfi_exit\(\)\)", init_entry,
+            "failed LKM init must fail closed if any CFI hook cannot be removed")
     require(r"bool\s+supercall_installed\s*=\s*false", init_entry,
             "LKM init must track whether the supercall hook was installed")
     require(r"bool\s+sucompat_installed\s*=\s*false", init_entry,
@@ -228,8 +231,8 @@ def main():
             init_entry, "supercall install failure must enter init rollback")
     require(r"kp_sucompat_hook_init\(\)[\s\S]*?if\s*\(rc\)\s*goto\s+err_unwind",
             init_entry, "sucompat install failure must enter init rollback")
-    require(r"err_unwind:[\s\S]*?if\s*\(supercall_installed\)\s*kp_supercall_uninstall\(\)[\s\S]*?if\s*\(sucompat_installed\)\s*kp_sucompat_hook_exit\(\)[\s\S]*?if\s*\(kpm_initialized\)\s*kp_kpm_exit\(\)[\s\S]*?if\s*\(cfi_bypass_installed\)\s*kp_bypass_kcfi_exit\(\)[\s\S]*?return rc",
-            init_entry, "failed module init must unwind supercall, sucompat, KPM runtime and CFI hooks in reverse order")
+    require(r"err_unwind:[\s\S]*?if\s*\(supercall_installed\)\s*kp_supercall_uninstall\(\)[\s\S]*?if\s*\(sucompat_installed\)\s*kp_sucompat_hook_exit\(\)[\s\S]*?if\s*\(kpm_initialized\)\s*kp_kpm_exit\(\)[\s\S]*?BUG_ON\(kp_bypass_kcfi_exit\(\)\)[\s\S]*?return rc",
+            init_entry, "failed module init must unwind supercall, sucompat and KPM, then fail closed on CFI teardown")
 
     # If a later init stage fails, release the private KPM trampoline before
     # the loader frees the LKM. The supercall must be the final fallible step.
