@@ -85,7 +85,7 @@ static bool allow_uid = true, manager_uid;
 static bool fail_shell_open;
 static int fput_calls, apply_calls;
 static int apply_result;
-static const char *last_sctx;
+static char last_sctx[128];
 
 static int current_user_ns(void) { return 0; }
 static uid_t current_uid(void) { return test_uid; }
@@ -128,7 +128,7 @@ static long strncpy_from_user(char *to, const char *from, long n)
 static int kp_apply_su_cred(struct cred **cred, uid_t uid, const char *sctx)
 {
     apply_calls++;
-    last_sctx = sctx;
+    snprintf(last_sctx, sizeof(last_sctx), "%s", sctx ? sctx : "");
     if (apply_result) return apply_result;
     (*cred)->uid = uid;
     return 0;
