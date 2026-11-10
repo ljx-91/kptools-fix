@@ -220,6 +220,22 @@ def main():
     require(r"err_unwind:[\s\S]*?if\s*\(sucompat_installed\)\s*kp_sucompat_hook_exit\(\)[\s\S]*?if\s*\(supercall_installed\)\s*kp_supercall_uninstall\(\)[\s\S]*?if\s*\(cfi_bypass_installed\)\s*kp_bypass_kcfi_exit\(\)[\s\S]*?return rc",
             init_entry, "failed module init must unwind sucompat, supercall and CFI hooks in reverse order")
 
+    # If a later init stage fails, release the private KPM trampoline before
+    # the loader frees the LKM. The supercall must be the final fallible step.
+    require(r"kp_kpm_init\(\)[\s\S]*?else\s+kpm_initialized\s*=\s*true",
+            init_entry, "successful KPM init must be tracked for rollback")
+    require(r"kp_sucompat_hook_init\(\)[\s\S]*?kp_supercall_install\(\)",
+            init_entry, "supercall must be published after the other fallible hook setup")
+    require(r"kp_supercall_install\(\)[\s\S]*?kp_manager_init\(\)",
+            init_entry, "no fallible init stage may follow publication of the supercall")
+    require(r"if\s*\(kpm_initialized\)\s*kp_kpm_exit\(\)",
+            init_entry, "failed LKM init must release a successfully initialized private KPM runtime")
+    kpm_exit = body(module, "void kp_kpm_exit(void)")
+    require(r"WRITE_ONCE\(kp_kpm_ready,\s*false\)[\s\S]*?kp_free_exec\(kp_callback_tramp,\s*kp_callback_tramp_size\)",
+            kpm_exit, "KPM rollback must disable callbacks before freeing its trampoline")
+    require(r"kp_callback_tramp\s*=\s*NULL[\s\S]*?kp_exec_backend\s*=\s*KP_EXEC_BACKEND_NONE",
+            kpm_exit, "KPM rollback must clear stale runtime pointers and allocator state")
+
     unload_gate = body(module, "long kp_unload_module(")
     require(r"mod->active_calls\s*\|\|\s*mod->hook_refs[\s\S]*?return\s*-EBUSY",
             unload_gate, "KPM image must remain resident while callbacks or hooks reference it")
