@@ -1606,3 +1606,26 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 ### 验证边界
 
 本次只证明 GCC KPIMG 构建、Host fixture 和源码契约通过。没有 Y73s vendor KDIR，故未完成 LKM 对厂商内核头文件的真实编译/modpost；未完成 Clang 9.0.3 CFI/LTO 链接；也未在 Y73s 真机验证 hook 运行、SELinux 行为、exec 失败回滚或卸载并发。没有刷写或设备操作。
+
+## 50. 2026-11-10：prepare_binprm 替换可执行文件时平衡 deny_write_access
+
+### 发现与依据
+
+- 对照 gregkh/linux v4.14.141 `fs/exec.c`：`do_open_execat()` 对打开的可执行文件调用 `deny_write_access(file)`；`open_exec()` 复用该路径；`free_bprm()` 对最终保留在 `bprm->file` 的文件调用 `allow_write_access()` 后再 `fput()`。
+- `kp_before_prepare_binprm()` 原先将 `bprm->file` 替换为 `open_exec(KP_SH_PATH)` 返回的新文件，但旧文件只调用 `fput(old_file)`。这会遗漏旧文件对应的 deny-write 计数释放，可能使原 inode 保持写入受限。
+
+### 修复
+
+- 在替换前先调用 `allow_write_access(old_file)`，再 `fput(old_file)`；新 shell 文件保留在 `bprm->file`，后续由 Linux 4.14.141 `free_bprm()` 正常执行 `allow_write_access()` + `fput()`。
+- Host sucompat fixture 加入 allow_write_access stub，并要求旧文件释放时该函数被调用。
+- `verify_y73s_414_api_contract.py` 新增顺序契约：`allow_write_access(old_file)` 必须存在且先于 `fput(old_file)`。
+- `sucompat_hook.h` 的旧 execve-hook 注释同步更正为 prepare_binprm pending-credential hook。
+
+### 验证
+
+- GCC 14.2 Y73S KPIMG run `42837667611`，代码/测试 HEAD `24a66bf3a642518291d7188ccd6feb4b786529d5`：**success**；sucompat Host fixture 与新增 deny-write 顺序契约均通过，Y73S 4.14.141 source contract 通过。
+- Windows workflow run `42837667598`：Ubuntu KPIMG job 已 success；Windows kptools.exe job 在本节写入时仍运行中，最终结果待确认。
+
+### 边界
+
+该修复针对上游 Linux v4.14.141 的文件访问计数语义。Y73s vendor kernel 是否修改 `open_exec()` / `do_open_execat()` 仍需目标 KDIR 或厂商源码核对；当前没有 vendor KDIR，尚未完成 LKM 编译/modpost、Clang CFI/LTO 链接或真机验证。
