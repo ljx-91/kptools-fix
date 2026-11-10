@@ -13,10 +13,7 @@
 #include <linux/cred.h>
 #include <linux/err.h>
 #include <linux/errno.h>
-#include <linux/pid.h>
 #include <linux/sched.h>
-#include <linux/sched/task.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/version.h>
 #include <scdefs.h>
@@ -95,16 +92,22 @@ int kp_accctl_init(void)
 static int kp_selinux_set_cred_context(struct cred *new, const char *sctx)
 {
 	struct kp_task_sec *tsec;
-	u32 sid;
+	u32 sid = 0;
+	size_t sctx_len;
 	int rc;
 
-	if (kp_selinux_cred_offset < 0 || !kp_security_secctx_to_secid_fn ||
-	    !sctx || !sctx[0])
+	if (!new || !new->security || kp_selinux_cred_offset < 0 ||
+	    !kp_security_secctx_to_secid_fn || !sctx)
 		return -EINVAL;
 
-	rc = kp_security_secctx_to_secid_fn(sctx, strlen(sctx), &sid);
+	/* scontext is a fixed-size UAPI field and user input need not be NUL-terminated. */
+	sctx_len = strnlen(sctx, SUPERCALL_SCONTEXT_LEN);
+	if (!sctx_len || sctx_len >= SUPERCALL_SCONTEXT_LEN)
+		return -EINVAL;
+
+	rc = kp_security_secctx_to_secid_fn(sctx, (u32)sctx_len, &sid);
 	if (rc || !sid) {
-		logkw("secctx_to_secid(%s) failed: %d sid=%u\n", sctx, rc, sid);
+		logkw("secctx_to_secid failed: %d sid=%u\n", rc, sid);
 		return rc ? rc : -EINVAL;
 	}
 
@@ -124,17 +127,25 @@ static void fill_caps(struct cred *new)
 	new->cap_ambient = all;
 }
 
-static void su_cred(struct cred *new, uid_t uid)
+static int su_cred(struct cred *new, uid_t uid)
 {
+	kuid_t kuid = make_kuid(current_user_ns(), uid);
+	kgid_t kgid = make_kgid(current_user_ns(), uid);
+
+	/* Do not install invalid IDs when the caller's user namespace lacks a mapping. */
+	if (!uid_valid(kuid) || !gid_valid(kgid))
+		return -EINVAL;
+
 	fill_caps(new);
-	new->uid = make_kuid(current_user_ns(), uid);
-	new->euid = new->uid;
-	new->fsuid = new->uid;
-	new->suid = new->uid;
-	new->gid = make_kgid(current_user_ns(), uid);
-	new->egid = new->gid;
-	new->fsgid = new->gid;
-	new->sgid = new->gid;
+	new->uid = kuid;
+	new->euid = kuid;
+	new->fsuid = kuid;
+	new->suid = kuid;
+	new->gid = kgid;
+	new->egid = kgid;
+	new->fsgid = kgid;
+	new->sgid = kgid;
+	return 0;
 }
 
 /*
@@ -152,7 +163,9 @@ int kp_apply_su_cred(struct cred **cred, uid_t to_uid, const char *sctx)
 	if (!cred || !*cred)
 		return -EINVAL;
 	new = *cred;
-	su_cred(new, to_uid);
+	rc = su_cred(new, to_uid);
+	if (rc)
+		return rc;
 	rc = kp_selinux_set_cred_context(new, target_sctx);
 	if (!rc)
 		return 0;
@@ -173,8 +186,6 @@ int kp_commit_su(uid_t to_uid, const char *sctx)
 	struct cred *new;
 	int rc;
 
-	/* Disable seccomp on the caller, matching KP's commit_common_su. */
-	current_thread_info()->flags &= ~_TIF_SECCOMP;
 	new = prepare_creds();
 	if (!new)
 		return -ENOMEM;
@@ -183,39 +194,28 @@ int kp_commit_su(uid_t to_uid, const char *sctx)
 		abort_creds(new);
 		return rc;
 	}
-	commit_creds(new);
+	/* Disable seccomp only after all credential preparation can no longer fail. */
+	current_thread_info()->flags &= ~_TIF_SECCOMP;
+	rc = commit_creds(new);
+	if (rc) {
+		abort_creds(new);
+		return rc;
+	}
 	logki("commit_su: to_uid=%u\n", to_uid);
 	return 0;
 }
 
+/*
+ * Cross-task credential replacement is not safe in this LKM implementation:
+ * prepare_creds() snapshots current, while target cred/real_cred have separate
+ * ownership and task-lifetime rules. Refuse the ABI until a target-context
+ * implementation with correct refcounting and synchronization exists.
+ */
 int kp_task_su(pid_t pid, uid_t to_uid, const char *sctx)
 {
-	struct task_struct *task;
-	const struct cred *old;
-	struct cred *new;
-
-	task = find_get_task_by_vpid(pid);
-	if (!task) {
-		logke("task_su: no task pid %d\n", pid);
-		return -ESRCH;
-	}
-
-	new = prepare_creds();
-	if (!new) {
-		put_task_struct(task);
-		return -ENOMEM;
-	}
-	su_cred(new, to_uid);
+	(void)pid;
+	(void)to_uid;
 	(void)sctx;
-
-	rcu_read_lock();
-	old = task->cred;
-	rcu_assign_pointer(task->cred, new);
-	rcu_assign_pointer(task->real_cred, new);
-	rcu_read_unlock();
-	put_cred(old);
-
-	put_task_struct(task);
-	logki("task_su: pid %d -> uid %u\n", pid, to_uid);
-	return 0;
+	logkw("task_su is disabled: cross-task credential replacement is unsupported\n");
+	return -EOPNOTSUPP;
 }
