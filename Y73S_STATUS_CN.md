@@ -1098,9 +1098,56 @@ Host harness 使用 ELF64 的 `Elf64_Shdr`、`Elf64_Sym`、`Elf64_Rela` 构造�
 - workflow 接入提交：`67251633381239cc22adbc686fddcc25853ea98d`
 - helper 调用映射修正：`7d0d8793e05743e0e990141aa90929a9fa6d09dd`
 - errno 断言修正：`50a3a8a8fefd2eb26b7651a51a3840686993d247`
-- Host run `42795923519` 的 `Audit LKM KPM ELF loader source` job 成功；日志明确输出 LKM、KPIMG layout/copy 及 3 类失败路径的全部 `[PASS]`。同一 run 的 `build-kptools` 已完成编译和打包步骤，artifact 上传当时仍在收尾。
+- Host run `42795923519` 的 `Audit LKM KPM ELF loader source` job 成功；日志明确输出 LKM、KPIMG layout/copy 及 3 类失败路径的全部 `[PASS]`。同一 run 的 `build-kptools` 最终也成功完成编译、打包和 artifact 上传。
 - 符号转换 Host run `42795362396` 成功；GCC KPIMG run `42795362369` 成功；Windows kptools 在 run `42795484540` 成功（该 Windows run 对应符号修复后的提交）。
 
 ### 验证边界
 
 这是合成 ELF fixture 执行生产布局/复制函数，不等于任意真实 KPM 文件的完整端到端加载；尚未在精确 Y73s Linux 4.14.141 KDIR 编译，也未在 Y73s 真机加载。最新布局测试提交对应的 GCC / Windows CI 仍需单独确认。
+
+
+## 34. KPIMG RELA 时序修复与元数据解析一致性（2026-11-10）
+
+### 发现的生产问题
+
+沿 KPIMG 的真实加载顺序审计发现，`layout_sections()` 会把所有节的 `sh_entsize` 改写为 `~0UL` 或映像偏移，但旧的 `apply_relocations()` 在布局后仍要求 RELA 的 `sh_entsize == sizeof(Elf64_Rela)`。标准非 alloc RELA 节因此会被错误拒绝。
+
+修复方式：
+- 在 `setup_load_info()`（布局前）检查原始 RELA `sh_entsize` 和 `sh_size`；
+- 布局后的 `apply_relocations()` 不再读取被复用的 `sh_entsize`，仅保留条目整数倍检查；
+- Host fixture 特意把 RELA 的 `sh_entsize` 改为 `~0UL` 后调用真实 dispatcher，确认合法 RELA 仍会派发。
+
+同时补齐 KPIMG parser 与 LKM 的重要校验差异：
+- section-name string table 必须首字节为 NUL；
+- `.kpm.init` / `.kpm.exit` 必须存在、可执行且非空；
+- `.kpm.info` 必须为非空 PROGBITS，且节尾 NUL 终止；
+- 必需的 name/version 字段不得为空；
+- symbol STRTAB 必须以 NUL 开头；
+- 拒绝多个 SYMTAB。
+
+双 SYMTAB fixture 首次发现：虽然已加入重复表检测，但旧循环在第一个 SYMTAB 后提前 `break`，导致第二张表永远不检查。已移除该提前退出，现由真实 parser fixture 回归覆盖。
+
+### 新增 Host Fixture
+
+新增 `scripts/test_kpimg_kpm_loader.py`，直接提取执行 KPIMG 生产函数：
+- `elf_range_valid()`、`elf_string_valid()`；
+- `get_next_modinfo()` / `get_modinfo()`；
+- `find_sec()`、`get_sh_base()`、`get_sh_size()`；
+- `rewrite_section_headers()`、`setup_load_info()`；
+- `apply_relocations()`。
+
+覆盖合法 metadata、错误 info section 类型/大小/终止符、非 executable init、空 name/version、坏 RELA 条目大小、坏 symbol STRTAB、多个 SYMTAB、布局后 RELA、未支持 REL、坏 target index 和错误 symbol-table link。
+
+### CI 与修正记录
+
+- KPIMG RELA / metadata 主修复：`68d7349a6cc13db574b460251a2fc1f8038f0324`
+- KPIMG 多 SYMTAB 提前退出修复：`f73b49df9793ec290830f24841dc20a8c75218f0`
+- KPIMG Host fixture：`cdcf00fa24851b7a22dc85bd39181a8b8bd05da0`
+- fixture 断言修正：`d1dbddc679721704a523132814803614c6cfa842`
+- source contract 更新：`eb0dc062ad8c7ad66a7767c71c4a9ba61a605655`
+- workflow 增加 KPIMG 路径触发和 Host 测试：`fc87874b1f5ca94aeb70034c71eaef9ae5bc0396`、`ddfb429c69132532513ea4ff092c88209daab8be`
+- Host run `42796685283` 的 `Audit LKM KPM ELF loader source` job 成功；日志明确显示 KPIMG parser fixture 和“valid RELA still dispatches after sh_entsize is repurposed”均通过。同期 `build-kptools` 正在安装依赖/构建，待最终完成状态确认。
+
+### 验证边界
+
+本轮修复解决了 KPIMG 标准 RELA 在布局后被错误拒绝的问题，并补齐 parser 元数据校验；测试仍是合成 ELF Host fixture，不是实际第三方 KPM 的全链路加载。精确 Y73s Linux 4.14.141 KDIR 编译和真机加载仍未验证。
