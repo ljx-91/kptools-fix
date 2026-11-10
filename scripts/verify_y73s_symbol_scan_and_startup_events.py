@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Y73S 4.14.141 regression checks for runtime kallsyms scan and KPM init events."""
+"""Y73S 4.14.141 regression checks for kallsyms scan and hidden kernel_init."""
 from bisect import bisect_right
 from pathlib import Path
 import re
@@ -11,12 +11,31 @@ PATCH = ROOT / "kernel/patch/patch.c"
 TOOLS_SYMBOL = ROOT / "tools/symbol.c"
 PROFILE = ROOT / "scripts/verify_y73s_414_kallsyms_profile.py"
 
-Y73S_ANCHOR = 0x0191E3E8       # show_stack in the original Y73s KALLSYMS dump
-Y73S_TARGET = 0x01922680       # kallsyms_lookup_name
-Y73S_PREDECESSOR = 0x0192267C  # module_kallsyms_lookup_name
-Y73S_SUCCESSOR = 0x01922684    # cmdq_dev_alloc_reference_VA_by_name
+Y73S_ANCHOR = 0x0191E3E8
+Y73S_TARGET = 0x01922680
+Y73S_PREDECESSOR = 0x0192267C
+Y73S_SUCCESSOR = 0x01922684
 Y73S_OBSERVED_FIXED_STEPS = 4237
 Y73S_SCAN_BUDGET = 8192
+
+# Exact instructions extracted from the original Y73s boot.img kernel.Image.
+REST_INIT = 0x018F1280
+REST_INIT_SIZE = 0x44C
+KERNEL_THREAD_CFI = 0x000DC0D8
+KERNEL_INIT_CALL = 0x018F12A0
+KERNEL_INIT_ADRP = 0xB0000260
+KERNEL_INIT_ADD = 0x9126E000
+KERNEL_INIT_BL = 0x979FAB8E
+KERNEL_INIT_STUB = 0x0193E9B8
+KERNEL_INIT_STUB_BRANCH = 0x17FECA67
+KERNEL_INIT_BODY = 0x018F1354
+KTHREADD_CALL = 0x018F130C
+KTHREADD_ADRP = 0xB0000260
+KTHREADD_ADD = 0x9127F000
+KTHREADD_BL = 0x979FAB73
+KTHREADD_STUB = 0x0193E9FC
+KTHREADD_STUB_BRANCH = 0x179F914F
+KTHREADD_BODY = 0x00122F38
 
 
 def function_body(source, signature):
@@ -40,8 +59,30 @@ def need(pattern, source, message):
         raise AssertionError(message)
 
 
+def sign_extend(value, bits):
+    sign = 1 << (bits - 1)
+    return value - (1 << bits) if value & sign else value
+
+
+def branch_target(pc, instruction):
+    return pc + sign_extend(instruction & 0x03FFFFFF, 26) * 4
+
+
+def adrp_page(pc, instruction):
+    immlo = (instruction >> 29) & 0x3
+    immhi = (instruction >> 5) & 0x7FFFF
+    imm21 = sign_extend((immhi << 2) | immlo, 21)
+    return (pc & ~0xFFF) + (imm21 << 12)
+
+
+def adrp_add_target(adrp_pc, adrp_instruction, add_instruction):
+    page = adrp_page(adrp_pc, adrp_instruction)
+    imm12 = (add_instruction >> 10) & 0xFFF
+    shift = (add_instruction >> 22) & 1
+    return page + (imm12 << (12 if shift else 0))
+
+
 def scan_model(symbols, anchor, target, extra, budget):
-    """Model %pSb's symbol start/size result using the next distinct address."""
     addr = anchor
     kernel_end = symbols[-1] + 4
     for step in range(budget):
@@ -85,9 +126,6 @@ def verify_scan():
     need(r"i\s*<\s*KP_SYMBOL_SCAN_MAX_STEPS", scan_fn,
          "symbol scan must retain a finite step budget")
 
-    # This count was independently reproduced from the full uploaded Y73s
-    # KALLSYMS log. The former 4096-step limit was too small even after fixing
-    # the +4 skip; the exact current log takes 4237 boundary queries.
     if Y73S_TARGET - Y73S_ANCHOR != 0x4298:
         raise AssertionError("Y73S anchor/target fixture changed unexpectedly")
     if not (Y73S_PREDECESSOR < Y73S_TARGET < Y73S_SUCCESSOR):
@@ -96,8 +134,7 @@ def verify_scan():
         raise AssertionError("scan budget does not cover the original Y73S symbol path")
 
     # Synthetic dense-symbol regression: one 8-byte interval changes the
-    # parity of the old +4 walk, causing the target to be skipped. This models
-    # the 4-byte-heavy vendor KALLSYMS region without checking in a multi-MB log.
+    # parity of the old +4 walk, causing the target to be skipped.
     slots = (Y73S_TARGET - Y73S_ANCHOR) // 4
     symbols = [Y73S_ANCHOR + 4 * i for i in range(slots + 1) if i != 1]
     symbols.extend([Y73S_TARGET + 4, Y73S_TARGET + 8])
@@ -116,40 +153,73 @@ def verify_scan():
         raise AssertionError("start_init must prefer the exact preset symbol offset")
 
 
-def verify_init_events():
-    patch = PATCH.read_text(encoding="utf-8")
+def verify_hidden_kernel_init():
     tools_symbol = TOOLS_SYMBOL.read_text(encoding="utf-8")
+    patch = PATCH.read_text(encoding="utf-8")
     profile = PROFILE.read_text(encoding="utf-8")
-    before = function_body(patch, "static void before_rest_init(")
+    resolver = function_body(tools_symbol, "static int32_t resolve_kernel_init_from_rest_init(")
+    fillin = function_body(tools_symbol, "int fillin_patch_config(")
+    before = function_body(patch, "static void before_kernel_init(")
     after = function_body(patch, "static void after_kernel_init(")
-    config = function_body(tools_symbol, "int fillin_patch_config(")
 
-    need(r"early_init_failed", before,
-         "rest_init fallback must distinguish failed early initialization")
-    need(r"if\s*\(!early_init_failed\s*&&\s*patch_config->rest_init\s*&&\s*!patch_config->kernel_init\)",
-         before, "PRE_KERNEL_INIT fallback must be restricted to successful Y73S rest_init path")
+    need(r"get_symbol_offset_and_size\(kallsym,\s*img_buf,\s*\"rest_init\"",
+         resolver, "resolver must use the target rest_init symbol range")
+    need(r"kernel_thread\.cfi", resolver,
+         "resolver must locate the kernel_thread CFI call target")
+    need(r"aarch64_insn_is_bl", resolver,
+         "resolver must identify BL calls to kernel_thread")
+    need(r"aarch64_insn_is_adrp", resolver,
+         "resolver must decode the ADRP that materializes the thread entry")
+    need(r"aarch64_insn_is_add_imm", resolver,
+         "resolver must decode the ADD immediate that completes the entry pointer")
+    need(r"aarch64_insn_is_b\(stub_insn\)", resolver,
+         "resolver must follow the function-pointer CFI branch stub")
+    need(r"body_offset\s*<=\s*rest_init_offset\s*\|\|\s*body_offset\s*>=\s*rest_init_end",
+         resolver, "resolver must accept only a unique body inside the rest_init symbol span")
+    need(r"symbol->kernel_init\s*=\s*resolve_kernel_init_from_rest_init",
+         fillin, "fillin_patch_config must populate the hidden kernel_init offset")
     need(r"extra_event_init\(EXTRA_EVENT_PRE_KERNEL_INIT\)", before,
-         "Y73S rest_init path must emit the default PRE_KERNEL_INIT event")
+         "PRE_KERNEL_INIT must remain attached to the actual kernel_init entry")
     need(r"extra_event_init\(EXTRA_EVENT_POST_KERNEL_INIT\)", after,
-         "POST_KERNEL_INIT must remain tied to the real kernel_init after-hook")
-    need(r"POST_KERNEL_INIT unavailable", patch,
-         "missing kernel_init must be reported as an unavailable post event")
-    need(r"symbol->rest_init\s*=\s*try_get_symbol_offset_zero\(kallsym,\s*img_buf,\s*\"rest_init\"\)",
-         config, "tool must resolve the Y73S rest_init symbol")
-    need(r"if\s*\(!symbol->rest_init\)\s*symbol->cgroup_init", config,
-         "cgroup_init must remain only the fallback when rest_init is absent")
+         "POST_KERNEL_INIT must remain attached to the actual kernel_init return path")
+    if "extra_event_init(EXTRA_EVENT_PRE_KERNEL_INIT)" in function_body(patch, "static void before_rest_init("):
+        raise AssertionError("do not fire PRE_KERNEL_INIT prematurely at rest_init entry")
+    need(r"PRE/POST_KERNEL_INIT events unavailable", patch,
+         "unresolved kernel_init must fail closed and report both events unavailable")
+    need(r"\"kernel_thread.cfi\"", profile,
+         "Y73S KALLSYMS fixture must require kernel_thread CFI call target")
     need(r"\"rest_init\",\s*\"cgroup_init\"", profile,
          "Y73S KALLSYMS fixture must require rest_init and cgroup_init")
     need(r"\"kernel_init\"", profile,
          "Y73S KALLSYMS fixture must record kernel_init as absent")
 
+    # Verify the actual original-image callsite, not just a source-level guess.
+    if branch_target(KERNEL_INIT_CALL, KERNEL_INIT_BL) != KERNEL_THREAD_CFI:
+        raise AssertionError("Y73S first kernel_thread call target mismatch")
+    if adrp_add_target(KERNEL_INIT_CALL - 8, KERNEL_INIT_ADRP, KERNEL_INIT_ADD) != KERNEL_INIT_STUB:
+        raise AssertionError("Y73S kernel_init CFI function pointer decode mismatch")
+    if branch_target(KERNEL_INIT_STUB, KERNEL_INIT_STUB_BRANCH) != KERNEL_INIT_BODY:
+        raise AssertionError("Y73S kernel_init CFI stub branch target mismatch")
+    if not (REST_INIT < KERNEL_INIT_BODY < REST_INIT + REST_INIT_SIZE):
+        raise AssertionError("derived Y73S kernel_init body is outside rest_init symbol extent")
+
+    if branch_target(KTHREADD_CALL, KTHREADD_BL) != KERNEL_THREAD_CFI:
+        raise AssertionError("Y73S kthreadd kernel_thread call target mismatch")
+    if adrp_add_target(KTHREADD_CALL - 8, KTHREADD_ADRP, KTHREADD_ADD) != KTHREADD_STUB:
+        raise AssertionError("Y73S kthreadd CFI function pointer decode mismatch")
+    if branch_target(KTHREADD_STUB, KTHREADD_STUB_BRANCH) != KTHREADD_BODY:
+        raise AssertionError("Y73S kthreadd CFI stub branch target mismatch")
+    if REST_INIT < KTHREADD_BODY < REST_INIT + REST_INIT_SIZE:
+        raise AssertionError("kthreadd must not be misidentified as kernel_init")
+
 
 def main():
     verify_scan()
-    verify_init_events()
-    print("[PASS] Y73S 4.14.141 symbol-boundary scan and preset priority")
-    print("[PASS] Y73S rest_init PRE_KERNEL_INIT fallback; no fabricated POST_KERNEL_INIT")
-    print("[PASS] dense 4-byte symbol scan regression model")
+    verify_hidden_kernel_init()
+    print("[PASS] Y73S 4.14.141 symbol-boundary scan and exact preset priority")
+    print("[PASS] hidden kernel_init recovered from rest_init ADRP/ADD + CFI branch")
+    print("[PASS] kernel_init and kthreadd callsites are distinguished")
+    print("[PASS] PRE/POST_KERNEL_INIT remain on the real kernel_init hooks")
 
 
 if __name__ == "__main__":
