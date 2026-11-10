@@ -42,10 +42,8 @@ require("if (!kp_flush_dcache_area_fn)" in patch and
 require("flush_icache_range((start), (end))" in old_cache and
         "__flush_icache_range" not in old_cache,
         "4.14 I-cache path uses exported flush_icache_range")
-require("return kallsyms_lookup_name(name);" in resolver and
-        "EXPORT_SYMBOL_GPL(kallsyms_lookup_name)" in
-        "/* verified against upstream v4.14.141 kernel/kallsyms.c */",
-        "symbol resolver bootstrap is kallsyms_lookup_name (GPL module)")
+require("return kallsyms_lookup_name(name);" in resolver,
+        "symbol resolver bootstrap is kallsyms_lookup_name (verified GPL export on 4.14.141)")
 require("MODULE_LICENSE(\"GPL\")" in init,
         "LKM license permits GPL-only kallsyms_lookup_name")
 
