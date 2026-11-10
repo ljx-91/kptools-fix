@@ -1928,3 +1928,24 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 - 新增契约已推送；Host Run 42866139367（提交 d87dd78）success，新增的 KPIMG 绝对分支、LKM literal-overwrite 拒绝和 LKM init unwind 三项检查均通过；syscall-45 专项总计 11/11 通过。Y73S GCC 14.2 KPIMG Run 42866138775 亦为 success。
 - 这仍是原始 Boot 离线反汇编、源码控制流和静态契约证据；不替代目标 KDIR 编译或设备运行验证。
 - 不使用 Fastboot，不刷写、不修改分区，不执行真机启动测试。
+
+
+## 65. 2026-11-11：把 Hook Gate 抽象模型接入 CI，并穷举卸载交错
+
+### 本轮改动
+
+- 将原有 scripts/test_y73s_hook_gate_model.py 加入 Y73S Host CI。
+- 新增 scripts/test_y73s_hook_gate_interleavings.py，使用两个并发 Gate entrant 与一个 module-exit 线程，穷举 load/CAS、try_module_get、LKM call/return、module_put、Gate leave、close、unhook、wait 和 unload 的所有可达交错状态。
+- 每个状态验证 Gate count 与 token 数一致、module refcount 与成功获取的引用数一致、active call 不超过 module refcount；模块进入 GOING/UNLOADED 后不得有新的 LKM 调用。
+- 终态要求 Gate 已关闭、Hook 已撤销、token/refcount/active call 全为零，并假定 Gate 代码和 original trampoline 位于模块映像之外且仍保留。
+
+### 验证
+
+- 原模型：8/8。
+- 新穷举模型：511 个可达状态、12 个终止调度，全部不变量成立。
+- Host Run 42867450034（提交 2cbea28）：success；日志明确输出上述两个模型结果。
+- Y73S GCC 14.2 KPIMG Run 42867419068（提交 50293b45）：success。
+
+### 严格限制
+
+这两个脚本都是抽象协议模型；它们没有测试生产 AArch64 Gate 机器码、Linux 4.14 module state/refcount 的真实实现、内存序、stop_machine/CPU pipeline 或设备运行时。当前 LKM transit 函数仍编译在可卸载的 LKM 映像内，生产 Gate 尚未接入。因此 LKM 正常卸载安全仍是未关闭项，不能因模型通过而标记修复完成。
