@@ -622,3 +622,21 @@ The safest immediate behavior is:
 A future bridge must define the address-range registration lifetime, KPM unload synchronization, CFI type/CFI-shadow semantics, and rollback order. Merely forwarding a boolean “CFI bypass ready” is insufficient because KPIMG's current `should_cfi_pass()` recognizes KPIMG text/hook/KPM regions, not the LKM KPM allocation range.
 
 Status: target config, symbol selection, original prologue bytes, both Hook Engine implementations, LKM Kbuild inclusion, and LKM fail-closed behavior are source/artifact-confirmed. No production code changed. No Y73s KDIR build, runtime hook test, or device test is claimed.
+
+
+#### 5. Vendor-specific `__cfi_slowpath` ABI verified from the original Y73s machine code
+
+Generic Clang CFI documentation describes the conventional two-argument `__cfi_slowpath(uint64_t, void *)` and three-argument `__cfi_slowpath_diag(uint64_t, void *, void *)`. That generic signature must not be imposed on this vendor kernel without checking its binary.
+
+The original Y73s Image at `0x002ddc00` disassembles as follows in the relevant argument-preservation sequence:
+
+- `0x002ddc1c: mov x20, x2`
+- `0x002ddc20: mov x19, x1`
+- `0x002ddc24: mov x21, x0`
+- On the successful CFI-check path, `0x002ddcf8: mov x1, x19`, `0x002ddcfc: mov x2, x20`, followed by `blr x8`.
+
+Thus the Y73s vendor implementation consumes and forwards all three AArch64 argument registers x0, x1, and x2. The existing KPIMG and LKM replacement/backup typedefs with three arguments match the observed Y73s machine-level ABI. This is a vendor-specific implementation detail and must not be generalized to upstream Clang CFI runtimes or other kernels.
+
+This check also rules out treating the third argument as harmless padding on this target: it is forwarded to the resolved `__cfi_check` callback. Any future shared CFI Gate must preserve x2 exactly.
+
+The generic Clang documentation is useful background only; the original Y73s disassembly is the controlling ABI evidence for this device.
