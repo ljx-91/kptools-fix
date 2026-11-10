@@ -89,6 +89,7 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
         (r"strsec->sh_type\s*!=\s*SHT_STRTAB", "symbol string-table type"),
         (r"kp_elf_string_valid\(info->strtab", "symbol name bounds"),
         (r"st_shndx\s*==\s*SHN_XINDEX", "extended symbol index rejection"),
+        (r"st_shndx\s*>=\s*SHN_LORESERVE[\s\S]*?st_shndx\s*!=\s*SHN_UNDEF[\s\S]*?st_shndx\s*!=\s*SHN_ABS[\s\S]*?st_shndx\s*!=\s*SHN_COMMON", "unsupported reserved symbol section indexes"),
         (r"info->info.base\[info->info.size\s*-\s*1\]\s*!=\s*'\\0'", ".kpm.info termination"),
     ]:
         need(pattern, setup, f"setup_load_info must validate {message}")
