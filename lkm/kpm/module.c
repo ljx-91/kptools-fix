@@ -225,6 +225,7 @@ static void kp_flush_kpm_icache(void *start, size_t size)
 		return;
 	/* The exported ARM64 range helper performs the required D/I cache sync. */
 	flush_icache_range(base, base + size);
+	__flush_icache_all();
 }
 
 __attribute__((no_sanitize("cfi")))
