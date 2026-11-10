@@ -157,12 +157,12 @@ int main(void)
     }
     args.ret = 128;
     kp_after_prepare_binprm(&args, NULL);
-    if (apply_calls != 1 || cred.uid != 0 || (ti.flags & _TIF_SECCOMP) ||
+    if (apply_calls != 1 || cred.uid != 0 || !(ti.flags & _TIF_SECCOMP) ||
         strcmp(last_sctx, "u:r:magisk:s0")) {
         fprintf(stderr, "su exec pending root cred failed\n");
         return 1;
     }
-    puts("[PASS] allowed su exec redirects file and prepares root SELinux cred");
+    puts("[PASS] allowed su exec prepares root SELinux cred while preserving seccomp until exec commit");
 
     {
         struct file old = { .id = 3 };
