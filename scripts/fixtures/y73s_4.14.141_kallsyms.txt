@@ -23,5 +23,7 @@
 0x01914f00 t open_exec
 0x019135b4 t stop_machine
 0x000dc0d8 t kernel_thread.cfi
+0x00122f38 t kthreadd.cfi
+0x0193e9fc t kthreadd
 0x018f1280 t rest_init
 0x019430f8 t cgroup_init
