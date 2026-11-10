@@ -932,3 +932,45 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 - 该 Host run 的 Linux kptools 构建和 artifact 打包也成功。
 
 当前这一步可标记为：**真实 loader 的 ELF header / section table 检查函数体已由 Host C fixture 执行通过**。仍未覆盖完整 `setup_load_info()`、SYMTAB/STRTAB 全路径、真实 RELA section 遍历和多条 relocation 的整体事务回滚；不能将本结果扩大解释为完整 KPM ELF 加载测试。
+
+
+## 30. KPM RELA 多记录执行与事务回滚 Host Harness（2026-11-10）
+
+### 新增测试
+
+新增 `scripts/test_kpm_rela_transaction.py`，从生产文件 `lkm/kpm/relo.c` 提取并执行真实函数体：
+
+- `do_reloc()`
+- `reloc_data()`
+- `kp_reloc_write_width()`
+- `kp_apply_relocate_add()`
+
+Host harness 使用 ELF64 的 `Elf64_Shdr`、`Elf64_Sym`、`Elf64_Rela` 构造多条 RELA 记录，并将生产函数应用于内存目标段。指令编码辅助函数在此 harness 中使用 stub；真实指令重定位 helper 仍由既有 `test_aarch64_relocations.py` 单独执行。
+
+### 覆盖结果
+
+本轮 10 项检查全部通过：
+
+1. 两条有效 ABS16/ABS32 RELA 记录成功写入正确值。
+2. 第一条已写入、第二条遇到未知 relocation type，整个目标段恢复原样。
+3. 第一条已写入、第二条 PREL16 溢出，整个目标段恢复原样。
+4. 无效 symbol index 在任何写入前拒绝。
+5. relocation offset/width 越界在任何写入前拒绝。
+6. 指令 relocation 目标地址未对齐时，在写入前拒绝。
+7. RELA 表大小不是条目大小整数倍时拒绝。
+8. SHT_REL 输入不会被错误报告为成功。
+9. 备份内存分配失败时目标段保持不变。
+10. RELA 的 sh_link 与指定 SYMTAB 不匹配时拒绝。
+
+测试特别保留 `rsec->sh_entsize = ~0UL`，模拟 layout 阶段已将该字段复用为私有偏移的状态，确认 apply 阶段不会再把它当作原始 ELF 条目大小。
+
+### CI
+
+- 新增脚本提交：`66bd4dcdd75dcc8457cb5f7cb764019435e2da29`
+- Host workflow 接入提交：`4b03e9da391e352f7121aebf8e0a66f3530ec6f5`
+- Linux Host audit run：`42792965262`，`Audit LKM KPM ELF loader source` job 已成功；日志明确列出以上 10 项 `[PASS]`。
+- 同一 run 的 `build-kptools` job 当时仍在运行，待其结束后再记录整个 workflow 结论。
+
+### 验证边界
+
+本 harness 执行真实 `kp_apply_relocate_add()`，但仅覆盖该函数的多记录校验、数据重定位和目标段事务回滚；指令重定位函数在该 harness 中为 stub，另由单函数 harness 覆盖。它没有执行完整 ELF `setup_load_info()`、真实文件输入到最终模块映像的完整链路，也没有执行 KPIMG 的同等 RELA loader、精确 Y73s Linux 4.14.141 KDIR 编译或真机加载。
