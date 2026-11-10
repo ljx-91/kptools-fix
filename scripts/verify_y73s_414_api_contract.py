@@ -146,9 +146,11 @@ require("kp_apply_su_cred" in accctl and
         "prepare_kernel_cred(NULL)" in accctl and
         "put_cred(new)" in accctl,
         "pending exec credentials can be relabeled with a fail-closed kernel-cred fallback")
-const sucompat_init = body(sucompat_hook, "int kp_sucompat_hook_init(")
-require(sucompat_init.indexOf("kp_syscall_table_init()") >= 0 &&
-        sucompat_init.indexOf("kp_syscall_table_init()") < sucompat_init.indexOf("kp_syscall_hook("),
+sucompat_init = sucompat_hook.split("int kp_sucompat_hook_init(void)", 1)[1].split(
+    "int kp_sucompat_hook_exit(void)", 1
+)[0]
+require("kp_syscall_table_init()" in sucompat_init and
+        sucompat_init.index("kp_syscall_table_init()") < sucompat_init.index("kp_syscall_hook("),
         "sucompat initializes the syscall table before attempting the syscall hook")
 require("return kp_hook_prepare_binprm()" in sucompat_hook and
         "kp_resolve_symbol(\"prepare_binprm.cfi\")" in sucompat_hook,
