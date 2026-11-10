@@ -48,7 +48,26 @@ hook_exec_free = function_body(runtime, "static void kp_hook_exec_free(void *reg
 hook_install = function_body(hook, "int hook_install(")
 phys_from_virt = function_body(patch_memory, "static unsigned long kp_phys_from_virt(")
 
+hook_kbuild = read("lkm/Kbuild")
+transit4 = function_body(hook, "uint64_t __attribute__((section(\".transit4.text\")))")
+reader_enter = hook.index("hook_chain_reader_enter(hook_chain, 0);", hook.index("_transit4("))
+reader_pin = hook.index("hook_chain_pin_callbacks(hook_chain, 0", reader_enter)
+reader_unpin = hook.index("hook_chain_unpin_callbacks(hook_chain, 0", reader_pin)
+reader_exit = hook.index("hook_chain_reader_exit(hook_chain, 0);", reader_unpin)
+
 checks = {
+    "LKM transit object disables CFI, LTO, stack protector and conditional SCS":
+        "-fno-sanitize=cfi -fno-stack-protector -fno-jump-tables" in hook_kbuild and
+        "-fno-lto" in hook_kbuild and
+        "CONFIG_SHADOW_CALL_STACK" in hook_kbuild and
+        "CFLAGS_hook/hook_engine.o += -fno-sanitize=shadow-call-stack" in hook_kbuild,
+    "LKM chain stub preserves x16 chain pointer and uses x17 for absolute branch":
+        "transit[1] = 0x58000070; /* LDR X16, #12 */" in hook_engine and
+        "transit[2] = 0x14000004; /* B #16 */" in hook_engine and
+        "buf[0] = 0x58000051; // LDR X17, #8" in hook and
+        "buf[1] = 0xD65F0220; // RET X17" in hook,
+    "transit reader is entered before callback pin and released after callback unpin":
+        reader_enter < reader_pin < reader_unpin < reader_exit,
     "Linux 4.14 without PTE_GP uses a zero BTI guard mask":
         "#ifdef PTE_GP" in runtime and "#define KP_HOOK_PTE_GP 0UL" in runtime and
         "#ifdef PTE_GP" in read("lkm/kpm/module.c") and "#define KP_LKM_PTE_GP 0UL" in read("lkm/kpm/module.c"),
