@@ -29,6 +29,11 @@ hook_runtime = read("lkm/hook/hook_runtime.c")
 kpm = read("lkm/kpm/module.c")
 sucompat = read("lkm/supercall/sucompat_hook.c")
 kstorage = read("lkm/supercall/kstorage.c")
+supercall = read("lkm/supercall/supercall.c")
+hook_runtime = read("lkm/hook/hook_runtime.c")
+hook_engine = read("lkm/hook/hook_engine.c")
+patch_memory = read("lkm/infra/patch_memory.c")
+init_source = read("lkm/core/init.c")
 
 # In upstream v4.14.141 ARM64:
 # - __flush_dcache_area is declared/implemented but not exported;
@@ -91,6 +96,36 @@ require("p4d_offset(pgd, addr)" in patch and
         "p4d_offset(pgd, addr)" in hook_runtime and
         "p4d_offset(pgd, addr)" in kpm,
         "all three ARM64 page-table walkers retain generic folded-P4D API")
+
+# Exact Y73S 4.14.141 symbol profile: data symbols sys_call_table/init_mm are
+# absent, while text SyS_truncate.cfi and module_alloc/module_memfree exist.
+require('"SyS_truncate.cfi"' in supercall and
+        "sys_truncate" not in supercall.split("kp_install_inline_supercall(", 1)[1].split(";", 1)[0],
+        "Y73S supercall hooks the CFI implementation, not the 4-byte syscall stub")
+require("static long kp_supercall_handler_legacy(long arg0, long arg1," in supercall,
+        "4.14 syscall handler uses ordinary ARM64 argument ABI with x0-x5")
+require("kp_syscall_table_init()" not in init_source,
+        "Y73S init no longer fails on hidden sys_call_table data symbol")
+require("kp_phys_from_virt_no_init_mm" in patch_memory and
+        "virt_addr_valid((void *)addr)" in patch_memory and
+        "virt_to_phys((void *)addr)" in patch_memory,
+        "4.14 text patching has a direct-map/kernel-image translation fallback")
+require("kp_hook_alloc_backend == KP_HOOK_ALLOC_MODULE" in hook_runtime and
+        "module_memfree() removes that mapping" in hook_runtime and
+        "flush_icache_all" not in hook_runtime,
+        "Hook runtime supports PAGE_KERNEL_EXEC module memory without init_mm/global flush")
+require("KP_HOOK_FLUSH_ICACHE_RANGE" in hook_engine and
+        "flush_icache_range(" in hook_engine,
+        "LKM hook engine flushes generated trampoline ranges")
+require("kp_exec_backend == KP_EXEC_BACKEND_MODULE" in kpm and
+        "flush_icache_range(base, base + size)" in kpm and
+        "kp_flush_icache_all_fn" not in kpm,
+        "KPM loader supports module_alloc and range-based I-cache publication")
+require("v &= ~exec_deny_mask" in hook_runtime and
+        "v |= KP_HOOK_PTE_UXN" in hook_runtime and
+        "v &= ~exec_deny_mask" in kpm and
+        "v |= KP_LKM_PTE_UXN" in kpm,
+        "kernel executable pages preserve UXN to forbid EL0 execution")
 
 # The legacy cache API selector is based on the presence of
 # __flush_dcache_area; this is present in upstream 4.14.141 and selects the
