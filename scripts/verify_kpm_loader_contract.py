@@ -131,6 +131,14 @@ def main():
     require(r"int apply_relocate\([\s\S]*?return\s*-ENOEXEC", relo,
             "unsupported REL helper must fail closed")
 
+    kp_path = function_body(module, "long load_module_path_event(")
+    lkm_source = read("lkm/kpm/module.c")
+    lkm_path = function_body(lkm_source, "long load_module_path_event(")
+    require(r"filp \\? PTR_ERR\\(filp\\) : -ENOENT", kp_path,
+            "KPIMG path loader must not turn a NULL file handle into a zero return code")
+    require(r"filp \\? PTR_ERR\\(filp\\) : -ENOENT", lkm_path,
+            "LKM path loader must not turn a NULL file handle into a zero return code")
+
     unload = function_body(module, "long unload_module(")
     require(r"if\s*\(mod->exit\)\s*rc\s*=", unload,
             "optional KPM exit callback must be checked before invocation")
