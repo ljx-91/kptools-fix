@@ -87,3 +87,23 @@
 **审计判断：** 上述参数修正只解决了不必要的 BTI/SCS 强制参数问题，并未证明模块的 CFI/LTO ABI 已完全兼容。目标启用了 CFI、CFI shadow、LTO 和 MODVERSIONS；仍需核对真实 Kbuild 编译命令、CFI type metadata/shadow ABI、LTO plugin/link flags、模块版本 CRC，以及 Hook engine 对 CFI 的隔离是否正确。
 
 **下一步必要输入：** 与此 Boot 完全对应的 4.14.141 kernel source/build tree、`.config`、`Module.symvers`、生成头文件和 Clang/LLD 9.0.3 工具链。拿到后先执行 `make V=1` dry-run/compile-command 审计，再真实编译和 modpost。不得用通用 DDK 示例成功结果替代。
+
+
+## 7. 模块强制卸载配置的直接核验（2026-11-10）
+
+本轮重新从资料库中的 `vivo-y73s-4.14.141-extracted(1).config` 原始配置文件读取并检查，文件 SHA-256：
+
+`f70215f43982b627eac9021aca8f9f1c47035c0c97890bee73adabdb2ec3cb8d`
+
+精确配置项为：
+
+- `CONFIG_MODULES=y`
+- `CONFIG_MODULE_UNLOAD=y`
+- `# CONFIG_MODULE_FORCE_UNLOAD is not set`
+
+对照 `gregkh/linux` 的精确 `v4.14.141` `kernel/module.c`：
+- `try_force_unload()` 在未定义 `CONFIG_MODULE_FORCE_UNLOAD` 时固定返回 0。
+- `try_stop_module()` 在移除模块基础引用后若仍有额外引用，会因 `!(*forced)` 返回 `-EWOULDBLOCK`，不会把模块状态切换为 `MODULE_STATE_GOING`。
+- 因而在该目标配置下，模块持有额外引用可以阻止普通卸载，也不存在通过 `delete_module(O_TRUNC)` 强制越过引用计数的配置路径。
+
+这项配置事实来自已提取的原始 Boot 内嵌 IKCONFIG；它不替代 vendor KDIR 的模块构建验证。
