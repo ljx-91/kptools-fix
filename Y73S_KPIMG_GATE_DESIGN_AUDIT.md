@@ -554,3 +554,71 @@ The safest immediate design is option B as a transitional ABI only if backward c
 #### 6. No production changes in this pass
 
 The dual-registry behavior, duplicate-name ambiguity, separate owner tokens, private-vs-Linux symbol lookup, common command IDs, and differing executable-memory mitigation paths are source-confirmed. No production code was changed. No KPM migration was attempted, no vendor-KDIR build was run, and no device test is claimed.
+
+
+### Y73s CFI slowpath: KPIMG and LKM attempt to own the same patched entry (2026-11-11)
+
+This pass closes the target-specific CFI double-hook question using the extracted Y73s config, the original boot's recovered KALLSYMS, the original kernel bytes, and both implementations.
+
+#### 1. Y73s configuration and symbol evidence
+
+The extracted Y73s 4.14.141 config explicitly has:
+- `CONFIG_CFI=y`
+- `CONFIG_CFI_CLANG=y`
+- `CONFIG_CFI_CLANG_SHADOW=y`
+- `CONFIG_LTO=y` and `CONFIG_LTO_CLANG=y`
+
+The validated original-boot KALLSYMS audit reports:
+- `__cfi_slowpath` present at Image offset `0x002ddc00`
+- `__cfi_slowpath_diag` absent
+- `report_cfi_failure` absent
+- `find_check_fn` is not established as a Y73s symbol by the current evidence; do not assume it exists.
+
+The KPIMG `kernel/patch/common/secpass.c::bypass_kcfi()` falls back from missing `__cfi_slowpath_diag` to `__cfi_slowpath`, then calls `hook()` on that address during the early `before_rest_init` path. Thus KPIMG's CFI hook target on this Y73s image is the same `__cfi_slowpath` entry.
+
+The LKM `lkm/infra/secpass.c::kp_bypass_kcfi()` independently performs the same fallback and calls its own `hook()` on the result. The LKM build includes `infra/secpass.o` in `lkm/Kbuild`, and `kernelpatch_init()` invokes `kp_bypass_kcfi()` after Hook runtime initialization. Therefore this is not dead/unbuilt source: the LKM attempts to hook the exact same kernel CFI slowpath after KPIMG has already installed its hook.
+
+#### 2. The second Hook Engine cannot chain onto KPIMG's absolute branch
+
+KPIMG's `kernel/base/hook.c::branch_absolute()` emits four AArch64 words:
+- `LDR X17, #8`
+- `BR X17`
+- 64-bit target literal in the next two words.
+
+`hook_prepare()` therefore overwrites 16 bytes at the original function entry.
+
+The original Y73s boot bytes at `0x002ddc00` before patching are:
+- `0xd10103ff`
+- `0xa90157f6`
+- `0xa9024ff4`
+- `0xa9037bfd`
+
+After KPIMG installs its absolute branch, the LKM Hook Engine does not recognize the `LDR X17` absolute veneer in `branch_func_addr_once()` (it only follows direct `B` and BTI entry forms). It therefore treats the patched entry as the original origin. Its `hook_prepare()` then attempts to relocate the first `LDR X17, #8`. `relo_ldr()` detects that the literal target `origin + 8` lies inside the 16-byte overwrite range and returns `-HOOK_BAD_RELO`. This is an expected fail-closed rejection, not a supported hook chain.
+
+The two engines have separate registries and do not share the original trampoline or chain. There is no automatic callback composition.
+
+#### 3. Current runtime consequence is a degraded KPM mode, not a successful second hook
+
+In `lkm/core/init.c`:
+- `kp_bypass_kcfi()` failure is logged but does not abort LKM initialization.
+- Under `CONFIG_CFI_CLANG`, a failed CFI bypass prevents `kp_kpm_init()` from running; KPM supercalls are expected to return `-ENOSYS`.
+- The LKM then continues to install its SU compatibility hook and its own syscall-45 hook.
+
+On rollback, `kp_bypass_kcfi_exit()` calls `unhook_checked()` for the attempted target. Since the LKM engine never published a hook record for the KPIMG-owned entry, it receives `-ENOENT`, which the cleanup currently treats as already absent. It does not restore or overwrite KPIMG's hook. This avoids a second unhook of the KPIMG-owned CFI entry.
+
+Thus the current source is fail-closed for LKM KPM loading on the Y73s CFI target, but it still performs a redundant, guaranteed-to-fail hook attempt and emits a misleading generic “CFI bypass failed” log. It must not be described as two working CFI layers.
+
+#### 4. Ownership conclusion and safe direction
+
+For Y73s / Linux 4.14.141, the CFI slowpath must have one patch owner. The current evidence identifies KPIMG as the earlier owner of `__cfi_slowpath`; LKM must not independently patch it.
+
+The safest immediate behavior is:
+- make LKM detect/receive an explicit KPIMG CFI-owner capability through the future versioned bridge;
+- do not infer ownership merely from the first instruction bytes or from a failed second hook;
+- when KPIMG owns the slowpath, do not attempt the LKM hook;
+- keep LKM KPM loading disabled until KPIMG's resident CFI policy can explicitly authorize the LKM KPM executable range, or until a single shared CFI owner provides that policy;
+- never weaken the CFI check globally or turn all failed checks into unconditional pass.
+
+A future bridge must define the address-range registration lifetime, KPM unload synchronization, CFI type/CFI-shadow semantics, and rollback order. Merely forwarding a boolean “CFI bypass ready” is insufficient because KPIMG's current `should_cfi_pass()` recognizes KPIMG text/hook/KPM regions, not the LKM KPM allocation range.
+
+Status: target config, symbol selection, original prologue bytes, both Hook Engine implementations, LKM Kbuild inclusion, and LKM fail-closed behavior are source/artifact-confirmed. No production code changed. No Y73s KDIR build, runtime hook test, or device test is claimed.
