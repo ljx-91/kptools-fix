@@ -179,9 +179,9 @@ require("allow_write_access(old_file)" in before_prepare_binprm and
 require("static const char kp_sh_path[] = SH_PATH" in sucompat_hook and
         "bprm->filename == KP_SH_PATH" in sucompat_hook and
         "KP_BPRM_HOOK_SU_CHAIN" in sucompat_hook and
-        "bprm->cred->euid = bprm->cred->uid" in sucompat_hook and
-        "bprm->cred->egid = bprm->cred->gid" in sucompat_hook,
-        "repeated prepare_binprm calls on a redirected script restore only effective IDs from the pending SU cred")
+        "args->ret = (unsigned long)(long)-EOPNOTSUPP" in sucompat_hook and
+        "commoncap may" in sucompat_hook,
+        "repeated prepare_binprm interpreter chains fail closed instead of partially restoring SU credentials")
 require("bprm->file = shell_file" in sucompat_hook and
         "bprm->filename = KP_SH_PATH" in sucompat_hook and
         "bprm->interp = KP_SH_PATH" in sucompat_hook and
