@@ -1399,3 +1399,12 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 ### 验证边界
 
 本节的修复尚待新 CI 实际执行。仍缺精确 Y73s 4.14.141 vendor KDIR、生成头文件和匹配 Module.symvers，因此 .ko 编译、modpost、Clang 9.0.3 CFI/LTO 链接仍未验证；也没有真机加载或设备操作。跨任务 SU 目前是明确禁用，不应将其视为可用功能。
+
+
+### 第 40 节 CI 验证结果补充（HEAD 5d1f3081）
+
+- ee7c32b9 的第一次 GCC run 因旧测试夹具仍按 static void su_cred() 提取函数而失败；生产代码已改为 static int su_cred()，随后同步测试签名。
+- 010cd59a 的第二次 GCC run 执行了新增边界用例，但旧断言仍假设 put_count 从 0 开始；新增的 unterminated-context fallback 用例已先释放一次 pending cred，故测试计数基准过时。已改为相对调用前计数断言。
+- 最新代码/测试提交 5d1f3081c829da771db6e7b75d9411a0e83cd335 的 GCC 14.2 Y73S KPIMG run 42813617204：**success**。日志确认 4.14 API contract、unmapped UID/GID 拒绝、跨任务 SU fail-closed、seccomp 时序契约及后续全部 source contracts 通过。
+- 同一提交的 Windows workflow run 42813617153：Ubuntu KPIMG、Linux kptools 和源码契约 job 已 success；Windows kptools.exe job 当时仍在运行，最终结果待确认。
+- 本次测试夹具失败均已定位为旧断言/测试预期未同步，不是 KPIMG C 编译错误。仍未进行 Y73s vendor KDIR 下的 LKM 编译/modpost。
