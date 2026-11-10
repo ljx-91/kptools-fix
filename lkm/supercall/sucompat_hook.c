@@ -403,11 +403,17 @@ static int kp_hook_getname_flags(void)
 static const char *kp_default_sctx(uid_t uid, char *sctx, size_t sctx_size)
 {
 	struct su_profile profile;
+	size_t sctx_len;
 
-	if (sctx && sctx_size &&
-	    kp_su_allow_uid_profile(uid, &profile) == 0 && profile.scontext[0]) {
-		strscpy(sctx, profile.scontext, sctx_size);
-		return sctx;
+	if (!sctx || !sctx_size)
+		return ALL_ALLOW_SCONTEXT_MAGISK;
+	if (kp_su_allow_uid_profile(uid, &profile) == 0) {
+		sctx_len = strnlen(profile.scontext, sizeof(profile.scontext));
+		if (sctx_len && sctx_len < sizeof(profile.scontext) &&
+		    sctx_len < sctx_size) {
+			memcpy(sctx, profile.scontext, sctx_len + 1);
+			return sctx;
+		}
 	}
 	return ALL_ALLOW_SCONTEXT_MAGISK;
 }
