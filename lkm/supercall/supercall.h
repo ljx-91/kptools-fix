@@ -10,7 +10,7 @@
  * entry for passthrough. Returns 0 on success. */
 int kp_supercall_install(void);
 
-/* Restore syscall 45. */
-void kp_supercall_uninstall(void);
+/* Restore syscall 45 and report any failed/foreign replacement. */
+int kp_supercall_uninstall(void);
 
 #endif /* _KP_LKM_SUPERCALL_H_ */
