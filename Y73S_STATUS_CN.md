@@ -532,3 +532,35 @@
 现在已从真实 Y73s Boot 取得完整目标 `.config`，不再需要猜测板级配置。Huawei 4.14.141 树可作为静态比较与配置试验候选，但仍不能标记为精确 KDIR，也不能用它构建的 `.ko` 声称可在目标设备加载。
 
 下一步应优先寻找 Vivo PD2031 原厂 4.14.141 源码；若仍无原厂树，再以这份提取出的完整配置对近似树做 Kconfig 可解析性和 ABI 差异审计，并明确保留来源不匹配风险。当前没有进行 `.ko` 编译、modpost 或设备加载。
+
+
+## 13. 2026-11-10：公开 KDIR 候选源码核验（只读）
+
+本轮继续寻找与原始 Y73s Boot 对应的 Linux 4.14.141 KDIR。没有把不同机型源码冒充目标源码。
+
+### 找到的最接近公开候选
+
+- 仓库：[realme-kernel-opensource/realmeV5_AndroidQ-kernel-source](https://github.com/realme-kernel-opensource/realmeV5_AndroidQ-kernel-source)
+- Makefile 明确为 Linux 4.14.141。
+- arch/arm64/configs/k6853v1_64_6360_defconfig 包含 CONFIG_MACH_MT6853=y、CONFIG_ARCH_MTK_PROJECT="k6853v1_64_6360"、CONFIG_LTO_CLANG=y、CONFIG_CFI_CLANG=y，并关闭 CONFIG_KALLSYMS_BASE_RELATIVE。
+- 其 ARM64 Kbuild 对 Clang 使用 -mno-implicit-float、-fno-pic、-mabi=lp64；scripts/Makefile.modpost 明确包含 CONFIG_LTO_CLANG 模块的 .lto.o、modpost 与最终链接路径；include/linux/compiler-clang.h 在 LTO 配置下定义 __nocfi 为 no_sanitize("cfi")。
+- 参考设备树 4accccc/android_device_vivo_pd2031 也将 PD2031 识别为 MT6853 / k6853v1_64_6360，但其当前 BoardConfig 使用预编译 kernel，不提供完整原厂 KDIR。
+
+### 与 Y73s 原始 Boot 的差异与限制
+
+- 候选仓库名义上是 Realme V5 内核源码，不是 Vivo Y73s 官方发布源码；相同 SoC / project 字符串 / Linux 版本只能证明它是有价值的 ABI 参考，不能证明 vendor tree 完全相同。
+- 候选仓库的公开 defconfig 未显式列出 CONFIG_CFI_CLANG_SHADOW 或 CONFIG_MODVERSIONS；而 Y73s 原始 Boot 内嵌 .config 已确认启用 CONFIG_CFI=y、CONFIG_CFI_CLANG=y、CONFIG_CFI_CLANG_SHADOW=y、CONFIG_LTO_CLANG=y、CONFIG_MODVERSIONS=y。defconfig 缺项不等同于最终构建配置关闭，但差异必须用目标完整 .config 与构建输出解决。
+- 当前未取得与这份 Boot 完全匹配的 Module.symvers、生成头文件、完整 .config 和 Clang/LLD 9.0.3 构建输出。因此不能用该候选直接宣告 Y73s LKM 编译兼容。
+- 未找到可验证的 Vivo PD2031 官方完整内核源码下载包；公开的 vivo-4.x-kernel-autopatch 只是内核镜像补丁工具，不是 KDIR。
+
+### 本轮结论
+
+**KDIR 搜索有进展，但目标 KDIR 仍未获得。** Realme V5 4.14.141 源码保留为只读 ABI 比较基线，不接入 Y73s 目标构建、不生成或签发目标 .ko。
+
+### 下一步
+
+1. 以原始 Boot 的编译器版本、CFI shadow/LTO/MODVERSIONS 配置为比对基准，对 Realme V5 候选的 Kbuild、CFI 实现、模块加载器、导出符号与 MT6853 vendor 差异做逐文件差异审计。
+2. 继续检查 Vivo 官方源码发布渠道及可验证的 PD2031 固件配套源码线索。
+3. 只有取得匹配的 KDIR + .config + 生成头文件 + Module.symvers 后，才执行 make V=1 dry-run 和真实 kernelpatch.ko 编译/modpost。
+
+全程只读 GitHub / 文档 / 本地离线文件；未连接设备，未执行 Fastboot、9008、刷写、boot/vbmeta 修改或分区写入。
