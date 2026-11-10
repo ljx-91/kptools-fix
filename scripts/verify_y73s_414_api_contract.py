@@ -168,4 +168,25 @@ require("grep -q __flush_dcache_area" in kbuild and
         "KP_NEW_DCACHE_FLUSH" in kbuild,
         "Kbuild selects the legacy cache path for the 4.14 header baseline")
 
+
+# Uncertain text patches and active transit readers must not outlive the LKM.
+sucompat_exit = sucompat.split("int kp_sucompat_hook_exit(void)", 1)[1]
+sucompat_install = sucompat.split("static int kp_hook_prepare_binprm(void)", 1)[1].split(
+    "/* ---- getname_flags", 1
+)[0]
+require(sucompat_install.index("kp_prepare_binprm_addr = addr") <
+        sucompat_install.index("hook_wrap1(") and
+        "return hook_wrap1(" in sucompat_install,
+        "prepare_binprm target is recorded before patching so uncertain installs remain cleanable")
+require("hook_unwrap_remove(" in sucompat_exit and
+        "hook_unwrap(" not in sucompat_exit and
+        "if (!unhook_rc || unhook_rc == -ENOENT)" in sucompat_exit and
+        "return rc;" in sucompat_exit,
+        "sucompat teardown checks transit-reader retirement and retains live-hook state on failure")
+init_body = init_source
+require(init_body.index("sucompat_installed = true;") <
+        init_body.index("rc = kp_sucompat_hook_init();") and
+        "BUG_ON(kp_sucompat_hook_exit());" in init_body,
+        "LKM init rollback and module exit fail closed if sucompat hooks cannot be retired")
+
 print("[PASS] Y73S 4.14.141 source compatibility contract")
