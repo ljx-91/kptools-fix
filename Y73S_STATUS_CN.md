@@ -1472,3 +1472,24 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 ### 结论与边界
 
 KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试夹具后通过。该结果不替代 Y73s 4.14.141 vendor KDIR 下的 LKM 编译/modpost、Clang 9.0.3 CFI/LTO 链接或真机运行验证。
+
+
+## 43. KPM 符号表重复布局与文件打开错误码修复（2026-11-10）
+
+### 发现与修复
+
+- 复核 KPIMG/LKM 两条 KPM loader 的 layout_sections() 与 layout_symtab() 时发现：恶意 ELF 若将 SHT_SYMTAB 或其关联 SHT_STRTAB 标记 SHF_ALLOC，前一阶段可能先分配，专用 symbol-table layout 又会再次分配并覆盖 section offset。
+- LKM 与 KPIMG 的 setup_load_info() 现均拒绝 allocatable SYMTAB 和 allocatable symbol STRTAB，避免重复布局；分别补充真实 parser fixture 测试。
+- load_module_path_event() / kp_load_module_path() 对 filp_open() 的 NULL 返回分支现明确返回 -ENOENT；原 PTR_ERR(NULL) 为 0，理论上可能错误报告成功。
+- verify_kpm_loader_contract.py 增加两套路径加载器错误码契约和双 loader 的 SHF_ALLOC 防护检查。
+
+### 验证
+
+- GCC 14.2 Y73S KPIMG run 42823027868，代码/测试 HEAD 4cd248510e5f1a50fcc4cd557611e242a2d43030：success。
+- LKM 与 KPIMG 两套 setup_load_info() 对 allocatable SYMTAB / STRTAB 的四项新增 fixture 检查全部 PASS。
+- verify_kpm_loader_contract.py、双 loader simplify_symbols()、双 loader layout/final-copy、KPIMG metadata/RELA dispatcher、Y73S 4.14.141 API/source contract 均通过。
+- Windows workflow run 42823027880：success；Ubuntu KPIMG 与 Windows kptools.exe 构建均成功。
+
+### 验证边界
+
+这些结果证明源码契约、Host fixture 与 KPIMG GCC 构建通过，不证明精确 vendor KDIR 下 LKM 编译/modpost、Clang 9.0.3 CFI/LTO 链接或 Y73s 真机加载/运行成功。
