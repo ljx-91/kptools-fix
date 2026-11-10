@@ -54,6 +54,16 @@ def main():
     require(r"memchr\(info->strtab", setup,
             "device parser must require NUL-terminated symbol names")
 
+    require(r"(symsec->sh_flags & SHF_ALLOC)", setup,
+            "device parser must reject allocatable SYMTAB before dedicated symbol layout")
+    require(r"info->sechdrs\[symsec->sh_link\]\.sh_flags & SHF_ALLOC", setup,
+            "device parser must reject allocatable symbol STRTAB before dedicated string layout")
+    lkm_setup = function_body(read("lkm/kpm/module.c"), "static int setup_load_info(")
+    require(r"(symsec->sh_flags & SHF_ALLOC)", lkm_setup,
+            "LKM parser must reject allocatable SYMTAB before dedicated symbol layout")
+    require(r"(strsec->sh_flags & SHF_ALLOC)", lkm_setup,
+            "LKM parser must reject allocatable symbol STRTAB before dedicated string layout")
+
     symbols = function_body(module, "static int simplify_symbols(")
     common_case = symbols[symbols.index("case SHN_COMMON"):symbols.index("case SHN_ABS")]
     require(r"ret\s*=\s*-ENOEXEC", common_case,
