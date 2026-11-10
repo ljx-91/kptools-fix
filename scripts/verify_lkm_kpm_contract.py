@@ -178,9 +178,12 @@ def main():
     require(r"return;", free_exec,
             "KPM pages must be retained if NX/BTI restoration fails")
 
+    no_mm = body(module, "static bool kp_kpm_can_skip_init_mm(")
+    require(r"#if\s+defined\(PTE_GP\)[\s\S]*?return\s+false[\s\S]*?KP_EXEC_BACKEND_MODULE[\s\S]*?KP_EXEC_BACKEND_EXECMEM",
+            no_mm, "init_mm bypass is limited to non-BTI executable allocators")
     init_runtime = body(module, "int kp_kpm_init(")
-    require(r"if\s*\(!kp_kpm_init_mm\)[\s\S]*?KP_EXEC_BACKEND_MODULE[\s\S]*?KP_EXEC_BACKEND_EXECMEM",
-            init_runtime, "without init_mm only executable module/execmem backends are allowed")
+    require(r"!kp_kpm_init_mm\s*&&\s*!kp_kpm_can_skip_init_mm\(\)",
+            init_runtime, "without init_mm only verified executable backends are allowed")
     require(r"kp_module_alloc\s*&&\s*kp_module_memfree", init_runtime,
             "matched module allocator/free pair")
     require(r"kp_execmem_alloc\s*&&\s*kp_execmem_free", init_runtime,
@@ -193,8 +196,8 @@ def main():
             init_runtime, "disable unsafe callback trampoline")
 
     load_gate = body(module, "long kp_load_module(")
-    require(r"kp_exec_backend\s*==\s*KP_EXEC_BACKEND_NONE\s*\|\|\s*!kp_kpm_init_mm",
-            load_gate, "KPM loading must fail closed without verified allocator and init_mm")
+    require(r"kp_exec_backend\s*==\s*KP_EXEC_BACKEND_NONE[\s\S]*?!kp_kpm_init_mm\s*&&\s*!kp_kpm_can_skip_init_mm\(\)",
+            load_gate, "KPM loading must fail closed unless the allocator supports safe no-init_mm execution")
 
     # A target with Clang CFI must never expose KPM entry points unless the
     # slowpath bypass needed for unregistered KPM text was installed.
