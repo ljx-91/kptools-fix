@@ -2339,8 +2339,8 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 
 ### 构建与原厂 Boot 离线复验
 
-- Host kptools workflow：run 42884626214，success。
-- Arm GNU GCC 14.2 KPIMG workflow：run 42884626245，success。
+- 最终回归提交 f4f6ddb84d2e777fec274f9562af4c7b70177086：Host kptools workflow run 42885399194，success；Arm GNU GCC 14.2 KPIMG workflow run 42885399186，success。
+- 离线 Boot 产物所用构建提交 35ba4d899942779a1027517e98a2d34328d9cf66：Host kptools workflow run 42884626214，success；Arm GNU GCC 14.2 KPIMG workflow run 42884626245，success。
 - 新增 scripts/verify_y73s_symbol_scan_and_startup_events.py，覆盖密集 4-byte 符号扫描模型、8192 次预算、精确 preset 优先级、Y73s 实际 ADRP/ADD/BL/CFI 指令解码、kernel_init 与 kthreadd 区分，以及 PRE/POST 事件仍绑定真实 kernel_init Hook。
 - 使用上述两个 workflow 同一提交生成的 Linux kptools 与 KPIMG，对资料库原厂 boot.img 进行离线 patch。工具日志确认内核版本 4.14.141、kallsyms_lookup_name=0x01922680、kernel_init resolved=0x018f1354；自动重打包完成。
 - 离线候选 Boot SHA-256：e1b4972c6bb1fa7f5466b364c57a6ef0a85fdabf6be202b3695ad60e7102b6b2。
