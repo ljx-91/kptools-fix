@@ -1235,3 +1235,51 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 - `https://github.com/gregkh/linux/blob/v4.14.141/arch/arm64/mm/flush.c`
 - `https://github.com/gregkh/linux/blob/v4.14.141/arch/arm64/mm/cache.S`
 - `https://github.com/gregkh/linux/blob/v4.14.141/kernel/kallsyms.c`
+
+
+## 37. 依据 Y73s 实际 KALLSYMS 校准 4.14.141 运行时符号后端（2026-11-10）
+
+### 目标证据
+
+本轮对资料库中的完整 \`vivo-y73s-kallsym-test(1).log\`（3,929,958 bytes）执行了按完整符号名精确匹配的离线扫描，而不是用 \`files.find\` 的子串结果推断符号存在或不存在。
+
+实际存在的关键符号（地址为该 KALLSYMS dump 的 image-relative offset）：
+- \`module_alloc\`：\`0x0192cb24\`
+- \`module_memfree\`：\`0x019425e0\`
+- \`vmalloc_to_page\`：\`0x01914870\`
+- \`SyS_truncate.cfi\`：\`0x003cd6b8\`
+- \`sys_truncate\`：\`0x019305cc\`
+- \`__cfi_slowpath\`：\`0x002ddc00\`
+- \`kallsyms_lookup_name\`：\`0x01922680\`
+- \`kallsyms_on_each_symbol\`：\`0x019133d4\`
+- \`__flush_dcache_area\`：\`0x00005084\`
+- \`flush_icache_range\`：\`0x00004fb4\`
+- \`stop_machine\`：\`0x019135b4\`
+
+完整 dump 中没有以下精确符号名：
+- \`init_mm\`、\`sys_call_table\`
+- \`set_memory_x\`、\`set_memory_nx\`
+- \`find_check_fn\`、\`report_cfi_failure\`、\`__cfi_slowpath_diag\`
+
+### 适配结论与代码路径
+
+该符号分布与 Y73s 的配置（\`CONFIG_KALLSYMS_ALL=n\`、\`CONFIG_CFI_CLANG=y\`、\`CONFIG_MODVERSIONS=y\`）吻合，并支持当前实现选择：
+1. Hook 和 KPM 的 executable backend 应选择成对存在的 \`module_alloc/module_memfree\`，不能依赖 \`set_memory_x/nx\` 或隐藏的 \`init_mm\`。
+2. 无 \`init_mm\` 的 patch address translation 使用 \`vmalloc_to_page()\` 处理 vmalloc/module_alloc 映射；该符号在目标 KALLSYMS 中存在。
+3. 4.14 supercall 使用 \`SyS_truncate.cfi\` 函数体作为 inline hook 目标，不使用四字节 CFI jump-table alias。
+4. CFI bypass 在 \`find_check_fn\`、\`report_cfi_failure\`、\`__cfi_slowpath_diag\` 不存在时回退到目标实际存在的 \`__cfi_slowpath\`。
+
+为防止后续改动误用其他内核的符号假设，新增精简的目标符号 fixture 和 \`scripts/verify_y73s_414_kallsyms_profile.py\`；CI 会校验必需符号与预期缺失符号。fixture 是从目标完整 dump 提取的关键符号子集；本节的缺失符号结论来自对完整 dump 的精确扫描。
+
+### CI
+
+- 符号 fixture：\`314e9755beb8adb094a91a2726d28c3f3de5e40b\`
+- profile verifier：\`0054a2e81b792a6fb57fb1b4e5e885bcfe7f58a5\`，正则修正：\`614a66acf851be48e111a2ea2131b52fea8aa921\`
+- API contract 增强：\`e8a7935bfd3efb9466ef9b98f26854bf439b79ee\`
+- CI 接入：\`e24aa4c876c58161fb23f370791942af0b26a17c\`
+- GCC 14.2 KPIMG run \`42809197416\`：成功；日志确认 Y73s 4.14.141 KALLSYMS profile、no-init_mm 地址转换、Supercall ABI 和 CFI slowpath fallback 测试通过。
+- 同一提交的 Windows build workflow run \`42809197330\`：Ubuntu KPIMG/kptools job 成功；Windows job 在本节记录时仍运行中。
+
+### 未完成的验证门槛
+
+虽然现在已用目标真实 KALLSYMS 校准了运行时解析路径，但 LKM 仍未在目标 vendor KDIR 上完成编译与 modpost。目标配置开启 \`CONFIG_MODVERSIONS=y\`、Clang 9.0.3 LTO/CFI；没有同一份 4.14.141 vendor KDIR、生成头文件和匹配的 \`Module.symvers\`，就无法证明外部模块 CRC 与 CFI/LTO 链接兼容。Host、GCC KPIMG 和源代码 contract 均不能替代这一项。没有进行真机加载或设备操作。
