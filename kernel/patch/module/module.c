@@ -517,6 +517,11 @@ static int setup_load_info(struct load_info *info)
             set_load_error(info, "invalid ELF section alignment");
             return -ENOEXEC;
         }
+        if (shdr->sh_type != SHT_NOBITS && shdr->sh_addralign > 1 &&
+            (shdr->sh_offset & (shdr->sh_addralign - 1))) {
+            set_load_error(info, "misaligned file-backed ELF section");
+            return -ENOEXEC;
+        }
     }
 
     if ((rc = rewrite_section_headers(info))) {
@@ -663,11 +668,14 @@ static int elf_header_check(struct load_info *info)
         info->hdr->e_version != EV_CURRENT ||
         info->hdr->e_ehsize != sizeof(Elf_Ehdr) ||
         info->hdr->e_shentsize != sizeof(Elf_Shdr) ||
-        !info->hdr->e_shnum || info->hdr->e_shstrndx >= info->hdr->e_shnum) {
+        info->hdr->e_shnum < 2 ||
+        info->hdr->e_shstrndx == SHN_UNDEF ||
+        info->hdr->e_shstrndx >= info->hdr->e_shnum) {
         set_load_error(info, "ELF header is not a supported AArch64 relocatable module");
         return -ENOEXEC;
     }
-    if (!elf_range_valid(info->hdr->e_shoff,
+    if ((info->hdr->e_shoff & (__alignof__(Elf_Shdr) - 1)) ||
+        !elf_range_valid(info->hdr->e_shoff,
                          (unsigned long)info->hdr->e_shnum * sizeof(Elf_Shdr), info->len)) {
         set_load_error(info, "ELF section headers are invalid");
         return -ENOEXEC;
