@@ -838,7 +838,8 @@ static int setup_load_info(struct kp_load_info *info)
 			set_load_error(info, "multiple symbol tables are unsupported");
 			return -ENOEXEC;
 		}
-		if (symsec->sh_entsize != sizeof(Elf_Sym) ||
+		if ((symsec->sh_flags & SHF_ALLOC) ||
+		    symsec->sh_entsize != sizeof(Elf_Sym) ||
 		    symsec->sh_size % sizeof(Elf_Sym) ||
 		    symsec->sh_link >= info->hdr->e_shnum) {
 			set_load_error(info, "invalid ELF symbol table metadata");
@@ -846,6 +847,7 @@ static int setup_load_info(struct kp_load_info *info)
 		}
 		strsec = &info->sechdrs[symsec->sh_link];
 		if (strsec->sh_type != SHT_STRTAB ||
+		    (strsec->sh_flags & SHF_ALLOC) ||
 		    !kp_elf_range_valid(info->len, strsec->sh_offset, strsec->sh_size) ||
 		    !strsec->sh_size || *((const char *)info->hdr + strsec->sh_offset) != '\0') {
 			set_load_error(info, "invalid ELF symbol string table");
