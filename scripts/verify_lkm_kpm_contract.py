@@ -256,7 +256,7 @@ def main():
     legacy_unhook = body(hook_source, "void unhook(void *func)")
     require(r"unhook_checked\(func\)", legacy_unhook,
             "legacy unhook API must delegate to checked implementation")
-    cfi_exit = body(secpass, "int kp_bypass_kcfi_exit(void)")
+    cfi_exit = body(secpass, "int kp_bypass_kcfi_exit(void)\n{")
     require(r"unhook_checked\(\(void\s*\*\)kp_find_check_fn_addr\)",
             cfi_exit, "find_check_fn teardown must check patch restoration")
     require(r"unhook_checked\(\(void\s*\*\)kp_report_cfi_failure_addr\)",
