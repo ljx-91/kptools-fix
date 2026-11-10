@@ -144,7 +144,7 @@ def main():
     kp_path = function_body(module, "long load_module_path_event(")
     lkm_source = read("lkm/kpm/module.c")
     lkm_path = function_body(lkm_source, "long kp_load_module_path(")
-    require(r"filp \\? PTR_ERR\\(filp\\) : -ENOENT", kp_path,
+    require(r"filp\\s*\\?\\s*PTR_ERR\\(filp\\)\\s*:\\s*-ENOENT", kp_path,
             "KPIMG path loader must not turn a NULL file handle into a zero return code")
     require(r"filp \\? PTR_ERR\\(filp\\) : -ENOENT", lkm_path,
             "LKM path loader must not turn a NULL file handle into a zero return code")
