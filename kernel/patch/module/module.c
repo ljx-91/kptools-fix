@@ -638,7 +638,6 @@ static int setup_load_info(struct load_info *info)
                     return -ENOEXEC;
                 }
             }
-            break;
         }
     }
 
