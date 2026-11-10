@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - y73s-dcache-coherency-20261108
-      - y73s-cred-layout-guards-20261108
     paths:
       - 'tools/**'
       - 'scripts/**'
@@ -34,7 +33,6 @@ jobs:
           python3 scripts/test_kpm_setup_load_info.py
           python3 scripts/test_kpm_simplify_symbols.py
           python3 scripts/test_kpm_layout_copy.py
-          python3 scripts/test_kpimg_kpm_loader.py
           python3 scripts/test_kpimg_kpm_loader.py
           for verifier in \
             verify_bootimg_io_contract.py \
