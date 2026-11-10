@@ -928,7 +928,7 @@ long load_module_path_event(const char *path, const char *args, const char *even
     struct file *filp = filp_open(path, O_RDONLY, 0);
     if (unlikely(!filp || IS_ERR(filp))) {
         logkfe("open module: %s error\n", path);
-        rc = PTR_ERR(filp);
+        rc = filp ? PTR_ERR(filp) : -ENOENT;
         set_kpm_load_result(reserved, rc, "open module file failed");
         goto out;
     }
