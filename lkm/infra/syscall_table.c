@@ -48,10 +48,26 @@ int kp_syscall_hook(int nr, kp_syscall_fn_t fn, kp_syscall_fn_t *orig)
 	return 0;
 }
 
-void kp_syscall_unhook(int nr, kp_syscall_fn_t orig)
+int kp_syscall_unhook(int nr, kp_syscall_fn_t expected, kp_syscall_fn_t orig)
 {
-	if (!kp_sys_call_table || nr < 0 || !orig)
-		return;
-	kp_patch_text(&kp_sys_call_table[nr], &orig, sizeof(orig), KP_PATCH_TEXT_FLUSH_DCACHE);
-	logki("restored syscall %d\n", nr);
+	kp_syscall_fn_t current;
+	int rc;
+
+	if (!kp_sys_call_table || nr < 0 || !expected || !orig)
+		return -EINVAL;
+
+	current = READ_ONCE(kp_sys_call_table[nr]);
+	if (current == orig)
+		return 0;
+	if (current != expected)
+		return -EBUSY;
+
+	/* Never overwrite a third-party replacement. cmpxchg closes the
+	 * read/restore race and reports a concurrent owner change. */
+	rc = kp_patch_cmpxchg64(&kp_sys_call_table[nr],
+				(u64)(unsigned long)expected,
+				(u64)(unsigned long)orig);
+	if (!rc)
+		logki("restored syscall %d\n", nr);
+	return rc;
 }
