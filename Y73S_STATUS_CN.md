@@ -741,3 +741,35 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 ### 验证边界
 
 本轮是源码级范围修复与契约审计；没有目标 KDIR 编译、modpost、CFI Shadow 运行验证或真机测试。Y73s 精确 4.14.141 KDIR、生成头文件和 Module.symvers 仍未确认。没有修改 Boot、KPIMG、vbmeta 或设备分区。
+
+
+
+## 22. 2026-11-10：修复 LKM KPM RELA 条目大小检查时序错误
+
+### 发现
+
+继续审计独立 LKM KPM ELF 装载器时，发现 `layout_sections()` 会把全部节的 `sh_entsize` 重置为 `~0UL`，随后只为需要装入 KPM 映像的 SHF_ALLOC 节写入镜像偏移。常规 `.rela.*` 节通常不是 SHF_ALLOC，因此其 `sh_entsize` 会保持为 `~0UL`。
+
+但 `kp_apply_relocate_add()` 在布局完成后仍要求 `rsec->sh_entsize == sizeof(Elf64_Rela)`。这把已被内部布局算法复用的字段误当成原始 ELF 元数据，导致含标准 RELA 节的 KPM 在重定位阶段被拒绝。该问题位于加载主路径，属于功能阻断，不只是测试缺口。
+
+### 修复
+
+- 在 `setup_load_info()` 中、`layout_sections()` 改写节头之前，验证每个 SHT_RELA 节的原始 `sh_entsize == sizeof(Elf64_Rela)`，并验证 `sh_size` 是 RELA 项大小的整数倍。
+- `kp_apply_relocate_add()` 保留节类型和长度整除检查，但不再读取布局阶段已被复用的 `rsec->sh_entsize`。
+- 更新三个独立回归契约：`verify_lkm_kpm_contract.py`、`verify_lkm_kpm_loader_contract.py` 和 `verify_lkm_kpm_loader_contract.py` 的独立 RELA 装载检查，要求原始元数据在 setup 阶段验证，并禁止 apply 阶段读取过期字段。
+
+### 提交
+
+- `5636873`：在 setup 阶段验证原始 RELA 元数据。
+- `7dcd86a`：移除重定位阶段对已复用 `sh_entsize` 的错误检查。
+- `7a9c854`：增加阶段边界回归契约。
+- `ceb86ba`：同步主 LKM/KPM 契约。
+- `ea913ae`：同步独立 LKM loader 契约。
+
+### 验证状态与边界
+
+- 已重新读取修改后的 `module.c`、`relo.c` 和相关 verifier，确认原始 RELA entry size / divisibility 在 setup 阶段检查，apply 阶段不再检查 `rsec->sh_entsize`。
+- 中间 CI 运行曾因旧 verifier 仍要求 apply 阶段检查 `sh_entsize` 而失败；日志明确显示是测试契约过时。随后已更新该 verifier，并再次触发完整 Actions。
+- 当前最新 HEAD：`ea913aeef5fc20d27d7978dba3b041f40b7ab1c1`；该 HEAD 的 Linux Host、Windows、GCC 14.2 KPIMG Actions 正在运行，结果未确认，不能标记为通过。
+- 该修复尚未通过真实 KPM 文件加载或畸形 ELF 测试；目标 Linux 4.14.141 KDIR 编译、Clang 9.0.3/LLD、MODVERSIONS、CFI Shadow 和真机测试仍未完成。
+- 没有修改 Boot、vbmeta 或设备分区；未使用 Fastboot、9008 或刷写。
