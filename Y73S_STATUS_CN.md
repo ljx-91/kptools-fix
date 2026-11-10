@@ -773,3 +773,24 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 - 代码提交 `ea913aeef5fc20d27d7978dba3b041f40b7ab1c1` 对应的 Linux Host 构建与完整源码契约 Actions（Run `42780756358`）已成功，包含两个独立 LKM/KPM loader verifier。该提交的 Windows 与 GCC 14.2 KPIMG Actions 当时仍在运行；文档更新提交为 `bf6f3fff4dd8974a4622c4327f509cfc1db79c75`，其后续 CI 仍待确认。
 - 该修复尚未通过真实 KPM 文件加载或畸形 ELF 测试；目标 Linux 4.14.141 KDIR 编译、Clang 9.0.3/LLD、MODVERSIONS、CFI Shadow 和真机测试仍未完成。
 - 没有修改 Boot、vbmeta 或设备分区；未使用 Fastboot、9008 或刷写。
+
+
+## 23. 2026-11-10：补强 ELF 保留节索引回归契约
+
+### 审计复核
+
+继续核对 KPM ELF 符号表时，确认 `setup_load_info()` 已拒绝超出节表范围的普通节索引、`SHN_XINDEX`，以及除 `SHN_UNDEF`、`SHN_ABS`、`SHN_COMMON` 外的保留索引。这样可防止后续 `simplify_symbols()` 把特殊索引误当作 `sechdrs[]` 下标。
+
+这次没有发现新的 loader 代码缺陷；问题在于独立 loader verifier 只显式检查了 `SHN_XINDEX`，没有保护完整的保留索引拒绝规则。
+
+### 改进
+
+- 在 `scripts/verify_lkm_kpm_loader_contract.py` 增加断言，要求 setup 阶段拒绝 `SHN_LORESERVE` 以上不支持的符号节索引，同时明确保留三个已支持的特殊索引例外。
+- 没有改变 ELF loader 的运行逻辑。
+
+### 提交与验证边界
+
+- 测试补强提交：`789388e4a80de1ea70f3e5abb5aa33df7500ae03`。
+- 已确认提交 diff 仅增加该契约断言。
+- 对应 GitHub Actions：Linux Host/offline audit、GCC 14.2 KPIMG、Windows 构建均已触发；本记录写入时仍在运行，结果待回查。
+- 这是源码契约覆盖，不是畸形 ELF 实际加载测试，也不是目标 4.14.141 KDIR 编译或真机测试。
