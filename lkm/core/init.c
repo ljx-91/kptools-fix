@@ -59,6 +59,7 @@ int __init kernelpatch_init(void)
 {
 	int rc;
 	bool cfi_bypass_installed = false;
+	bool kpm_initialized = false;
 	bool supercall_installed = false;
 	bool sucompat_installed = false;
 
@@ -121,15 +122,18 @@ int __init kernelpatch_init(void)
 		logkw("kpm loader init failed: %d (KPM supercalls will return -ENOSYS)\n", rc);
 #endif
 
-	rc = kp_supercall_install();
-	if (rc)
-		goto err_unwind;
-	supercall_installed = true;
-
+	/* Install the optional execve compatibility hook before publishing the
+	 * supercall entry. The supercall is the final fallible init step: once it
+	 * is visible, no later init failure can strand a live entry into this LKM. */
 	rc = kp_sucompat_hook_init();
 	if (rc)
 		goto err_unwind;
 	sucompat_installed = true;
+
+	rc = kp_supercall_install();
+	if (rc)
+		goto err_unwind;
+	supercall_installed = true;
 
 	/* Synchronous manager scan; runs in the caller's (root) context so SELinux
 	 * allows reading /data. The appid may still be invalid if the manager is
@@ -146,10 +150,12 @@ int __init kernelpatch_init(void)
 err_unwind:
 	/* module_init() failure does not invoke module_exit(). Undo every hook
 	 * installed by this init attempt before the loader frees this module. */
-	if (sucompat_installed)
-		kp_sucompat_hook_exit();
 	if (supercall_installed)
 		kp_supercall_uninstall();
+	if (sucompat_installed)
+		kp_sucompat_hook_exit();
+	if (kpm_initialized)
+		kp_kpm_exit();
 	if (cfi_bypass_installed)
 		kp_bypass_kcfi_exit();
 	logke("KernelPatch LKM init failed; installed hooks rolled back: %d\n", rc);
