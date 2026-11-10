@@ -894,3 +894,30 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 - `feaa7285d3e99e43e18b0332a74a174e432ecb01`：修复 instruction harness 字符串闭合。
 
 当前验证仍不等于完整 ELF/RELA 表驱动加载测试：`do_reloc` 和 instruction encoder 仍为 Host stub；尚未覆盖每一种 AArch64 relocation type、完整 ELF section/symbol 索引路径或 Y73s 内核运行环境。GCC 14.2 KPIMG 与 Windows 构建在本次状态记录时仍在运行。
+
+
+## 29. KPM ELF Header / Section Table Host Fixture（2026-11-10）
+
+### 本轮推进
+
+此前 Host relocation harness 已实际执行两套 loader 的指令与数据重定位函数体，但尚未进入 ELF 输入解析阶段。本轮新增 `scripts/test_kpm_elf_headers.py`，从 `lkm/kpm/module.c` 提取并在 Host C harness 中执行以下真实函数体：
+
+- `kp_elf_range_valid()`
+- `kp_elf_string_valid()`
+- `set_load_error()`
+- `elf_header_check()`
+- `rewrite_section_headers()`
+
+测试使用内存中构造的 ELF64 little-endian AArch64 ET_REL fixture，覆盖有效 section table、非 ELF64 class、section-header table 非自然对齐、section-header table 越界、section string table 截断、普通 section 文件范围越界、非 2 次幂对齐、文件 section 偏移不满足对齐、section name 越界，以及 NOBITS 不应要求文件内容范围等场景。
+
+### CI 接入
+
+- Linux Host audit workflow 已增加执行 `python3 scripts/test_kpm_elf_headers.py`。
+- 新增 harness 与 workflow 接入提交：`021d4b5b759059080f5395dbcc0ad226adc03452`、`a0bbb0f775c9a696808957dfed26f03181807b19`。
+- 本文档提交后需要检查新 HEAD 对应的 Host workflow 是否实际创建 job，并查看测试日志；在日志确认前不将这些 fixture 标记为通过。
+
+### 验证边界
+
+本 fixture 执行的是当前 LKM KPM loader 中真实的 ELF header / section-table 检查函数体；它尚未执行完整 `setup_load_info()`、符号表解析、RELA 表遍历、`apply_relocations()` 或模块内存写入/失败回滚。尚未覆盖 KPIMG loader 对应解析器，也不是目标 Linux 4.14.141 KDIR 编译或真机加载测试。后续应继续扩展到符号/字符串表与 RELA 记录，并用真实 relocation table 驱动完整的验证路径。
+
+安全边界不变：只修改仓库源码、脚本和文档；不连接设备，不使用 Fastboot，不刷写或写入设备分区。
