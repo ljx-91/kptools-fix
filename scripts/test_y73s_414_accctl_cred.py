@@ -38,8 +38,9 @@ def main():
         extract_function(source, "int kp_accctl_init(void)"),
         extract_function(source, "static int kp_selinux_set_cred_context("),
         extract_function(source, "static void fill_caps("),
-        extract_function(source, "static void su_cred("),
+        extract_function(source, "static int su_cred("),
         extract_function(source, "int kp_apply_su_cred("),
+        extract_function(source, "int kp_task_su("),
     ])
     prefix = r"""
 #include <stdbool.h>
@@ -50,7 +51,17 @@ def main():
 #include <stddef.h>
 typedef unsigned int u32;
 typedef unsigned int uid_t;
+typedef unsigned int kuid_t;
+typedef unsigned int kgid_t;
+typedef int pid_t;
 typedef unsigned long kernel_cap_t;
+#define SUPERCALL_SCONTEXT_LEN 0x60
+#define INVALID_ID UINT32_MAX
+static bool invalid_id_mapping;
+static kuid_t make_kuid(int ns, uid_t uid) { (void)ns; return invalid_id_mapping ? INVALID_ID : uid; }
+static kgid_t make_kgid(int ns, uid_t gid) { (void)ns; return invalid_id_mapping ? INVALID_ID : gid; }
+#define uid_valid(id) ((id) != INVALID_ID)
+#define gid_valid(id) ((id) != INVALID_ID)
 #define KERNEL_VERSION(a,b,c) (((a) << 16) | ((b) << 8) | (c))
 #define LINUX_VERSION_CODE KERNEL_VERSION(4,14,141)
 #define CONFIG_SECURITY_SELINUX 1
@@ -92,8 +103,6 @@ static struct cred *prepare_kernel_cred(void *daemon)
 }
 static void put_cred(struct cred *cred) { (void)cred; put_count++; }
 static int current_user_ns(void) { return 0; }
-static uid_t make_kuid(int ns, uid_t uid) { (void)ns; return uid; }
-static uid_t make_kgid(int ns, uid_t gid) { (void)ns; return gid; }
 #define logkw(...) ((void)0)
 #define logki(...) ((void)0)
 """
@@ -123,6 +132,41 @@ int main(void)
         return 1;
     }
     puts("[PASS] pending exec cred receives root IDs, full caps and Magisk SID");
+
+    {
+        char unterminated[SUPERCALL_SCONTEXT_LEN];
+        unsigned char bad_security[64] = {0};
+        struct cred bad = { .security = bad_security };
+        struct cred *bad_ptr = &bad;
+        int before_calls = secctx_calls;
+        memset(unterminated, 'X', sizeof(unterminated));
+        rc = kp_apply_su_cred(&bad_ptr, 0, unterminated);
+        if (rc || bad_ptr != &kernel_cred || secctx_calls != before_calls) {
+            fprintf(stderr, "unterminated fixed-size SELinux context was not rejected safely\\n");
+            return 1;
+        }
+        puts("[PASS] unterminated fixed-size SELinux context is rejected without over-read");
+    }
+
+    {
+        unsigned char bad_security[64] = {0};
+        struct cred bad = { .security = bad_security };
+        struct cred *bad_ptr = &bad;
+        invalid_id_mapping = true;
+        rc = kp_apply_su_cred(&bad_ptr, 0, "u:r:magisk:s0");
+        invalid_id_mapping = false;
+        if (rc != -EINVAL || bad_ptr != &bad || bad.uid || bad.cap_effective) {
+            fprintf(stderr, "unmapped UID/GID was not rejected before cred mutation\\n");
+            return 1;
+        }
+        puts("[PASS] unmapped UID/GID rejected before credential mutation");
+    }
+
+    if (kp_task_su(123, 0, "u:r:magisk:s0") != -EOPNOTSUPP) {
+        fprintf(stderr, "cross-task SU did not fail closed\\n");
+        return 1;
+    }
+    puts("[PASS] cross-task SU ABI is disabled fail-closed");
 
     {
         unsigned char bad_security[64] = {0};
