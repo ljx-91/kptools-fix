@@ -212,4 +212,24 @@ require(init_body.index("sucompat_installed = true;") <
         "BUG_ON(kp_sucompat_hook_exit());" in init_body,
         "LKM init rollback and module exit fail closed if sucompat hooks cannot be retired")
 
+
+# Credential changes must be bounded and namespace-valid on the 4.14 path.
+require("strnlen(sctx, SUPERCALL_SCONTEXT_LEN)" in accctl and
+        "sid = 0;" in accctl and
+        "secctx_to_secid failed:" in accctl and
+        "strlen(sctx)" not in accctl,
+        "SELinux context parsing is bounded for the fixed-size UAPI field and initializes failure diagnostics")
+require("uid_valid(kuid)" in accctl and "gid_valid(kgid)" in accctl and
+        "rc = su_cred(new, to_uid);" in accctl,
+        "SU credential preparation rejects unmapped uid/gid values before installing credentials")
+task_su_body = accctl.split("int kp_task_su(", 1)[1]
+require("return -EOPNOTSUPP;" in task_su_body and
+        "rcu_assign_pointer(task->cred" not in task_su_body and
+        "rcu_assign_pointer(task->real_cred" not in task_su_body,
+        "unsafe cross-task credential replacement is disabled fail-closed")
+commit_su = accctl.split("int kp_commit_su(", 1)[1].split("int kp_task_su(", 1)[0]
+require(commit_su.index("kp_apply_su_cred(&new, to_uid, sctx)") <
+        commit_su.index("current_thread_info()->flags &= ~_TIF_SECCOMP"),
+        "seccomp is changed only after credential preparation succeeds")
+
 print("[PASS] Y73S 4.14.141 source compatibility contract")
