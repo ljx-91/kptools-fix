@@ -699,3 +699,34 @@ On the Y73s image, LKM's own CFI hook attempt cannot chain over KPIMG's absolute
 The current `kernelpatch_exit()` does not call `kp_kpm_exit()`; that function is explicitly documented as init-failure-only and assumes the supercall entry was never published. This means the runtime unload contract for a live LKM KPM registry is not yet established by this code path. Before enabling the bridge, audit whether LKM unload is forbidden while KPM images exist, whether all KPMs must be explicitly unloaded, or whether a full KPM shutdown/drain phase must be added. Do not assume the CFI range provider alone makes KPM images safe after LKM teardown.
 
 Status: KPIMG linker ranges, LKM range predicate locking, active-call/owner reference pairing, and current LKM init gating are source-confirmed. The proposed provider contract is design-only. No production code changed; no target KDIR build or device test is claimed.
+
+
+#### 6. Additional critical finding: LKM unload is not pinned by live LKM-loaded KPMs
+
+The LKM KPM compatibility table in `lkm/kpm/symbols.c` exposes direct addresses of LKM-owned functions to relocatable KPM images, including:
+- `hook_wrap`, `hook_unwrap_remove`, `hook_chain_add/remove`, `hook_prepare/install/uninstall`, `hook/unhook`;
+- `kp_kpm_owner_pin/unpin/call_get/call_put`;
+- LKM syscall helper wrappers and other compatibility functions.
+
+These are raw relocated addresses, not Linux module imports with automatic dependency references. The LKM loader's KPM owner references pin KPM images against their own unload; they do not pin the parent Linux LKM image that implements these functions.
+
+The inspected `kernelpatch_exit()` removes the SU compatibility hook, rename hook, supercall hook, and CFI bypass, but it does not:
+- reject LKM unload while `modules.list` contains live/loading/unloading KPM images;
+- unload/drain all LKM KPM images;
+- call a live-registry shutdown routine;
+- acquire or maintain a parent-LKM module reference per loaded KPM.
+
+`kp_kpm_exit()` is explicitly documented as init-failure-only (before supercall publication) and merely clears the runtime state/trampoline; it is not called from `kernelpatch_exit()`. It is not a safe substitute for unloading active KPMs.
+
+Therefore a KPM loaded by the LKM can retain relocations and hook callbacks into LKM text after the Linux module loader has decided to free the LKM image. This is a separate parent/child lifetime hazard from the CFI range predicate. It is not closed by KPM-local `active_calls` and `hook_refs`, because those protect the child KPM image, not the parent LKM provider code.
+
+**Required closure before enabling LKM KPM on Y73s:**
+- acquire one parent-LKM reference for every successfully published LKM KPM image (or an equivalent refcounted provider lease);
+- release it only after the KPM exit callback, all hook callbacks, owner references, active calls, and executable image retirement have completed;
+- on KPM load/init failure, release the parent reference only if the image is fully removed; retain it if cleanup leaves an image registered due to `-EBUSY`;
+- make the LKM unload path naturally return `-EWOULDBLOCK` while any child KPM remains, then allow ordinary unload after all KPMs are explicitly unloaded;
+- do not use one unconditional permanent self-pin. This is a per-child dependency reference and must be balanced on every load/unload/error path.
+
+This parent reference also makes the proposed per-call `__symbol_get()` CFI-provider lookup safe against the LKM image disappearing during an individual provider call. The provider still needs its own ABI and KPM active-owner pairing.
+
+Severity: **critical lifecycle blocker** for any configuration that enables the LKM KPM loader. Current Y73s CFI initialization gating prevents the LKM KPM loader from being exposed when its second CFI hook fails, but the teardown defect must be fixed before a future bridge enables that loader. No production code changed in this audit.
