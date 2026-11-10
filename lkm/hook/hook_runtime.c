@@ -232,8 +232,9 @@ static void kp_hook_exec_free(void *region, unsigned long size)
 {
 	if (!region)
 		return;
-	/* Do not return executable pages to the allocator unless NX/BTI
-	 * restoration is verified; leaking is safer than executable reuse. */
+	/* If init_mm is hidden on 4.14, kp_hook_make_nx() accepts only the
+	 * module_alloc backend; module_memfree() unmaps the executable region.
+	 * Other backends still require verified NX/BTI restoration. */
 	if (kp_hook_make_nx(region, size)) {
 		logke("Hook executable memory permission restore failed; leaking %px\n", region);
 		return;
@@ -273,22 +274,22 @@ int kp_hook_runtime_init(void)
 	else if (kp_hook_set_memory_x && kp_hook_set_memory_nx)
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_VMALLOC;
 	else {
-		logke("no matched executable Hook allocator/free backend\\n");
+		logke("no matched executable Hook allocator/free backend\n");
 		return -ENOSYS;
 	}
 
 #if defined(PTE_GP)
 	if (!kp_hook_init_mm) {
-		logke("init_mm unavailable; cannot verify BTI guarded Hook memory\\n");
+		logke("init_mm unavailable; cannot verify BTI guarded Hook memory\n");
 		return -ENOSYS;
 	}
 #else
 	if (!kp_hook_init_mm && kp_hook_alloc_backend != KP_HOOK_ALLOC_MODULE) {
-		logke("init_mm unavailable and no PAGE_KERNEL_EXEC module allocator\\n");
+		logke("init_mm unavailable and no PAGE_KERNEL_EXEC module allocator\n");
 		return -ENOSYS;
 	}
 #endif
-	logki("Hook runtime ready backend=%d module_alloc=%px execmem_alloc=%px init_mm=%px\\n",
+	logki("Hook runtime ready backend=%d module_alloc=%px execmem_alloc=%px init_mm=%px\n",
 	      kp_hook_alloc_backend, kp_hook_module_alloc, kp_hook_execmem_alloc,
 	      kp_hook_init_mm);
 	return 0;
