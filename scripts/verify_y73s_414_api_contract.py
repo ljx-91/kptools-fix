@@ -70,10 +70,10 @@ require("MODULE_LICENSE(\"GPL\")" in init,
 # v4.14.141 export table/source: strscpy, strncpy_from_user, filp_open,
 # filp_close, vmalloc, vfree and kernel_read are available to modules.
 require("#include <linux/ptrace.h>" in sucompat and
-        "current_user_stack_pointer()" in sucompat,
-        "4.14 generic ptrace header provides current_user_stack_pointer")
-require("strscpy(" in sucompat and "strncpy_from_user(" in sucompat,
-        "4.14 string and user-string helpers used by sucompat are available")
+        "task_pt_regs(current)" in sucompat,
+        "4.14 generic ptrace header provides task_pt_regs for execve context parsing")
+require("strncpy_from_user(" in sucompat and "copy_from_user(" in sucompat,
+        "4.14 user-copy helpers used by pending exec context parsing are available")
 require("filp_open(" in kpm and "kernel_read(" in kpm and
         "filp_close(" in kpm,
         "4.14 KPM file read path uses available file APIs")
