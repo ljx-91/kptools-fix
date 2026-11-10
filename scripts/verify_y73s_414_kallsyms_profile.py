@@ -25,7 +25,7 @@ def main():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        match = re.fullmatch(r"0x[0-9a-fA-F]+\\s+\\w\\s+(\\S+)", line)
+        match = re.fullmatch(r"0x[0-9a-fA-F]+\s+\w\s+(\S+)", line)
         if not match:
             raise SystemExit(f"malformed KALLSYMS record: {line}")
         symbols.add(match.group(1))
