@@ -26,6 +26,7 @@
 #include <asm/fixmap.h>
 #include <asm/memory.h>
 #include <asm/page.h>
+#include <asm/sections.h>
 #include <asm/pgtable.h>
 #include <asm/barrier.h>
 #include <asm/cmpxchg.h>
@@ -93,12 +94,11 @@ static DEFINE_RAW_SPINLOCK(kp_fixmap_patch_lock);
  */
 static unsigned long kp_phys_from_virt_no_init_mm(unsigned long addr)
 {
-	if ((addr >= MODULES_VADDR && addr < MODULES_END) ||
-	    is_vmalloc_addr((void *)addr))
-		return 0;
-	if (addr < KIMAGE_VADDR && addr < PAGE_OFFSET)
-		return 0;
-	return (unsigned long)virt_to_phys((void *)addr);
+	if ((addr >= (unsigned long)KERNEL_START &&
+	     addr < (unsigned long)KERNEL_END) ||
+	    virt_addr_valid((void *)addr))
+		return (unsigned long)virt_to_phys((void *)addr);
+	return 0;
 }
 
 __attribute__((no_sanitize("cfi")))
