@@ -1467,7 +1467,7 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 - GCC 14.2 Y73S KPIMG run 42821643290，提交 0369d57f99ee88ef997f8dd6bd2bca25816d51db：success。
 - 新增 KPIMG setup_load_info() 测试 16 项全部 PASS，且 AddressSanitizer 未报告错误。
 - 同一工作流内原有 LKM setup_load_info() 测试、双 loader simplify_symbols() 测试、双 loader layout/final-copy 测试及 KPIMG metadata/RELA dispatcher 测试均通过。
-- 同一提交 Windows kptools workflow 42821644835 在记录时仍 queued；需后续确认最终状态。
+- 同一提交 Windows kptools workflow 42821644835：success；Ubuntu KPIMG job 与 Windows kptools.exe build 均成功。
 
 ### 结论与边界
 
