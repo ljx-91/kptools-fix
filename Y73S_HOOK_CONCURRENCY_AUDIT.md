@@ -1317,3 +1317,25 @@ The current reader counter and callback owner pins do not, by themselves, close 
 ### Status
 
 No production behavior was changed in this audit step. LKM unload safety remains unverified until the pre-reader transit lifetime window is closed. Y73S vendor KDIR, module CFI/SCS configuration, and device runtime evidence are still unavailable.
+
+
+## 14. Linux 4.14.141 module-refcount containment option (2026-11-10)
+
+### Exact target facts
+
+- The recovered Y73S boot configuration confirms `CONFIG_MODULES=y` and `CONFIG_MODULE_UNLOAD=y`.
+- The exact upstream `gregkh/linux v4.14.141` `include/linux/module.h` defines `module_is_live(mod)` as `mod->state != MODULE_STATE_GOING`; `try_module_get()` and `__module_get()` are available when module unloading is enabled.
+- The exact upstream v4.14.141 `kernel/module.c` initializes `refcnt` with `MODULE_REF_BASE=1`, adds an additional temporary reference while module initialization runs, and `try_module_get()` increments a nonzero reference while the module is not GOING. `delete_module` first drops the base reference and refuses ordinary unload while any additional reference remains.
+- Therefore a self-reference acquired after hook installation but before successful module-init return can prevent ordinary `rmmod` from reaching `kernelpatch_exit()`. This is a viable containment strategy for an always-resident LKM, but not a general unload fix.
+
+### Why it is not enabled in this change
+
+- A permanent self-reference intentionally makes normal unload impossible; the current project has no explicit, externally safe quiesce/unpin control plane.
+- The recovered boot config notes do not yet establish whether `CONFIG_MODULE_FORCE_UNLOAD` is enabled. If forced unload is enabled and permitted, a refcount pin alone is not a complete barrier.
+- Acquiring the pin and then exposing an unpin operation requires a separate protocol: the operation must first stop new hook entries, remove the hook, wait for all possible transit executions (including pre-reader entries), and only then release the pin while the caller itself is guaranteed to hold a module reference. The current code does not provide that protocol.
+- Do not call `module_put(THIS_MODULE)` from `kernelpatch_exit()`: that callback is reached only after the loader has already decided the module can enter GOING, and cannot repair the pre-reader window.
+- A stronger long-term architecture is to route the inline-hook transit through resident KPIMG text or a separately retained executable object whose entire dependency closure is independent of the LKM image. The existing KPIMG linker-script copy path is not currently wired into the LKM build.
+
+### Decision
+
+No production pin/unpin change was made. Keep the LKM transit unload status **unverified / unsupported** until either (a) a deliberate no-unload policy is approved and forced-unload is ruled out, or (b) transit is moved to independently resident code with a proven teardown barrier. The current boot has module unloading enabled, so this distinction is operationally relevant.
