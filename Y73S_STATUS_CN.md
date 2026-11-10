@@ -2277,3 +2277,34 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 - Ubuntu KPIMG job run 42877088855（HEAD 4768d61）：success；Windows job当时仍在执行。
 - Windows workflow run 42876898175（HEAD c00b611）：success，Ubuntu 与 Windows 两个 job 均成功。
 - 最新分支 HEAD 已推进到 c44910919aa6ad20886d9c3e51fe5425d14e379c；其后两次提交仅更新状态/设计审计文档，不包含生产代码变更。
+
+
+## 72. 2026-11-11：复核 Y73s LK 的 unlocked boot AVB 策略
+
+### 本轮新增证据
+
+- 从资料库重新读取 `lk-verified.img`，大小 1,071,184 bytes，SHA-256 `e44dc34afa12235011331309c3cac1f995cbca65c5e61c9e598984a5539000d4`。
+- LK 内含 MT6853 / MT6853V/ZA / PD2031 相关字符串与 MT6853 FDT；这是 PD2031 家族强匹配，但尚不能证明与当前手机的 LK build/revision 完全一致。
+- 对已保存的 LK policy table 审计复核：`boot` 行四个策略字节为 `01 00 03 00`，按匹配 MT6853 结构中 `VFY_BIT=1` 的定义，两个 unlocked 列的 verify-required 均为 0。
+- 与匹配 MT6853 `load_vfy_boot.c` 流程对照：当 `img_auth_required == 0` 时设置 `AVB_SLOT_VERIFY_FLAGS_ALLOW_VERIFICATION_ERROR`，之后允许 AVB 验证错误被归一化为 OK；unlocked 状态报告 ORANGE。
+- 以上是 LK 二进制静态证据 + 同家族参考源码流程的交叉验证，不是当前手机运行时的启动证明。
+
+### 对本次 patched boot 的结论修正
+
+- patched boot 的原始 Boot Hash Descriptor 仍然不匹配；没有 vivo OEM 私钥，不能把它重新签成 OEM 信任链有效镜像。
+- 但这不再是当前最可能的启动阻塞：若设备实际运行的 LK 与该 LK 样本一致，且 lock-state provider 确实报告 `LKS_UNLOCK`，boot policy 预计会允许 verification error，保留现有 Footer/vbmeta 的离线候选有机会继续启动。
+- **不应为了追求“摘要匹配”而伪造/替换 OEM 签名或随意修改 root vbmeta。** 那样既不能获得 OEM 信任，也会引入额外链式签名变化。
+- 当前 patched boot 文件不需要因 AVB 摘要不匹配而重打包；其身份仍为离线候选，SHA-256 `652018b65110cf80599c2381111628c2cf8b6c792129ea60b6c3dde97fd030e3`。
+
+### 剩余验证边界
+
+1. LK 样本虽强匹配 PD2031/MT6853，但 exact build/revision 尚未证明。
+2. 未从当前设备读取实际 lock state；不能仅凭“已解锁”描述断言 LK 一定进入该分支。
+3. 未完成该 Vivo LK 的完整指令级控制流比对，也未验证是否存在额外 boot image/parser 检查。
+4. KPIMG/kernel 的启动、APatch 初始化与设备兼容性仍未验证。
+
+### 结论
+
+AVB 的 OEM 签名问题在无 OEM 私钥条件下不能被离线“修成 OEM-valid”。但新增 LK policy 证据显示：对 PD2031/MT6853 家族的已解锁状态，boot 分区验证错误预计是非致命的。因此把本问题从“已知 AVB hash 不匹配、是否可继续启动未知”更新为“**unlocked LK policy 静态证据支持可容忍该不匹配，仍待精确 LK build/运行时状态确认**”。
+
+本轮未修改 boot/vbmeta 原始文件；未执行 Fastboot、刷写、分区写入或真机启动测试。
