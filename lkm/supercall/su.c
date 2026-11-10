@@ -93,13 +93,19 @@ long kp_su_allow_uid_nums_sc(void)
 
 long kp_su_allow_uid_list_sc(uid_t __user *uids, int max)
 {
-	uid_t list[128];
-	int n = kp_su_allow_uids(list, ARRAY_SIZE(list));
+	uid_t list[128] = { 0 };
+	int n;
+
+	if (max < 0)
+		return -EINVAL;
+	if (max && !uids)
+		return -EFAULT;
+	n = kp_su_allow_uids(list, ARRAY_SIZE(list));
 	if (n < 0)
 		return n;
 	if (n > max)
 		n = max;
-	if (copy_to_user(uids, list, n * sizeof(uid_t)))
+	if (n && copy_to_user(uids, list, n * sizeof(uid_t)))
 		return -EFAULT;
 	logki("su_allow_uid_list -> %d uids: [%u %u %u %u]\n", n, list[0], list[1], list[2], list[3]);
 	return n;
