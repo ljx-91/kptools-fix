@@ -402,6 +402,7 @@
 - repack 日志明确提示：AVB metadata/footer 字节被保留并调整 offset，但没有重新计算 boot partition digest 或 AVB signature。因此该输出**不是 AVB-verified 镜像**，没有尝试设备启动或刷写。
 - 原始 Boot 资料库文件未修改；全过程没有 Fastboot、没有设备分区写入、没有真机启动。
 - 将原始与注入后解压 Image 的共同前缀逐字节比较：仅 4 bytes 不同，分别位于 ARM64 Image 入口分支指令（更新为跳入 KPIMG 入口区域）和 Image Header 的 `image_size` 字段；map anchor 区间 `[0x019352d0, 0x019372d0)` 与原始内核逐字节一致。KPIMG 作为新增尾部区域附加，没有覆盖该 map anchor 附近的原始函数代码。
+- 对二次解包后的 raw kernel 执行 `kptools -u` 成功，输出大小恢复为 47,517,708 bytes；SHA-256 与原始解压 Image 完全一致（`345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`），逐字节比较也完全相同。这证明本轮 KPIMG 注入/卸载在 raw kernel 副本上完成精确离线往返；不改变 AVB 摘要不匹配的结论。
 - 独立重算原 Boot AVB HashDescriptor（原 salt + descriptor 的 17,618,944-byte payload）：原始文件仍匹配原摘要 `36a3d398…`；注入输出得到 `c359f2c9…`，与原摘要不匹配。再次确认输出不可视为 AVB-verified，且本轮没有尝试绕过设备端验证。
 
 ### 该轮结论
