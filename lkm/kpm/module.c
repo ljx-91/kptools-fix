@@ -263,12 +263,6 @@ static int kp_do_set_memory_x(unsigned long addr, int npages)
 }
 
 __attribute__((no_sanitize("cfi")))
-static int kp_do_set_memory_nx(unsigned long addr, int npages)
-{
-	return kp_set_memory_nx(addr, npages);
-}
-
-__attribute__((no_sanitize("cfi")))
 static long kp_call_ctl0(mod_ctl0call_t *fn, const char *args, char __user *out, int outlen)
 {
 	return (*fn)(args, out, outlen);
@@ -1497,10 +1491,6 @@ long kp_unload_module(const char *name, void __user *reserved)
 
 	if (mod->args)
 		kvfree(mod->args);
-	if (kp_set_memory_nx && mod->start) {
-		int npages = (mod->size + PAGE_SIZE - 1) >> PAGE_SHIFT;
-		kp_do_set_memory_nx((unsigned long)mod->start, npages);
-	}
 	if (mod->start)
 		kp_free_exec(mod->start, mod->size);
 	kfree(mod);
