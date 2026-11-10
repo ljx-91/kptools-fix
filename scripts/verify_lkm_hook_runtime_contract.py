@@ -223,6 +223,10 @@ checks = {
         "pmd_sect(*pmd)" in phys_from_virt and
         "pmd_page_paddr(*pmd) & PMD_MASK" in phys_from_virt and
         phys_from_virt.index("pmd_sect(*pmd)") < phys_from_virt.index("pmd_bad(*pmd)"),
+    "syscall-table install compare-exchanges the observed original handler":
+        "kp_patch_cmpxchg64(" in function_body(read("lkm/infra/syscall_table.c"), "int kp_syscall_hook(") and
+        "old == fn" in function_body(read("lkm/infra/syscall_table.c"), "int kp_syscall_hook(") and
+        "*orig = old;" in function_body(read("lkm/infra/syscall_table.c"), "int kp_syscall_hook("),
     "syscall-table teardown compare-restores only the owned handler":
         "kp_patch_cmpxchg64(" in syscall_unhook and
         "current == orig" in syscall_unhook and
