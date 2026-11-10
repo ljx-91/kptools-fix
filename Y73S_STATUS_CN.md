@@ -1578,3 +1578,31 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 
 - syscall-table backend 的 `kp_redirect_to_sh()` 目前在调用原始 `execve` 前执行 `kp_commit_su()`，随后仍有用户栈写入和原始 exec 失败的可能。Y73s 当前配置/符号分析指向隐藏 syscall table 后的 `prepare_binprm` fallback，但通用 syscall backend 的“先提交 cred、后完成 exec”事务仍需独立审计；本节没有声称已解决该 backend。
 - 本节修复等待最新 GCC KPIMG / Windows workflow 验证；仍不是 vendor KDIR LKM build 或真机验证。
+
+## 49. 2026-11-10：禁用非事务性 syscall SU backend，统一使用 pending exec cred
+
+### 审计发现
+
+- kp_redirect_to_sh() 原先在 syscall handler 内先执行 kp_commit_su()，立即替换当前任务凭据并清除 seccomp；之后才分配/写入用户栈中的新 filename、改写 argv，最后调用原始 execve()。
+- 这些后续步骤均可能失败。若失败后走原始 execve passthrough，调用进程可能仍持有已提交的 root cred，却没有成功完成目标 shell exec。这是凭据提交顺序错误，不能仅靠把 kp_commit_su() 移到一次 copy_to_user() 之后修复，因为原始 execve 本身仍可失败。
+- Y73s 当前静态符号/配置路径可用 prepare_binprm；此路径能修改 bprm->cred，由内核在 exec 正常提交阶段安装凭据。
+
+### 修复
+
+- 删除 kp_redirect_to_sh()、kp_execve_handler()、syscall-table execve hook 及其 getname_flags 路径探测辅助代码。
+- kp_sucompat_hook_init() 现在只尝试 kp_hook_prepare_binprm()；不再回退到提前提交当前凭据的 syscall backend。
+- 若目标内核无法解析/安装可靠的 prepare_binprm hook，初始化失败关闭，不提供 SU exec 提权路径。
+- 保留 kp_after_prepare_binprm() 对 bprm->cred 的修改；在 prepare_binprm 之后、ELF 验证和 install_exec_creds() 之前，当前任务的 seccomp 状态保持不变。
+- 修正 Host fixture 中因不再清除 seccomp 而变为未使用的 current_thread_info() stub。
+- 更新 verify_lkm_supercall_input_contract.py 与 verify_y73s_414_api_contract.py：要求 sucompat 不得重新引入 kp_commit_su() / syscall hook / 用户栈早提交路径，且必须使用 pending exec credential backend。
+
+### 验证
+
+- 过程中发现并修复了两项过时测试契约：supercall input verifier 仍要求旧 kp_execve_handler()，4.14 API verifier 仍要求 syscall backend 使用的 current_user_stack_pointer() / strscpy()。这些是后端删除后的测试预期未同步，不是生产构建错误。
+- GCC 14.2 Y73S KPIMG run 42830791161，HEAD 7acaa0ce78b853c07b5f263b5c96afccd787583c：**success**；KPIMG 构建、Host fixture、Y73S 4.14 API contract 与 source contracts 全部通过，artifact 上传成功。
+- Windows workflow run 42830790621：Ubuntu KPIMG/source-contract job 已 success；Windows kptools.exe job 当时仍在运行，最终结果待确认。
+- 早期提交 e90594f3、8329f703 的 CI 失败分别由旧 source contract / 旧 API contract 引起；不能用这些中间提交的失败结果代替最终 HEAD 验证。
+
+### 验证边界
+
+本次只证明 GCC KPIMG 构建、Host fixture 和源码契约通过。没有 Y73s vendor KDIR，故未完成 LKM 对厂商内核头文件的真实编译/modpost；未完成 Clang 9.0.3 CFI/LTO 链接；也未在 Y73s 真机验证 hook 运行、SELinux 行为、exec 失败回滚或卸载并发。没有刷写或设备操作。
