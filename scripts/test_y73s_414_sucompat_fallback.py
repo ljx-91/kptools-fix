@@ -42,7 +42,8 @@ def main():
 #include <string.h>
 #include <errno.h>
 typedef unsigned int uid_t;
-#define KP_SH_PATH "/system/bin/sh"
+static const char test_kp_sh_path[] = "/system/bin/sh";
+#define KP_SH_PATH test_kp_sh_path
 #define KP_BPRM_HOOK_NONE 0
 #define KP_BPRM_HOOK_SU_REDIRECT 1
 #define KP_BPRM_HOOK_SU_CHAIN 2
