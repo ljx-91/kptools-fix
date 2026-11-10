@@ -1527,3 +1527,11 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 ### 边界
 
 该修复覆盖 no-init_mm 回收分支的失败关闭逻辑并由 Host failure-injection 验证；仍未在 Y73s 真机上实测 set_memory_nx 对 module_alloc 页面实际修改 PTE 的行为。目标 vendor KDIR 下 LKM 编译/modpost、Clang 9.0.3 CFI/LTO 链接和真机运行仍未完成。
+
+
+## 46. Linux 4.14.141 set_memory_nx API 语义复核（2026-11-10）
+
+- 对照 gregkh/linux v4.14.141 的 arch/arm64/mm/pageattr.c：set_memory_nx() 通过 change_memory_common() 更新 PTE_PXN，并返回 change_memory_common() 的错误码。
+- change_memory_common() 会检查地址覆盖的 vm_struct、范围和 VM_ALLOC 标志；不满足条件时返回 -EINVAL，而不是保证成功。因此忽略返回值确实会把未成功设置 NX 的区域错误交还 allocator。
+- 4.14 set_memory_nx() 为 EXPORT_SYMBOL_GPL；当前 Y73s KALLSYMS profile 要求 set_memory_nx 存在，运行时由 kallsyms_lookup_name 解析。此上游语义核对支持本次“无 init_mm 时必须检查 set_memory_nx 成功”的修复设计。
+- 仍需 vendor 4.14.141 真实内核/KDIR 和设备运行才能确认厂商是否修改了 pageattr 实现，以及 module_alloc 返回区域是否满足 VM_ALLOC 覆盖条件；目前不将上游源码等同于 vendor runtime 证明。
