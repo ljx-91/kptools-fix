@@ -1408,3 +1408,46 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 - 最新代码/测试提交 5d1f3081c829da771db6e7b75d9411a0e83cd335 的 GCC 14.2 Y73S KPIMG run 42813617204：**success**。日志确认 4.14 API contract、unmapped UID/GID 拒绝、跨任务 SU fail-closed、seccomp 时序契约及后续全部 source contracts 通过。
 - 同一提交的 Windows workflow run 42813617153：Ubuntu KPIMG、Linux kptools 和源码契约 job 已 success；Windows kptools.exe job 当时仍在运行，最终结果待确认。
 - 本次测试夹具失败均已定位为旧断言/测试预期未同步，不是 KPIMG C 编译错误。仍未进行 Y73s vendor KDIR 下的 LKM 编译/modpost。
+
+
+## 41. Y73s 原始 Boot 的 prepare_binprm / open_exec 入口反汇编核对（2026-11-10）
+
+### 输入与完整性
+
+- 从资料库读取原始 /boot.img：100,663,296 bytes，SHA-256 为 c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5。
+- Android Boot Header v2，page size 2048；gzip kernel payload 解压为 47,517,708 bytes。
+- 解压 Kernel Image SHA-256：345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e。
+- 全程只读取资料库原件并在临时工作副本解压/反汇编，没有修改原件或接触设备。
+
+### 目标符号和 CFI veneer
+
+从同一份 Y73s KALLSYMS dump 确认：
+
+- prepare_binprm.cfi：image offset 0x003e044c。
+- prepare_binprm（非 .cfi 别名）：0x01917bc8，机器码为单条 B，目标 0x003e044c。
+- open_exec.cfi：image offset 0x003e06e8。
+- open_exec（非 .cfi 别名）：0x01914f00，机器码为单条 B，目标 0x003e06e8。
+
+因此当前代码优先解析 prepare_binprm.cfi 会直接命中函数体；若退回 prepare_binprm 别名，hook() 的 branch_func_addr() 会把该 B veneer 解析到同一函数体。open_exec 别名同样是到 open_exec.cfi 的 CFI 跳板，作为函数指针调用入口。
+
+### prepare_binprm.cfi 真实入口前四条指令
+
+对原始 Kernel Image 的 0x003e044c 反汇编：
+
+- 0x003e044c：0xd10143ff — sub sp, sp, #0x50
+- 0x003e0450：0xa9015ff8 — stp x24, x23, [sp, #0x10]
+- 0x003e0454：0xa90257f6 — stp x22, x21, [sp, #0x20]
+- 0x003e0458：0xa9034ff4 — stp x20, x19, [sp, #0x30]
+- 后续 0x003e045c：stp x29, x30, [sp, #0x40]。
+
+当前 ARM64 hook 的 branch_absolute() 生成 4 条覆盖指令，因此入口补丁覆盖前 16 bytes，恰好是上述四条普通栈帧建立/寄存器保存指令；它们不含 PC-relative 地址或分支目标。hook_prepare() 对这些未命中 PC-relative relocation 分类的指令走 INST_IGNORE/relo_ignore，原样复制指令并填充 NOP，再跳回原函数 0x003e045c。就这份原始 Boot 的实际 prologue 而言，没有发现需要 ADR/ADRP、B/BL 或 literal LDR 重定位的入口指令。
+
+### CI 补充
+
+- 代码/测试 HEAD 5d1f3081c829da771db6e7b75d9411a0e83cd335 的 GCC 14.2 Y73S KPIMG run 42813617204：success。
+- 同一提交 Windows workflow run 42813617153：最终 success；Ubuntu KPIMG/Linux kptools/source contracts 与 Windows kptools.exe 构建和 artifact 上传均成功。
+- 状态文档后续提交不改变上述代码/测试基线。
+
+### 验证边界
+
+这是使用原始 Y73s Boot 的静态机器码与符号别名核对，不证明 hook 在运行时安装、回调 ABI 或卸载并发行为正确。目标 vendor KDIR 下的 LKM 编译/modpost、Clang 9.0.3 CFI/LTO 链接和真机运行仍未验证；没有刷写或设备操作。
