@@ -1535,3 +1535,25 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - change_memory_common() 会检查地址覆盖的 vm_struct、范围和 VM_ALLOC 标志；不满足条件时返回 -EINVAL，而不是保证成功。因此忽略返回值确实会把未成功设置 NX 的区域错误交还 allocator。
 - 4.14 set_memory_nx() 为 EXPORT_SYMBOL_GPL；当前 Y73s KALLSYMS profile 要求 set_memory_nx 存在，运行时由 kallsyms_lookup_name 解析。此上游语义核对支持本次“无 init_mm 时必须检查 set_memory_nx 成功”的修复设计。
 - 仍需 vendor 4.14.141 真实内核/KDIR 和设备运行才能确认厂商是否修改了 pageattr 实现，以及 module_alloc 返回区域是否满足 VM_ALLOC 覆盖条件；目前不将上游源码等同于 vendor runtime 证明。
+
+
+## 47. 2026-11-10：SELinux translabel 失败时禁止替换为 init_cred
+
+### 上游 4.14.141 布局核对
+
+- 对照上游 `security/selinux/hooks.c` 与 `security/selinux/include/objsec.h`：4.14.141 的 `cred->security` 直接指向 `task_security_struct`，其前两个字段为 `osid`、`sid`；上游该版本没有 `selinux_blob_sizes`。
+- 因此，只有在无 vendor blob-offset backport 且配置为单 SELinux LSM 时，`cred->security` 的 SELinux cred 偏移才可按 0 处理。若厂商内核引入了 blob-offset backport，则使用其 `lbs_cred`。
+- 这项源码对照验证了 upstream 4.14.141 ABI，不等同于确认 Y73s vendor config 或 backport 状态；后者仍需目标 KDIR / 配置或运行时证据。
+
+### 新发现与修复
+
+- 原 `kp_apply_su_cred()` 在 SELinux context 转换失败时调用 `prepare_kernel_cred(NULL)`，用 `init_cred` 替换调用方持有的 pending cred。这会丢弃请求的 UID / SELinux 域，并可能将 kernel SID 的凭据带入用户态 exec 流程。
+- 已删除该回退：SELinux translabel 不可用、context 无效或 SID 解析失败时直接返回错误；不替换 `*cred`，也不释放它。所有权仍归调用方，`kp_commit_su()` 会 abort 尚未提交的 cred；prepare_binprm 路径返回错误并让 exec 清理 pending cred。
+- 更新 Host fixture：无效 context 现在必须得到 `-EINVAL`，且 pending cred 指针仍由调用方持有；移除原先“回退到 kernel cred”的测试预期。
+- 更新 4.14 API source contract，禁止重新引入 `prepare_kernel_cred(NULL)` 回退。
+
+### 验证边界
+
+- 修复提交：`3c541adcfc08ed1ddd96657dfbba89df3d19d963`；Host fixture 更新：`7aa59ab140b5e01a5c2123b3b01094a1d9f8e36e`；source contract 更新：`d5d420d8c88ce96c6f3e54df3f7559a76ecf515f`。
+- 4.14 GCC KPIMG 与 Windows workflows 已由最终 source-contract 提交触发，结果待完成；不得将前置中间提交或旧 CI 结果视为本次修复验证通过。
+- 仍未完成 Y73s vendor KDIR 下的 LKM 编译/modpost、厂商 SELinux blob layout 验证或真机测试；没有进行设备刷写。
