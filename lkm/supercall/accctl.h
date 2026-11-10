@@ -14,6 +14,11 @@
 /* Resolve the SELinux translabel helper at init. */
 int kp_accctl_init(void);
 
+struct cred;
+
+/* Apply root uid/gid/capabilities and an SELinux context to a pending cred. */
+int kp_apply_su_cred(struct cred **cred, uid_t to_uid, const char *sctx);
+
 /* Grant root to the current task (uid/gid -> to_uid, all caps). */
 int kp_commit_su(uid_t to_uid, const char *sctx);
 
