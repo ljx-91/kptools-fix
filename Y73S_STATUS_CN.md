@@ -457,3 +457,50 @@
 - 严格 Kallsyms PR #208：https://github.com/bmax121/KernelPatch/pull/208
 - PAC/map-area PR #225：https://github.com/bmax121/KernelPatch/pull/225
 - Vivo 4.x autopatch：https://github.com/4accccc/vivo-4.x-kernel-autopatch
+
+
+## 21. 2026-11-10：修复 Token Table 游标后，用 CI 新二进制复测原厂 Boot
+
+### 构建产物与输入完整性
+
+- Linux kptools CI：Run `42678135670`，Commit `26dc2e1bf4acfb9f605c18751f59a6787f6c71a8`，两个 jobs（Host build、全源码 contract audit）均 success。
+- GCC 14.2 KPIMG CI：Run `42678135541`，同一 commit，success。
+- Windows CI：Run `42678135438`，同一 commit，两个 jobs 均 success。
+- Linux kptools artifact SHA-256：`2b5cca0c94abc9826c8f737b974d11d8816e10c91ff5b40f32e2b5615a1979a7`，与 artifact 内 `SHA256SUMS` 一致。
+- 从资料库重新取得原始 `boot.img`，SHA-256 为 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`，与此前基线一致。
+- 使用这次 CI 的 kptools 解包，得到 47,517,708-byte ARM64 Image；SHA-256 `345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`，与原始解压内核基线一致。
+
+### 最新二进制真实镜像解析
+
+执行 `kptools -d -i kernel`，退出码 0。结果：
+
+| 项目 | 实测值 |
+|---|---:|
+| Token Table | `0x01e4bd00` |
+| Token Index | `0x01e4c100` |
+| Markers | `[0x01e4af00, 0x01e4bc30)`，count `0x1a5` |
+| Names | `0x01cef600` |
+| Num Syms 位置和值 | `0x01cef500` / `0x1a5b9` |
+| vectors | `0x00002800` |
+| pid_vnr | `0x01912460` |
+| kernel base | `0xffffff8008080000` |
+
+- 独立统计 dump 中的符号行数为 107,961，与 `0x1a5b9` 完全相等。
+- `pid_vnr` CFI stub 分支跟随到 `0x0011bc10`；目标指令 `0xd5384108` 通过 SP_EL0 读取校验。
+- 原始内核没有可用的 `linux_banner` Kallsyms 名称；严格 vector fallback 成功完成验证。
+- Token Table 起点恢复为真实基线 `0x01e4bd00`，不再是先前错误候选 `0x01e4bd04`。本轮游标修复已在最新 Host CI 中包含回归模型检查，并通过真实 Boot 二进制复测。
+
+### 日志警告的正确解释
+
+- 日志中的 `find approximate kallsyms_offsets error` 表示相对 offsets 候选不适用，程序继续尝试绝对地址表；它本身不是最终失败。
+- 前两个候选基址的估算符号数为 `0x1a2c6`，不能精确验证 `num_syms`，因此被拒绝并重试。
+- 第三个候选基址得到精确 `0x1a5b9`，并通过 vectors / pid_vnr 语义校验。上述两个错误候选均 fail-closed，没有被采纳。
+- `ARM64 relocations were applied before the absolute-address scan` 是提示必须执行精确符号数和 vector 检查；最终候选确实通过了这两项检查。
+
+### 本轮结论与边界
+
+**已确认：Token Table 游标修复、最新 Linux kptools 构建、真实 Y73s 原厂内核完整 Kallsyms dump 均通过。** 当前分支从“源码检查通过”推进到“CI 产物对真实原厂内核离线解析通过”。
+
+本轮仅解包和读取原始 Boot / 内核副本，没有修改原始文件，没有运行 patch/unpatch，也没有执行 Fastboot、分区写入或设备启动。该结果不代表修改后的 Boot 通过 AVB，也不代表 APatch 已能在真机初始化。
+
+后续仍应优先处理：精确匹配的 Vivo 4.14.141 KDIR 与 Clang 9.0.3 工具链、目标 `.ko` 编译/modpost、KPM load/unload 和 Hook 并发测试，以及原 issue #189 中 Wi-Fi crash / Manager authentication failure 的动态证据。
