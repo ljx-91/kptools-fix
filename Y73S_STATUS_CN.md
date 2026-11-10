@@ -1557,3 +1557,24 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - 修复提交：`3c541adcfc08ed1ddd96657dfbba89df3d19d963`；Host fixture 更新：`7aa59ab140b5e01a5c2123b3b01094a1d9f8e36e`；source contract 更新：`d5d420d8c88ce96c6f3e54df3f7559a76ecf515f`。
 - 4.14 GCC KPIMG 与 Windows workflows 已由最终 source-contract 提交触发，结果待完成；不得将前置中间提交或旧 CI 结果视为本次修复验证通过。
 - 仍未完成 Y73s vendor KDIR 下的 LKM 编译/modpost、厂商 SELinux blob layout 验证或真机测试；没有进行设备刷写。
+
+
+## 48. 2026-11-10：prepare_binprm 阶段不提前清除 seccomp
+
+### Y73s 配置与 exec 顺序核对
+
+- 从资料库中的 `vivo-y73s-4.14.141-extracted.config` 确认：`CONFIG_SECURITY_SELINUX=y`；SMACK、TOMOYO、APPARMOR 均未启用。该配置支持单 SELinux LSM 的 offset-0 fallback 前提，但不替代 vendor KDIR 的最终验证。
+- 从原始 Y73s KALLSYMS 恢复记录确认存在 `install_exec_creds.cfi`（Image offset `0x003e0f6c`）。
+- 对照上游 4.14.141 `fs/binfmt_elf.c`：`prepare_binprm()` 发生在 ELF 检查/加载前；`install_exec_creds()` 则在 `flush_old_exec()`、`setup_new_exec()` 之后，且其后 `setup_arg_pages()`、ELF segment mapping 等步骤仍可能失败。
+- 因此，在 `kp_after_prepare_binprm()` 中清除当前任务的 `_TIF_SECCOMP` 太早：若后续 exec 在提交新 cred 前失败，原进程会带着已被清除的 seccomp 标志继续运行。
+
+### 修复
+
+- 删除 pending-exec callback 中提前清除 `_TIF_SECCOMP` 的操作；仅准备 `bprm->cred`，让内核在 `install_exec_creds()` 中按正常 exec 生命周期提交。
+- 保留当前任务 seccomp 状态，即使后续 ELF 验证/加载失败也不会提前丢失限制。
+- Host sucompat fixture 改为验证成功准备 pending root cred 后，`_TIF_SECCOMP` 仍保持设置；4.14 API contract 增加源码保护，防止该提前清除被重新引入。
+
+### 仍需单独审计
+
+- syscall-table backend 的 `kp_redirect_to_sh()` 目前在调用原始 `execve` 前执行 `kp_commit_su()`，随后仍有用户栈写入和原始 exec 失败的可能。Y73s 当前配置/符号分析指向隐藏 syscall table 后的 `prepare_binprm` fallback，但通用 syscall backend 的“先提交 cred、后完成 exec”事务仍需独立审计；本节没有声称已解决该 backend。
+- 本节修复等待最新 GCC KPIMG / Windows workflow 验证；仍不是 vendor KDIR LKM build 或真机验证。
