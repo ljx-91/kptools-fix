@@ -79,6 +79,8 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     need(r"sh_addralign.*sh_addralign\s*-\s*1", ranges, "section alignment")
 
     setup = body(module, "static int setup_load_info(")
+    need(r"relsec->sh_type\s*==\s*SHT_RELA[\s\S]*?relsec->sh_entsize\s*!=\s*sizeof\(Elf64_Rela\)[\s\S]*?relsec->sh_size\s*%\s*sizeof\(Elf64_Rela\)", setup,
+         "original RELA entry size and extent must be validated before section layout")
     for pattern, message in [
         (r"symsec->sh_entsize\s*!=\s*sizeof\(Elf_Sym\)", "symbol entry size"),
         (r"symsec->sh_link\s*>=\s*info->hdr->e_shnum", "symbol string-table index"),
@@ -271,6 +273,8 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
         raise AssertionError("undefined 32-bit full-width shift reintroduced")
 
     rela = body(relo, "int kp_apply_relocate_add(")
+    if "rsec->sh_entsize" in rela:
+        raise AssertionError("RELA apply must not inspect sh_entsize after section layout repurposes it")
     for pattern, message in [
         (r"rsec->sh_type\s*!=\s*SHT_RELA", "RELA section type"),
         (r"rsec->sh_entsize\s*!=\s*sizeof\(Elf64_Rela\)", "RELA entry size"),
