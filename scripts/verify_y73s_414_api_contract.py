@@ -176,11 +176,17 @@ require("allow_write_access(old_file)" in before_prepare_binprm and
         before_prepare_binprm.index("allow_write_access(old_file)") <
         before_prepare_binprm.index("fput(old_file)"),
         "replacing bprm->file balances the old executable deny-write reference")
+require("static const char kp_sh_path[] = SH_PATH" in sucompat_hook and
+        "bprm->filename == KP_SH_PATH" in sucompat_hook and
+        "KP_BPRM_HOOK_SU_CHAIN" in sucompat_hook and
+        "bprm->cred->euid = bprm->cred->uid" in sucompat_hook and
+        "bprm->cred->egid = bprm->cred->gid" in sucompat_hook,
+        "repeated prepare_binprm calls on a redirected script restore only effective IDs from the pending SU cred")
 require("bprm->file = shell_file" in sucompat_hook and
         "bprm->filename = KP_SH_PATH" in sucompat_hook and
         "bprm->interp = KP_SH_PATH" in sucompat_hook and
         "kp_apply_su_cred(&new, 0, sctx)" in sucompat_hook and
-        "if (!args->local.data0 || (long)args->ret < 0)" in sucompat_hook and
+        "if (args->local.data0 != KP_BPRM_HOOK_SU_REDIRECT)" in sucompat_hook and
         "if (supercmd && bprm->argc > 1)" in sucompat_hook and
         "bprm->argc = 1" in sucompat_hook and
         "args->local.data2 = supercmd" in sucompat_hook and
