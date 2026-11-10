@@ -199,6 +199,13 @@ def main():
             bypass, "CFI hook failures must not be overwritten by later hook attempts")
 
     core_init = read("lkm/core/init.c")
+    # Linux 4.14 predates module namespaces; the import must be conditional
+    # on the target headers defining MODULE_IMPORT_NS, not only kernel version.
+    require(r"#ifdef\s+MODULE_IMPORT_NS[\s\S]*?MODULE_IMPORT_NS\(",
+            core_init, "legacy kernels without MODULE_IMPORT_NS must still compile")
+    require(r"#if\s+LINUX_VERSION_CODE\s*>=\s*KERNEL_VERSION\(6,\s*13,\s*0\)[\s\S]*?MODULE_IMPORT_NS\(\"VFS_internal",
+            core_init, "new module namespace API must use the string form")
+
     init_entry = body(core_init, "int __init kernelpatch_init(")
     require(r"#ifdef CONFIG_CFI_CLANG[\s\S]*?KPM loader disabled: CFI bypass is unavailable",
             init_entry, "Clang CFI builds must disable KPM when CFI bypass setup fails")
