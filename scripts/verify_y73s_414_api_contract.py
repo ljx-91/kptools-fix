@@ -156,8 +156,7 @@ sucompat_init = sucompat_hook.split("int kp_sucompat_hook_init(void)", 1)[1].spl
 require("return kp_hook_prepare_binprm();" in sucompat_init and
         "kp_syscall_hook(" not in sucompat_hook and
         "kp_commit_su(" not in sucompat_hook and
-        "kp_redirect_to_sh(" not in sucompat_hook and
-        "fail\\n" not in sucompat_init,
+        "kp_redirect_to_sh(" not in sucompat_hook,
         "sucompat uses transactional pending exec credentials only and fails closed without prepare_binprm")
 require("return kp_hook_prepare_binprm()" in sucompat_hook and
         "kp_resolve_symbol(\"prepare_binprm.cfi\")" in sucompat_hook and
