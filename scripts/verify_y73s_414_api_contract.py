@@ -24,7 +24,7 @@ patch = read("lkm/infra/patch_memory.c")
 resolver = read("lkm/infra/symbol_resolver.c")
 kbuild = read("lkm/Kbuild")
 init = read("lkm/core/init.c")
-secpass = read("lkm/infra/secpass.c")
+
 hook_runtime = read("lkm/hook/hook_runtime.c")
 kpm = read("lkm/kpm/module.c")
 sucompat = read("lkm/supercall/sucompat_hook.c")
@@ -33,6 +33,7 @@ supercall = read("lkm/supercall/supercall.c")
 hook_runtime = read("lkm/hook/hook_runtime.c")
 hook_engine = read("lkm/hook/hook_engine.c")
 patch_memory = read("lkm/infra/patch_memory.c")
+secpass = read("lkm/infra/secpass.c")
 init_source = read("lkm/core/init.c")
 
 # In upstream v4.14.141 ARM64:
@@ -129,6 +130,12 @@ require("kp_exec_backend == KP_EXEC_BACKEND_MODULE" in kpm and
 require("__flush_icache_all()" in hook_engine and
         "__flush_icache_all()" in patch_memory,
         "Hook trampoline and text patch paths broadcast I-cache invalidation")
+require('if (!addr)\n\t\taddr = kallsyms_lookup_name("__cfi_slowpath")' in secpass and
+        'if (!cfi_enforcement_hooked && !rc)' in secpass,
+        "Y73S CFI bypass falls back to the present __cfi_slowpath when newer CFI hooks are absent")
+require('kallsyms_lookup_name("module_alloc")' in kpm and
+        'kallsyms_lookup_name("module_memfree")' in kpm,
+        "KPM runtime resolves the target's executable module allocator/free pair")
 require("v &= ~exec_deny_mask" in hook_runtime and
         "v |= KP_HOOK_PTE_UXN" in hook_runtime and
         "v &= ~exec_deny_mask" in kpm and
