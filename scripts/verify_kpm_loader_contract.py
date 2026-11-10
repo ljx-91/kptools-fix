@@ -74,8 +74,14 @@ def main():
             "relocation symbol-table link must be checked")
     require(r"sh_type\s*==\s*SHT_REL\)\s*return\s*-ENOEXEC", reloc_dispatch,
             "unsupported REL must be rejected")
-    require(r"sh_entsize\s*!=\s*sizeof\(Elf64_Rela\)", reloc_dispatch,
-            "RELA entry size must be validated")
+    require(r"relsec->sh_entsize\s*!=\s*sizeof\(Elf64_Rela\)", setup,
+            "original RELA entry size must be validated before layout")
+    require(r"relsec->sh_size\s*%\s*sizeof\(Elf64_Rela\)", setup,
+            "original RELA size must be validated before layout")
+    require(r"relsec->sh_size\s*%\s*sizeof\(Elf64_Rela\)", reloc_dispatch,
+            "post-layout RELA size must remain integral")
+    if "relsec->sh_entsize" in reloc_dispatch:
+        raise AssertionError("post-layout relocation dispatch must not read repurposed sh_entsize")
 
     data_reloc = function_body(relo, "static int reloc_data(")
     require(r"if\s*\(len\s*==\s*64\)\s*imm_mask\s*=\s*~0ULL", data_reloc,
