@@ -611,8 +611,10 @@ static int setup_load_info(struct load_info *info)
                 set_load_error(info, "multiple symbol tables are unsupported");
                 return -ENOEXEC;
             }
-            if (symsec->sh_link >= info->hdr->e_shnum ||
+            if ((symsec->sh_flags & SHF_ALLOC) ||
+                symsec->sh_link >= info->hdr->e_shnum ||
                 info->sechdrs[symsec->sh_link].sh_type != SHT_STRTAB ||
+                (info->sechdrs[symsec->sh_link].sh_flags & SHF_ALLOC) ||
                 symsec->sh_entsize != sizeof(Elf_Sym) ||
                 symsec->sh_size % sizeof(Elf_Sym)) {
                 set_load_error(info, "invalid ELF symbol table");
