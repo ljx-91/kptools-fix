@@ -20,8 +20,8 @@ int kp_syscall_table_init(void);
 /* Patch sys_call_table[nr] with @fn, store the original in *@orig. */
 int kp_syscall_hook(int nr, kp_syscall_fn_t fn, kp_syscall_fn_t *orig);
 
-/* Restore sys_call_table[nr] to @orig. */
-void kp_syscall_unhook(int nr, kp_syscall_fn_t orig);
+/* Restore @orig only while the slot still contains @expected. */
+int kp_syscall_unhook(int nr, kp_syscall_fn_t expected, kp_syscall_fn_t orig);
 
 /* Resolved table address (NULL until kp_syscall_table_init succeeds). */
 extern kp_syscall_fn_t *kp_sys_call_table;
