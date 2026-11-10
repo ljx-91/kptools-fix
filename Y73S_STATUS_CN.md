@@ -1493,3 +1493,12 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 ### 验证边界
 
 这些结果证明源码契约、Host fixture 与 KPIMG GCC 构建通过，不证明精确 vendor KDIR 下 LKM 编译/modpost、Clang 9.0.3 CFI/LTO 链接或 Y73s 真机加载/运行成功。
+
+
+## 44. Loader 防护回归契约修正与最终 CI（2026-11-10）
+
+- 第一次针对新增文件句柄错误码检查的 CI 在 verify_kpm_loader_contract.py 失败，原因是测试契约使用了错误的 LKM 函数名（实际为 kp_load_module_path）及过度转义的正则表达式；生产代码编译和 parser fixture 未出现对应失败。
+- 已修正契约函数名与正则，重新执行最新分支代码/测试 HEAD 4cd248510e5f1a50fcc4cd557611e242a2d43030。
+- GCC 14.2 Y73S KPIMG run 42823027868：success；verify_kpm_loader_contract.py、Y73S 4.14.141 API contract、LKM/KPIMG parser tests 均通过。
+- Windows workflow run 42823027880：success，包含 Ubuntu KPIMG 与 Windows kptools.exe job。
+- 状态文档本次提交之后的文档 HEAD 不改变以上代码/测试基线。
