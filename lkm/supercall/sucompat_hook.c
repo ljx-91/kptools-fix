@@ -10,6 +10,7 @@
 #include "sucompat.h"
 
 #include <asm/processor.h>
+#include <asm/unistd.h>
 #include <linux/binfmts.h>
 #include <linux/cred.h>
 #include <linux/err.h>
