@@ -287,6 +287,9 @@ hook_err_t hook(void *func, void *replace, void **backup);
  * 
  * @param func 
  */
+/* Checked variant: returns 0 after restoring original instructions, -ENOENT
+ * when no hook record exists, or the patch/retire error on failure. */
+int unhook_checked(void *func);
 void unhook(void *func);
 
 /**
