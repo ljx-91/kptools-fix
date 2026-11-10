@@ -1362,3 +1362,40 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 ### 验证边界
 
 本轮证明的是源码生命周期修复和 Host/source contract 覆盖；尚未完成精确 Y73s vendor KDIR 编译、Clang 9.0.3 CFI/LTO + modpost、真实 `prepare_binprm.cfi` 机器码反汇编或真机执行。等待 reader drain 若 reader 永不退出会阻塞卸载，这是有意的安全取舍，避免带着仍活动的回调释放 LKM text。
+
+
+## 40. 2026-11-10：SU cred 路径边界与跨任务提权 fail-closed
+
+### 本轮 CI 复核
+
+- 分支 1583204effafd41bd430ef31f95ad5871fddd035 的 GCC 14.2 Y73S KPIMG run 42811941593：success；KPIMG 构建和审计步骤全部通过。
+- 同一提交 Windows workflow run 42811941751：最终 success；Ubuntu KPIMG / Linux kptools / source contracts 和 Windows kptools.exe 构建、打包均通过。
+- 以上结果只覆盖 KPIMG、Host 工具和源码契约；不代表 Y73s vendor KDIR 下的 LKM .ko 编译/modpost 成功。
+
+### 发现的 cred 风险
+
+复核 accctl.c、su.c、dispatch.c 和 UAPI struct su_profile 后发现：
+
+1. SUPERCALL_SU_TASK 对外可达并调用 kp_task_su()。旧实现用 prepare_creds() 复制调用者 cred，再直接写另一个 task 的 cred/real_cred，但没有按目标 task 的凭据上下文构造，也没有正确处理两个 cred 指针的引用计数与目标任务同步/生命周期。该路径不能安全启用。
+2. su_profile.scontext 是固定长度 SUPERCALL_SCONTEXT_LEN 字段，用户传入结构体不保证 NUL 终止；旧 strlen(sctx) 可能越过字段边界。失败日志还可能打印未初始化的 sid。
+3. su_cred() 原先未检查当前 user namespace 是否存在对应 UID/GID 映射。
+4. kp_commit_su() 在 prepare_creds() 和 SELinux relabel 可能失败前就清除 _TIF_SECCOMP，失败时会留下不必要的 seccomp 状态变化。
+
+### 修复
+
+- kp_task_su() 现在明确返回 -EOPNOTSUPP，不再修改其他任务的 cred/real_cred；SUPERCALL_SU_TASK ABI 保留，但在实现安全的目标任务凭据复制、引用计数与同步前 fail-closed。
+- SELinux context 长度改用 strnlen(sctx, SUPERCALL_SCONTEXT_LEN)，拒绝空串和未终止字段；sid 初始化为 0，错误日志不再打印未经终止保证的 context 字符串。
+- su_cred() 先用 uid_valid() / gid_valid() 验证 namespace 映射，再写入凭据；无映射时返回 -EINVAL。
+- seccomp 标志只在凭据准备与 relabel 成功后才清除。
+- API contract 增加对应回归断言。
+
+### 提交与新 CI
+
+- 918a1b016f07e1e1d7506570d487668d366e3826：禁用不安全跨任务 cred 替换，并加固 SELinux context、UID/GID 映射和 seccomp 修改时序。
+- 49911a64107b5d82769023de801b9af0be32d110：更新 accctl 接口说明。
+- ee7c32b9f51548d74e4b53397f4f159ff92e3730：增加 Y73s 4.14 cred 安全契约断言。
+- 最新 HEAD ee7c32b9f51548d74e4b53397f4f159ff92e3730 的 GCC KPIMG run 42812963481、Windows workflow run 42812963356 在本节写入时仍运行中；对应的后续 Windows workflow run 也有提交级独立触发。尚未把这些新提交标记为 CI 通过。
+
+### 验证边界
+
+本节的修复尚待新 CI 实际执行。仍缺精确 Y73s 4.14.141 vendor KDIR、生成头文件和匹配 Module.symvers，因此 .ko 编译、modpost、Clang 9.0.3 CFI/LTO 链接仍未验证；也没有真机加载或设备操作。跨任务 SU 目前是明确禁用，不应将其视为可用功能。
