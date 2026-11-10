@@ -389,3 +389,19 @@
 - `vectors` 导出地址 `0x00002800`；`pid_vnr` 的 CFI stub/veneer 校验成功，跳转目标 `0x0011bc10`，指令 `0xd5384108`，识别为 SP_EL0 读取路径。
 - 日志中的候选回退警告对应不匹配候选被拒绝后继续尝试；最终候选通过精确 symbol count、vectors 和 pid_vnr 验证。没有出现工具崩溃或非零退出。
 - 以上是当前 HEAD 对原始 Boot 解压内核的真实离线 Kallsyms 测试，不是设备启动或 APatch 初始化测试。没有使用 Fastboot、没有刷写、没有写设备分区。
+
+
+## 18. 2026-11-10：当前 HEAD 的 KPIMG 注入与二次解包复核
+
+- 使用当前代码 HEAD `26dc2e1bf4acfb9f605c18751f59a6787f6c71a8` 对应的 Linux Host kptools 和 GCC 14.2 KPIMG artifact；KPIMG SHA-256：`45aa42ba2ef29ad9d666652a0cba1765790b79270994c058bea0cd67300fab02`，版本 `0xD0A`。
+- 对资料库原始 Boot 的工作副本执行 `kptools -p`，命令正常完成；自动 repack 生成 `y73s-head26dc-offline-patched.img`，大小仍为 100,663,296 bytes，SHA-256：`3c0a3bae0aa1c0bd8e7173cda93f5762c7ba85dbd78d2c95844fc81fd98ace6f`。
+- 注入日志确认：非 GKI；map anchor 为 `tcp_init_sock`，偏移 `0x019352c4`；map start `0x019352d0`，保留区 `0x1000`；KPIMG 区域从解压内核偏移 `0x02d52000` 开始，长度 `0x4a720`；映射 NOP 同步范围 `0x2000`。
+- 注入过程找到 `memblock_reserve/free/mark_nomap`、`memblock_find_in_range`、`memblock_virt_alloc_try_nid_nopanic`、`paging_init`、`rest_init` 等关键符号；日志提示 `kernel_init` 不存在且 KPM event timing degraded，`report_cfi_failure`、`__cfi_slowpath_diag`、`avc_denied` 也未找到。这些缺失项需继续作为运行时兼容性风险跟踪，不得忽略或宣称功能完整。
+- 对输出 Boot 再次执行 `kptools unpack` 成功，解压内核大小 47,826,848 bytes，SHA-256：`9d1a17bbff064ca23f4dbc17fa94ccdb5f39fecbfad1e8503764bcb963b33486`；再执行 `kptools -d` 退出码 `0`，仍精确解析 107,961 个符号，`vectors`、`pid_vnr` 与 kernel base 均与原始内核一致。
+- 从输出内核偏移 `0x02d52000` 读取到完整 `0x4a720` 字节 KPIMG 区域；嵌入区域前 65 bytes 与构建 KPIMG 完全相同，整段有 106 bytes 不同，符合工具对内嵌 superkey/key 字段的处理；不能称为逐字节原样嵌入。
+- repack 日志明确提示：AVB metadata/footer 字节被保留并调整 offset，但没有重新计算 boot partition digest 或 AVB signature。因此该输出**不是 AVB-verified 镜像**，没有尝试设备启动或刷写。
+- 原始 Boot 资料库文件未修改；全过程没有 Fastboot、没有设备分区写入、没有真机启动。
+
+### 该轮结论
+
+当前 HEAD 已完成：Host/Linux、GCC 14.2 KPIMG、Windows 三条 CI；原始 Boot Kallsyms 全量离线解析；当前 KPIMG 对原始 Boot 副本的离线注入、repack、二次 unpack 和 Kallsyms 再解析。仍未完成目标 4.14.141 KDIR 的真实 `.ko` 编译/modpost、KPM 动态 load/unload、Hook 并发压力测试和设备端启动/APatch 初始化。
