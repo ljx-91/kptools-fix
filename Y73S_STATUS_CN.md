@@ -2121,3 +2121,51 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 已明确 direct-Hook 的 5 条配置路径参数数目（1、4、3、1、6），并确认现有 `hook()` API 无法向 Gate 提供这些信息。尚未改动 API 或生产 Hook backend：在没有匹配 Y73s KDIR 时贸然改共享头文件和 Hook ABI，无法完成目标构建与 MODPOST 验证。下一步先完成全 LKM hook/fp_hook 调用点盘点，再设计向后兼容的 argno API 与 sidecar 发布/撤销顺序。
 
 卸载竞态仍未修复；Host 结构布局测试及最新 CI 运行结果需要单独确认。无 Fastboot、刷写、分区写入或真机启动测试。
+
+
+## 69. 2026-11-11：全 LKM Hook 入口与退出路径复核；修复 manager rename Hook 的等待式撤销
+
+### 全量入口盘点（当前 Kbuild 的 LKM 范围）
+
+| 子系统 | Hook 形式 | 目标/回调 | replacement 参数数 | 撤销路径 |
+|---|---|---|---:|---|
+| secpass | direct inline | `find_check_fn` / `__replace_find_check_fn` | 1 | `unhook_checked()` |
+| secpass | direct inline | `report_cfi_failure` / `__replace_report_cfi_failure` | 4 | `unhook_checked()` |
+| secpass | direct inline | `__cfi_slowpath_diag` 或 `__cfi_slowpath` / `__replace_cfi_slowpath` | 3 | `unhook_checked()` |
+| supercall | direct inline | syscall wrapper / `kp_supercall_handler` | 1 | `unhook_checked()` |
+| supercall | direct inline | Y73s 4.14 `SyS_truncate.cfi` / `kp_supercall_handler_legacy` | 6 | `unhook_checked()` |
+| manager | inline chain | `security_path_rename` 或 `security_inode_rename` / after callback | 5 | `hook_unwrap_remove(..., 1)` |
+| sucompat | inline chain | `prepare_binprm` / before + after callbacks | 1 | `hook_unwrap_remove(..., 1)` |
+
+- 已检查当前 `lkm/Kbuild`：没有把 `kernel/base/fphook.c` 编入 LKM。FP Hook/FP chain 是独立的 KernelPatch/KPM Hook backend；当前 LKM 没有 `fp_hook*` / `fp_unhook*` 调用点。不能把 FP Hook 当成 LKM inline Gate 的替代实现。
+- FP chain 的 callback owner 注册/调用引用以及 `active_readers` 保护由 `kernel/base/fphook.c` 实现；`fp_hook_unwrap()` 返回 `-EBUSY` 时调用方必须重试。KPM owner 机制只识别 KPM image，不会自动给 LKM module callback 建立 Linux module 引用。
+- 当前 direct `hook()` 的五类配置路径已按 replacement ABI 盘点为 1、4、3、1、6 个参数；`hook()` 本身仍无 argno。不可按原函数 prototype 截断 Y73s legacy syscall 的六参数 replacement ABI。
+
+### 本轮修复
+
+- `hook_rename_lsm_exit()` 从 void 改为返回错误码。
+- manager teardown 改用 `hook_unwrap_remove(..., 1)`，在 `-EBUSY` 时 `cond_resched()` 并重试；只有成功或 `-ENOENT` 才清除目标地址与 callback 指针。
+- `kernelpatch_exit()` 对 manager Hook 撤销错误执行 `BUG_ON`，避免忽略撤销失败后继续释放模块映像。
+- `scripts/verify_lkm_hook_runtime_contract.py` 新增两个源码契约：必须等待 manager chain reader 退出；撤销错误必须阻止模块退出。
+- 相关提交：
+  - `6a6846d6666b8806d9dc78886c18a88ed633ed59`：manager teardown API 返回状态
+  - `78b3fb68a11c6b2509e22b823c3d552302b7c641`：等待 reader 并检查撤销结果
+  - `6569922ec96f982faa930f316faae72843bd45ad`：模块退出检查 manager teardown
+  - `892eabe12a71ce0af859ec783e22f2eda3e9d355`：修正文案换行
+  - `8638c21cd3081c24606df2aa807cc20cc96d4989`：加入回归契约检查
+- Y73S Host workflow run `42871389214`（commit `8638c21`）结论为 success。
+
+### 重新检查后的剩余问题（不能标记为完成）
+
+1. **生产 Resident Gate 尚未实现。** `hook_engine.o` 将 `kernel/base/hook.c` 编入 LKM，chain transit 仍是 LKM module text。reader 计数是在 transit 已进入后才增加；CPU 可能已经取到旧分支、但尚未执行 reader_enter。仅等待 `active_readers == 0` 不能覆盖这个 pre-reader window。
+2. **direct inline Hook 风险更直接。** secpass 和 supercall 的 branch 直接指向 LKM replacement；没有 resident Gate / Linux module ref 保护 callback 入口。成功恢复原指令并保留 trampoline，也不能证明先前已取到旧 branch 的 CPU 不会稍后进入 LKM callback。
+3. **manager 本轮修复只覆盖已进入 chain reader 的活动回调。** 它不关闭上述 pre-reader window；不能据此宣称 LKM rmmod 已安全。
+4. **KPM owner 引用不能解决 LKM module 生命周期。** 当前 owner 管理结构 pin 的是 KPM image，不是 `THIS_MODULE`。
+5. **direct Hook ABI 仍缺显式 argno。** 尚未引入 `hook_abi(func, argno, ...)`，因为 Gate 尚未实现，且没有目标 KDIR 完成共享 ABI 编译验证。
+6. **目标构建和运行证据仍缺失。** 无匹配 Y73s 4.14.141+ KDIR；没有 LKM `.ko` 目标构建、MODPOST、Module.symvers CRC 或真机 Hook/卸载压力测试。
+
+### 最终结论
+
+本轮修复了 manager rename Hook teardown 中一个明确的活动 reader 等待缺陷，并由 Host CI 验证新增源码契约。重新审计后，LKM 整体卸载安全仍是 **未解决的高风险项**，主要阻塞为 resident Gate 未实现和 pre-reader window。当前版本不能宣称完整兼容或可安全 rmmod。
+
+不执行 Fastboot、不刷写、不修改分区、不做真机启动测试。
