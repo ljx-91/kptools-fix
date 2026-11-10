@@ -2,7 +2,7 @@
 
 > 更新时间：2026-11-10  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 当前源码 HEAD（含本轮修复与状态文档）：`168c2369684b7c7ee2187b6035fba3f218d5cd0a`  
+> 当前源码 HEAD（含本轮修复与状态文档）：`ab98b30cd727766e7eae74736d62a828a59909e2`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -670,3 +670,46 @@ Y73s 原始 Boot 已确认启用 CONFIG_CFI_CLANG=y 与 CONFIG_CFI_CLANG_SHADOW=
 - lkm/Kbuild 对 hook_engine.o 使用 -fno-lto，并对 hook_engine.o / secpass.o 设置局部 CFI 隔离；这些参数必须通过目标 Kbuild 的真实 V=1 命令和 Clang 9.0.3/LLD 9.0.3 链接结果核对，不能仅凭 Kbuild 文本推断最终编译参数。
 - 仍缺少与 Boot 完全匹配的 KDIR、生成头文件、Module.symvers 和完整构建输出。MODVERSIONS CRC、模块 CFI metadata/shadow 注册及 LTO 混合对象链接均保持未验证。
 - 没有修改 Boot、KPIMG、vbmeta 或设备分区；未连接设备，未执行 Fastboot、9008、刷写或真机启动测试。
+
+
+## 18. 2026-11-10：CFI Hook 撤销结果必须可验证
+
+### 发现的问题
+
+kernel/base/hook.c 原有 unhook() 返回 void。内部 hook_uninstall() 如果恢复目标函数原始指令失败，只会取消 retire 标记并返回；调用者无法知道原始内核文本仍可能保留跳转到 LKM 替换函数的分支。
+
+lkm/infra/secpass.c 原先在调用 unhook() 后无条件清零 Hook 地址和 backup 指针。若恢复失败，模块卸载可能释放替换函数所在的 LKM 映像，留下跳转到已释放内存的风险。
+
+另外，hook() 在底层热补丁返回 -EUCLEAN 时会发布 Hook 记录并返回 -HOOK_PATCH_UNCERTAIN。调用方此前只在 hook() 返回成功时保存目标地址，可能遗漏需要回滚的不确定安装记录。
+
+### 修复
+
+- 新增 unhook_checked(void *func)，返回原始指令恢复结果；区分成功、无 Hook 记录（-ENOENT）、忙状态和底层恢复错误。
+- 保留原 unhook() ABI，改为委托 unhook_checked()，避免影响其他既有调用者。
+- CFI bypass 在每次 hook() 尝试前保存目标地址，包括返回不确定错误的路径；清理时用 checked API 处理。
+- 只有 checked unhook 成功或确认不存在 Hook 记录时，才清零对应地址和 backup 指针；恢复失败时保留状态并返回错误。
+- kernelpatch_init() 的失败回滚无条件检查 CFI Hook 清理结果。
+- kernelpatch_exit() 在释放 LKM 映像前检查 CFI Hook 是否全部撤销；若恢复失败，使用 BUG_ON fail-closed，避免继续释放仍被内核文本引用的模块代码。该策略可能导致设备 panic，但比静默留下跳转到释放内存的分支更安全。
+
+### 本轮结构复查
+
+- 检查 checked unhook 调用底层 hook_uninstall 并向上传递错误。
+- 检查旧 unhook API 委托到 checked 实现。
+- 检查三个 CFI Hook 均使用 checked teardown。
+- 检查失败安装（包括 patch uncertain）保留目标地址以便回滚。
+- 检查清理失败不会清空 Hook 地址/backup。
+- 检查 module_init 失败路径与 module_exit 均 fail-closed。
+- 新增 scripts/verify_lkm_kpm_contract.py 回归契约覆盖以上行为。
+
+### 变更提交
+
+- 34ac599：声明 checked unhook API。
+- 6473c5b：实现并导出 checked unhook。
+- 4231844：追踪不确定安装并检查 CFI Hook 撤销结果。
+- ef84703：更新 CFI teardown 函数声明。
+- bc4fd3c、7f6d6bc：初始化失败和模块卸载时阻止带着未恢复的 CFI Hook 释放模块映像。
+- e0993bf、ab98b30：增加并修正 checked teardown 回归契约。
+
+### 验证边界
+
+本轮是基于源码控制流的安全修复与结构检查；未取得 Y73s 精确 4.14.141 KDIR，未运行 Clang 9.0.3 模块构建、modpost、CFI shadow 运行测试或真机加载。fail-closed 分支尚未通过故障注入验证。没有修改 Boot、KPIMG、vbmeta 或设备分区；未执行 Fastboot、9008 或刷写。
