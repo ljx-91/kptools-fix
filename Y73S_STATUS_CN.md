@@ -1783,3 +1783,14 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - 因此 self-pin 可作为“成功加载后常驻、禁止普通卸载”的遏制方案。代价是不能正常 rmmod/热更新，只能重启后替换；它不是可卸载架构的修复。
 - 本轮只更新审计记录，没有改生产代码。**等待用户明确接受常驻不可卸载行为后，才考虑启用 self-pin。**
 - LKM 卸载安全状态仍为未通过；vendor KDIR 编译和目标设备验证均未完成。
+
+
+## 57. 2026-11-10：进一步设计 KPIMG 常驻 gate 方案
+
+- `kernel/kpimg.lds` 已将 `kernel/base/hook.c` 的 `.transit0/.transit4/.transit8/.transit12.text` 放入 KPIMG `.kp.text`，KPIMG 本身有常驻 transit 副本。
+- 但 `lkm/hook/hook_engine.c` 定义 `KP_HOOK_EXTERNAL_CHAIN_PREPARE`，并由 LKM 自己的 `hook_chain_prepare()` 选择 LKM 对象内 `_transitN`，当前 chain stub 仍进入 LKM text。
+- transit body 依赖 `kp_hook_owner_call_get/put()`，实现位于 `lkm/kpm/module.c`；仅把 transit 地址改成 KPIMG 版本还不够，必须在调用这些 LKM 后端之前先安全持有 module reference。
+- `hook_mem_zalloc()` 将 chain payload 放在独立 executable region；`hook_mem_retire()` 只删除登记元数据并保留 executable region，因此常驻 wrapper 在卸载边界上仍可读取保留的 chain/original trampoline 数据（前提是该保留策略继续成立）。
+- 候选方案：把入口 gate 代码和 closed-bit/active-count 状态放入 KPIMG 常驻 text/data；入口第一步原子取得 gate token，之后才读取 LKM module pointer 并尝试 `try_module_get()`。gate 关闭或 module-get 失败时，只走不依赖 LKM 的 relocated-original fallback；成功 pin 时才进入 LKM transit，返回后 module_put 并释放 gate token。退出路径先关闭 gate、撤 hook、等待 gate token 排空，再释放 LKM 资源。
+- 该方案可以覆盖“已跳入 stub、尚未进入 LKM/reader counter”的窗口，但目前只是设计草案。尚缺 AArch64 参数/x16 保存、各签名 fallback、KPIMG 导出和 module pointer handoff、原子顺序证明、CFI shadow ABI 与并发压力测试。
+- 未更改生产代码。self-pin 是短期常驻遏制方案；KPIMG gate 是长期可卸载架构候选。两者都尚未实现。
