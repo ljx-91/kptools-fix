@@ -2308,3 +2308,48 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 AVB 的 OEM 签名问题在无 OEM 私钥条件下不能被离线“修成 OEM-valid”。但新增 LK policy 证据显示：对 PD2031/MT6853 家族的已解锁状态，boot 分区验证错误预计是非致命的。因此把本问题从“已知 AVB hash 不匹配、是否可继续启动未知”更新为“**unlocked LK policy 静态证据支持可容忍该不匹配，仍待精确 LK build/运行时状态确认**”。
 
 本轮未修改 boot/vbmeta 原始文件；未执行 Fastboot、刷写、分区写入或真机启动测试。
+
+
+## 73. 2026-11-11：Y73s 4.14.141 Kallsyms 扫描与 KPM 启动事件适配
+
+### 真实符号路径复现
+
+使用资料库原始 Y73s KALLSYMS 日志中的符号地址复核 kernel/base/symbol_lookup_scan.h：
+
+- 扫描锚点 show_stack：0x0191e3e8。
+- 目标 kallsyms_lookup_name：0x01922680。
+- 目标前后相邻符号分别为 module_kallsyms_lookup_name：0x0192267c，以及 cmdq_dev_alloc_reference_VA_by_name：0x01922684。
+- 原实现使用 addr = func_end + 4，在该 4-byte 密集符号区域跳过目标；按完整日志模拟，原实现经过目标时没有访问 0x01922680。
+- 去掉额外的 +4 后，按 Linux kallsyms 的“符号大小延伸到下一个不同地址”规则逐个访问边界；对完整 Y73s 日志的模拟在 4,237 次边界查询时到达目标。原来的 4,096 次上限也不足以覆盖修正后的路径。
+
+### 源码修复
+
+- kernel/base/symbol_lookup_scan.h：改为 addr = func_end，增加 KP_SYMBOL_SCAN_MAX_STEPS=8192；验证 kernel image end、anchor、sprintf、symbol start/size 和加法范围，避免越界或溢出。
+- kernel/base/start.c：优先使用 kptools 从同一份内核镜像提取并写入 preset 的精确 kallsyms_lookup_name 偏移；只有该值缺失或无效时才运行 formatter 扫描。对最终偏移和运行时地址加上范围检查。这样 Y73s 正常情况下不再执行昂贵的 fallback 扫描。
+- 相关代码提交：8158f2c（逐符号边界扫描）、1a8159c（精确 preset 优先及偏移范围校验）。
+
+### kernel_init 缺失时的事件兼容
+
+- 原始 Y73s KALLSYMS 中有 rest_init（0x018f1280）和 cgroup_init（0x019430f8），没有 kernel_init。
+- patch_config 选择优先级是 rest_init，只有 rest_init 缺失才使用 cgroup_init；因此 Y73s 主早期初始化 Hook 仍以 rest_init 为入口，不能把 kernel_init 缺失误判为主 Hook 缺失。
+- kernel/patch/patch.c：当 kernel_init 缺失、rest_init Hook 存在且早期关键初始化未失败时，在清除 early-boot 状态后从 before_rest_init 发出 PRE_KERNEL_INIT，保留默认 KPM 事件加载路径。
+- 不伪造 POST_KERNEL_INIT：它仍只由真实 kernel_init after-hook 发出；在 Y73s 当前符号配置下明确记录为 unavailable。没有把 free_initmem 或其他未验证函数冒充等价事件。
+- 工具提示同步区分“rest_init 可用时的 PRE fallback”与“没有 rest_init 时 kernel-init 事件不可用”。
+- 相关提交：1cc8756（事件 fallback）、08ef974（工具提示）。
+
+### 回归与 CI
+
+- 更新 Y73s 4.14.141 KALLSYMS fixture：明确要求 rest_init / cgroup_init，并记录 kernel_init、kernel_init_freeable 缺失。
+- 新增 scripts/verify_y73s_symbol_scan_and_startup_events.py：覆盖密集 4-byte 符号扫描模型、扫描预算、边界检查、精确 preset 优先级、rest_init 的 PRE 事件 fallback，以及不伪造 POST 事件。
+- Host kptools workflow 和 GCC 14.2 KPIMG workflow 均加入上述回归检查。
+- 相关提交：928e09e、abceeaa、d8eba82、ff03eae、2fc424b。
+- CI 状态：本节提交后对应 Actions 已触发；当前记录时仍在 queued / in_progress，尚不能标记通过。需等待两条 workflow 的最终结果。
+
+### 限制
+
+- 完整日志扫描模拟是对上传的 KALLSYMS 文本与 Linux kallsyms 符号大小规则的离线验证，不是设备运行时验证。
+- PRE_KERNEL_INIT fallback 的代码路径已加入，但还没有在 Y73s 真机或匹配的完整内核构建环境中执行。
+- POST_KERNEL_INIT 在该目标符号表下仍不可用；依赖该事件的 KPM 必须显式调整事件或等待一个经过目标内核反汇编验证的等价钩子。
+- 目标 Linux 4.14.141 KDIR、.ko / MODPOST / Module.symvers CRC、设备启动与安装状态仍未验证。
+
+未执行 Fastboot、刷写、分区写入或真机启动测试。
