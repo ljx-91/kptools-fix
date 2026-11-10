@@ -160,7 +160,8 @@ require("bprm->file = shell_file" in sucompat_hook and
         "bprm->interp = KP_SH_PATH" in sucompat_hook and
         "kp_apply_su_cred(&new, 0, sctx)" in sucompat_hook and
         "if (!args->local.data0 || (long)args->ret < 0)" in sucompat_hook and
-        "bprm->argc = 0" in sucompat_hook,
+        "if (supercmd && bprm->argc > 1)" in sucompat_hook and
+        "bprm->argc = 1" in sucompat_hook,
         "prepare_binprm fallback redirects only execs and updates the pending cred after SELinux bprm hooks")
 require('kallsyms_lookup_name("module_alloc")' in kpm and
         'kallsyms_lookup_name("module_memfree")' in kpm,
