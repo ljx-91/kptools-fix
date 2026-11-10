@@ -29,21 +29,27 @@ int kp_syscall_table_init(void)
 
 int kp_syscall_hook(int nr, kp_syscall_fn_t fn, kp_syscall_fn_t *orig)
 {
-	if (!kp_sys_call_table || nr < 0)
+	kp_syscall_fn_t old;
+	int ret;
+
+	if (!kp_sys_call_table || nr < 0 || !fn || !orig)
 		return -EINVAL;
 
-	kp_syscall_fn_t old = READ_ONCE(kp_sys_call_table[nr]);
-	if (orig)
-		*orig = old;
+	old = READ_ONCE(kp_sys_call_table[nr]);
+	if (!old || old == fn)
+		return -EBUSY;
 
-	/* sys_call_table lives in rodata; kp_patch_text walks init_mm and pokes
-	 * through a fixmap under stop_machine. */
-	int ret = kp_patch_text(&kp_sys_call_table[nr], &fn, sizeof(fn),
-				KP_PATCH_TEXT_FLUSH_DCACHE);
+	/* sys_call_table is read-only data. Use the same serialized fixmap
+	 * cmpxchg primitive as function-pointer hooks: install only if the slot
+	 * still contains the value we observed, never clobber a racing owner. */
+	ret = kp_patch_cmpxchg64(&kp_sys_call_table[nr],
+				 (u64)(unsigned long)old,
+				 (u64)(unsigned long)fn);
 	if (ret) {
-		logke("patch sys_call_table[%d] failed: %d\n", nr, ret);
+		logke("compare-install sys_call_table[%d] failed: %d\n", nr, ret);
 		return ret;
 	}
+	*orig = old;
 	logki("hooked syscall %d: %px -> %px\n", nr, old, fn);
 	return 0;
 }
