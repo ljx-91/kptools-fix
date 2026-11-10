@@ -266,4 +266,16 @@ require("if (max < 0)" in su_list and "if (max && !uids)" in su_list and
         "if (n && copy_to_user(" in su_list,
         "SU allowlist copy rejects negative lengths, validates the pointer and initializes the bounded output array")
 
+
+reset_path = sucompat_source.split("int kp_su_reset_path(", 1)[1].split("int kp_sucompat_init(", 1)[0]
+redirect = sucompat_hook.split("static long kp_redirect_to_sh(", 1)[1].split("/*", 1)[0]
+require("strnlen(path, sizeof(current_su_path))" in reset_path and
+        "return -ENAMETOOLONG;" in reset_path and
+        "memcpy(current_su_path, path, len + 1)" in reset_path,
+        "SU path updates reject overlong paths instead of silently truncating")
+require("rc = kp_commit_su(0, sctx);" in redirect and
+        "if (rc)" in redirect and
+        "return rc;" in redirect,
+        "legacy execve redirect stops if credential preparation fails")
+
 print("[PASS] Y73S 4.14.141 source compatibility contract")
