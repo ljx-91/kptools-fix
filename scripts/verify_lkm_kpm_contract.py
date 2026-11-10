@@ -122,17 +122,19 @@ def main():
     require(r"return\s*-EOPNOTSUPP", rel,
             "unsupported LKM REL must fail closed, never report success")
 
-    # Executable KPM and trampoline code may run on any CPU. Require the
-    # kernel's architecture-aware inner-shareable I-cache flush, not local
-    # "ic iallu" invalidation.
+    # flush_icache_range cleans the written range to PoU; __flush_icache_all()
+    # uses ARM64 IC IALLUIS and broadcasts I-cache invalidation to all
+    # inner-shareable PEs. This avoids resolving a non-existent 4.14 symbol.
     flush = body(module, "static void kp_flush_kpm_icache(")
-    require(r"kp_flush_icache_all_fn\s*\(\s*\)", flush,
-            "KPM publication must call the kernel-wide I-cache flush")
-    if re.search(r'ic\s+iallu', flush):
-        raise AssertionError("local-only I-cache invalidation is insufficient for KPM publication")
+    require(r"flush_icache_range\s*\(\s*base\s*,\s*base\s*\+\s*size\s*\)", flush,
+            "KPM publication must clean the generated code range")
+    require(r"__flush_icache_all\s*\(\s*\)", flush,
+            "KPM publication must broadcast I-cache invalidation to all PEs")
+    if "kp_flush_icache_all_fn" in module:
+        raise AssertionError("KPM must not resolve flush_icache_all as a kallsyms symbol")
     init = body(module, "int kp_kpm_init(")
-    require(r"!kp_flush_icache_all_fn", init,
-            "KPM loader must fail closed when flush_icache_all is unavailable")
+    require(r"kp_module_alloc\s*&&\s*kp_module_memfree", init,
+            "KPM loader must select the executable module allocator")
     require(r"kp_flush_kpm_icache\(words,\s*KP_CALLBACK_TRAMP_SLOT_SIZE\)", module,
             "callback trampoline writes must use the shared I-cache flush helper")
 
@@ -177,16 +179,18 @@ def main():
             "KPM pages must be retained if NX/BTI restoration fails")
 
     init_runtime = body(module, "int kp_kpm_init(")
-    for pattern, message in (
-        (r"if\s*\(!kp_kpm_init_mm\)", "init_mm"),
-        (r"if\s*\(!kp_flush_icache_all_fn\)", "cross-CPU I-cache flush"),
-        (r"kp_module_alloc\s*&&\s*kp_module_memfree", "matched module allocator/free pair"),
-        (r"kp_execmem_alloc\s*&&\s*kp_execmem_free", "matched execmem allocator/free pair"),
-        (r"else if\s*\(kp_set_memory_x\)", "permission-capable vmalloc fallback"),
-        (r"perm_rc\s*=\s*kp_clear_bti_gp", "callback trampoline PTE verification"),
-        (r"if\s*\(perm_rc\)[\s\S]*?kp_callback_tramp\s*=\s*NULL", "disable unsafe callback trampoline"),
-    ):
-        require(pattern, init_runtime, f"KPM runtime initialization must require {message}")
+    require(r"if\s*\(!kp_kpm_init_mm\)[\s\S]*?KP_EXEC_BACKEND_MODULE[\s\S]*?KP_EXEC_BACKEND_EXECMEM",
+            init_runtime, "without init_mm only executable module/execmem backends are allowed")
+    require(r"kp_module_alloc\s*&&\s*kp_module_memfree", init_runtime,
+            "matched module allocator/free pair")
+    require(r"kp_execmem_alloc\s*&&\s*kp_execmem_free", init_runtime,
+            "matched execmem allocator/free pair")
+    require(r"kp_set_memory_x\s*&&\s*kp_set_memory_nx", init_runtime,
+            "vmalloc fallback requires both executable and NX transitions")
+    require(r"perm_rc\s*=\s*kp_clear_bti_gp", init_runtime,
+            "callback trampoline permission validation")
+    require(r"if\s*\(perm_rc\)[\s\S]*?kp_callback_tramp\s*=\s*NULL",
+            init_runtime, "disable unsafe callback trampoline")
 
     load_gate = body(module, "long kp_load_module(")
     require(r"kp_exec_backend\s*==\s*KP_EXEC_BACKEND_NONE\s*\|\|\s*!kp_kpm_init_mm",
