@@ -106,11 +106,11 @@ int main(void)
 
     rc = kp_accctl_init();
     if (rc || kp_selinux_cred_offset != 0 || !kp_security_secctx_to_secid_fn) {
-        fprintf(stderr, "4.14 hidden-blob fallback failed: rc=%d offset=%d resolver=%p\n",
+        fprintf(stderr, "4.14 legacy single-SELinux layout fallback failed: rc=%d offset=%d resolver=%p\n",
                 rc, kp_selinux_cred_offset, (void *)kp_security_secctx_to_secid_fn);
         return 1;
     }
-    puts("[PASS] 4.14 hidden selinux_blob_sizes uses verified zero cred offset");
+    puts("[PASS] upstream 4.14 single-SELinux cred blob uses offset zero when no vendor blob table exists");
     puts("[PASS] security_secctx_to_secid is resolved dynamically from KALLSYMS");
 
     rc = kp_apply_su_cred(&cred, 0, "u:r:magisk:s0");
