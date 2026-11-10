@@ -1664,3 +1664,36 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - 本轮没有发现 `filename/interp` 静态指针释放错误；没有修改生产代码。
 - Windows workflow `42837667598` 的 Ubuntu KPIMG job 和 Windows kptools.exe job 均已 **success**。
 - 仍需验证目标 `/system/bin/sh` 确为 ELF；仍缺 Y73s vendor KDIR、厂商 exec/LSM backport 源码、Clang CFI/LTO 链接和真机验证。没有执行刷写或设备操作。
+
+
+## 52. 2026-11-10：脚本解释器链重复 prepare_binprm 的 SU 凭据失败关闭
+
+### 上游调用链复核
+
+- 对照 gregkh/linux v4.14.141 `fs/exec.c`：`prepare_binprm()` 每次调用都会执行 `bprm_fill_uid()`，该函数会先将 pending cred 的 euid/egid 重置为当前任务的有效 UID/GID；源码注释明确说明它可能因 script/binary chain 被多次调用。
+- 对照 `fs/binfmt_script.c`：`load_script()` 释放旧执行文件、打开 shebang interpreter，并再次调用 `prepare_binprm()`。
+- 对照 `security/selinux/hooks.c`：SELinux 的 `selinux_bprm_set_creds()` 在 `bprm->called_set_creds` 已置位时跳过重复 SID 转换。
+- 对照 `security/commoncap.c`：commoncap 的 `cap_bprm_set_creds()` 会在重复调用时再次计算 capability；在 SU pending cred 与非 root 当前任务组合下，可能重算或降级 capability 集合。因此只恢复 euid/egid 不足以恢复完整 SU 凭据。
+- `binfmt_misc` 在非 CREDENTIALS 模式也可能再次调用 `prepare_binprm()`；其 `bprm_change_interp()` 不替换 `bprm->filename`，所以静态 filename provenance marker 可覆盖这类解释器链。CREDENTIALS 模式是否重复 prepare 由其实际分支决定。
+
+### 修复
+
+- 使用独立的静态 `kp_sh_path[]` 对象作为唯一内部 provenance marker，避免比较两个字符串字面量指针的未定义/未指定行为。
+- 首次 SU 重定向仍将 `bprm->filename` 和 `bprm->interp` 指向该静态对象。
+- 后续 prepare hook 仅在 `bprm->filename == KP_SH_PATH` 时识别由本模块重定向的同一 exec 链；不按字符串相等把普通用户直接执行 shell 的请求误判为 SU。
+- 检测到后续解释器 prepare 时返回 `-EOPNOTSUPP`，让 exec 失败并由内核清理 pending cred。暂不尝试只恢复 euid/egid，也不重复运行 SELinux profile 选择。
+- 这是一项安全失败关闭措施，不是脚本 shell 兼容实现；如果 Y73s 的 `/system/bin/sh` 是 shebang 脚本，该 SU 路径将失败，直到实现并验证完整的多阶段凭据事务。
+
+### 测试与 CI
+
+- `scripts/test_y73s_414_sucompat_fallback.py` 模拟首次 SU redirect、`bprm_fill_uid()` 重置及第二次 prepare hook，要求第二次调用返回负错误码、不得再次应用 SELinux context，也不得把半准备凭据提交。
+- `scripts/verify_y73s_414_api_contract.py` 增加源码契约，要求重复解释器链失败关闭。
+- GCC 14.2 Y73S KPIMG run `42842463322`，HEAD `11f8c16b540e0ae95780dde14c1c78b053182377`：**success**；重复 prepare fixture、Y73S 4.14.141 API contract、源码契约与 KPIMG build 均通过。
+- Windows workflow run `42842463706`：Ubuntu KPIMG job **success**；Windows kptools.exe job 在本节写入时仍运行中，待最终确认。
+- 后续仅调整了注释和日志转义，未改变上述生产逻辑；最新分支 HEAD 以本节文档提交为准，仍需跟进该 HEAD 对应的 CI。
+
+### 边界
+
+- 该实现按 upstream v4.14.141 的 `bprm_fill_uid()`、script loader 与 commoncap 调用语义设计；Y73s vendor 是否 backport/修改这些路径仍需厂商源码或 KDIR 验证。
+- 尚未取得目标 system image，无法确认 `/system/bin/sh` 的真实 ELF/shebang 类型。
+- 仍未完成 vendor KDIR LKM 编译/modpost、Clang CFI/LTO 链接和真机执行验证。没有进行 Fastboot 或刷写操作。
