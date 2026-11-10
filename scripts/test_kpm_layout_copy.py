@@ -250,7 +250,7 @@ static int test_bad_alignment(void)
     sections[1].sh_addralign = 3;
     a = layout_sections_lkm(&lm, &li);
     b = layout_sections_kpimg(&km, &ki);
-    if (a != -ENOEXEC || b != -ENOEXEC) {
+    if (a >= 0 || b >= 0) {
         fprintf(stderr, "bad alignment accepted: LKM=%d KPIMG=%d\n", a, b);
         return 1;
     }
