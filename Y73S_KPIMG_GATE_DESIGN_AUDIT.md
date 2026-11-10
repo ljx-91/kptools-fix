@@ -184,3 +184,20 @@ The shared syscall-45 interface therefore cannot be treated as an implicit Gate 
 4. Only after the collision is resolved, design an explicit registration ABI. A userspace KPM command path is a control plane, not by itself a safe in-kernel Gate handoff.
 
 No Gate assembly or production Hook changes are justified by this finding. The KPIMG-resident Gate remains unimplemented; ordinary LKM unload safety remains unproven.
+
+### Follow-up: the two syscall hooks do not share a Hook Engine registry
+
+The two paths were compared down to their patch backends:
+
+- KPIMG calls hook_syscalln_override() → inline_wrap_syscalln() → hook_wrap(). Its chain registry and payload allocation are owned by the KPIMG image; text writes go through kernel/base/hotpatch.c.
+- LKM calls kp_install_inline_supercall() → hook() directly on SyS_truncate.cfi. Its hook registry is the LKM-local kp_hook_mems list in lkm/hook/hook_runtime.c; its text writes go through kp_patch_text_batch() in lkm/infra/patch_memory.c.
+- Both compile a copy of kernel/base/hook.c, but they do not share a registry, chain object, or serialization lock. The LKM's local duplicate-origin check cannot see a KPIMG hook, and the KPIMG registry cannot see the LKM hook.
+- The LKM hook_prepare() snapshots the instructions present at its target at install time. If those instructions already contain a KPIMG branch, relocation may preserve a branch into the KPIMG trampoline; this is not a shared-chain registration and does not by itself prove correct callback order or safe teardown.
+- Conversely, the two patch backends do not coordinate their expected instruction snapshots. A later install/uninstall can overwrite a branch installed by the other side if the resolved patch ranges overlap.
+
+Therefore the syscall-45 collision is a concrete architectural hazard, but the exact Y73S outcome still depends on whether KPIMG's syscall-name-table resolution and LKM's SyS_truncate.cfi resolution overlap or are branch aliases. The repository source reviewed here does not include a runtime trace proving the installed address/instruction sequence on the device.
+
+### Gate implication
+
+Do not build a Gate bridge on top of either current syscall-45 handler until a single owner/dispatch contract is established. The robust direction is to define one resident owner for syscall-45 dispatch and an explicit, versioned registration ABI for the other component, or to remove one of the competing handlers. Merely adding another hook callback in one image cannot register it with the other image's chain.
+
