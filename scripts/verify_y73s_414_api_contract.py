@@ -119,8 +119,12 @@ require("KP_HOOK_FLUSH_ICACHE_RANGE" in hook_engine and
         "LKM hook engine flushes generated trampoline ranges")
 require("kp_exec_backend == KP_EXEC_BACKEND_MODULE" in kpm and
         "flush_icache_range(base, base + size)" in kpm and
+        "__flush_icache_all()" in kpm and
         "kp_flush_icache_all_fn" not in kpm,
-        "KPM loader supports module_alloc and range-based I-cache publication")
+        "KPM loader uses executable module memory and cross-CPU I-cache broadcast")
+require("__flush_icache_all()" in hook_engine and
+        "__flush_icache_all()" in patch_memory,
+        "Hook trampoline and text patch paths broadcast I-cache invalidation")
 require("v &= ~exec_deny_mask" in hook_runtime and
         "v |= KP_HOOK_PTE_UXN" in hook_runtime and
         "v &= ~exec_deny_mask" in kpm and
