@@ -601,3 +601,38 @@ Y73s 原始 Boot 已确认启用 CONFIG_CFI_CLANG=y 与 CONFIG_CFI_CLANG_SHADOW=
 - 尚未修改 Boot、KPIMG、vbmeta 或任何设备分区；未连接设备，未执行 Fastboot、9008 或真机启动测试。
 
 下一步：等待并检查本次 LKM 源码契约 CI；随后继续审计目标 4.14.141 CFI shadow ABI、LTO module link 和 MODVERSIONS CRC。未取得精确 KDIR 前，不把该修复描述为真机兼容已验证。
+
+
+## 15. 2026-11-10：LKM 初始化失败回滚与 KPM 私有运行时清理
+
+### 发现的问题
+
+复查 Linux 模块初始化语义时发现，module_init() 返回错误不会调用 module_exit()。原先 kernelpatch_init() 在 CFI bypass 已安装后，如果 kp_supercall_install() 或 kp_sucompat_hook_init() 失败，会直接 return rc；这可能把 syscall/CFI Hook 留在内核里，而模块加载器随后释放 LKM 映像，形成跳转到已释放模块内存的风险。
+
+此外，kp_kpm_init() 成功时可能分配一页 callback trampoline。若后续初始化失败，也必须在模块映像释放前释放这块私有运行时资源。
+
+### 修复
+
+- kernelpatch_init() 记录 CFI bypass、KPM runtime、supercall 和 sucompat hook 是否成功安装。
+- 所有后续可失败的 Hook 初始化统一跳转到 err_unwind，按安装逆序回滚已安装的 supercall、sucompat、KPM runtime 和 CFI bypass。
+- 调整初始化顺序：先完成 sucompat Hook，再安装 supercall。supercall 成为最后一个可失败的 Hook 安装步骤；其成功后只执行不返回错误的 manager 初始化和 rename-LSM Hook 设置，避免对外发布 supercall 后再发生 init 失败。
+- 新增 kp_kpm_exit()，仅用于尚未对外发布 supercall、没有 KPM 可被加载的初始化失败路径：先清除 kp_kpm_ready，再恢复 callback trampoline 的 NX/BTI 权限并释放（若权限恢复无法验证则按既有策略保留内存），最后清空 trampoline、分配器和运行时函数指针。
+- 在 scripts/verify_lkm_kpm_contract.py 中增加初始化失败回滚顺序、KPM 私有 trampoline 清理及 supercall 最后发布的契约检查。
+
+### 本轮复查
+
+- 从目标分支重新读取 init.c、module.c、module.h 和契约测试脚本。
+- 对 KPM 初始化成功标记、sucompat/supercall 发布顺序、各 Hook 逆序清理、KPM ready 清零先于 trampoline 释放、运行时指针清理执行 10 项结构检查，10/10 通过。
+- 已修正契约测试中的清理顺序断言，使其与当前实际回滚顺序一致。
+- GitHub 当前提交状态 API 没有返回可用的 CI status/check 项；不能把结构检查当作 CI 或目标 KDIR 编译通过。
+
+### 变更提交
+
+- 09965cf：初始化失败时回滚已安装 Hook。
+- 18b4f09、95ca578：声明并实现私有 KPM runtime 清理。
+- eae35fc、58a6030：supercall 最后发布并跟踪 KPM 初始化成功状态。
+- 9026f1f、a7cf8ae、aedfd15：增加并校正生命周期回滚契约测试。
+
+### 边界
+
+未进行 Clang 9.0.3 目标 KDIR 编译、modpost、真机加载或启动验证。没有修改 Boot、KPIMG、vbmeta 或设备分区；未执行 Fastboot、9008 或任何刷写操作。
