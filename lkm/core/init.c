@@ -67,9 +67,9 @@ int __init kernelpatch_init(void)
 
 	kp_symres_init();
 
-	rc = kp_syscall_table_init();
-	if (rc)
-		return rc;
+	/* Syscall-table data symbols are absent with KALLSYMS_ALL=n on Y73s
+	 * 4.14.141. Supercall selects the ABI-correct inline syscall hook later,
+	 * after Hook runtime initialization. */
 
 	rc = kp_patch_memory_init();
 	if (rc)
