@@ -97,11 +97,24 @@ int __init kernelpatch_init(void)
 
 	rc = kp_bypass_kcfi();
 	if (rc)
-		logkw("CFI bypass failed: %d\n", rc);
+		logkw("CFI bypass failed: %d\\n", rc);
 
+#ifdef CONFIG_CFI_CLANG
+	/* KPM images are not registered through the kernel module loader and do
+	 * not receive CFI shadow entries. Never expose KPM load/unload supercalls
+	 * unless the CFI slowpath bypass was installed successfully. */
+	if (rc) {
+		logkw("KPM loader disabled: CFI bypass is unavailable\\n");
+	} else {
+		rc = kp_kpm_init();
+		if (rc)
+			logkw("kpm loader init failed: %d (KPM supercalls will return -ENOSYS)\\n", rc);
+	}
+#else
 	rc = kp_kpm_init();
 	if (rc)
-		logkw("kpm loader init failed: %d (KPM supercalls will return -ENOSYS)\n", rc);
+		logkw("kpm loader init failed: %d (KPM supercalls will return -ENOSYS)\\n", rc);
+#endif
 
 	rc = kp_supercall_install();
 	if (rc)
