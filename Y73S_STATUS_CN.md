@@ -1758,3 +1758,14 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 ### 本轮结论
 
 没有修改生产逻辑。**LKM 卸载安全尚未通过审计**，必须先解决 pre-reader transit lifetime window。仍缺 Y73s vendor KDIR、真实模块配置/对象反汇编和真机运行证据。
+
+
+## 55. 2026-11-10：核实 Linux 4.14.141 module refcount 方案
+
+- Y73s 原始 boot 配置已确认 `CONFIG_MODULES=y`、`CONFIG_MODULE_UNLOAD=y`。
+- 精确上游 Linux `v4.14.141` 的 `module.h` / `module.c` 显示：模块 init 期间持有基础引用与临时引用；`try_module_get()` 在模块尚未进入 GOING 时可增加非零引用；普通 `delete_module` 会因额外引用而拒绝卸载。
+- 因而在 init 成功返回前获取永久 self-reference，可以阻止普通 rmmod 进入 `kernelpatch_exit()`，作为“始终驻留”策略的安全遏制手段。
+- 但这不是完整卸载修复：它会使正常卸载永久不可用；目前没有安全的 unpin 控制接口；boot 审计记录尚未确认 `CONFIG_MODULE_FORCE_UNLOAD`，强制卸载可能绕过引用计数。
+- 不能在 `kernelpatch_exit()` 里才尝试 pin/unpin；该函数触发时机已经太晚。
+- 长期方案应把 inline transit 放进 KPIMG 常驻文本或完全独立保留的可执行对象，并保证其全部调用依赖都不指向 LKM text。
+- **本轮没有更改生产逻辑**，暂不启用永久 self-pin，避免在没有用户明确接受“不可普通卸载”的情况下改变模块管理行为。LKM transit 卸载安全仍未通过。
