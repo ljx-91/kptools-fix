@@ -363,8 +363,9 @@ static int apply_relocations(struct module *mod, const struct load_info *info)
 
         /* AArch64 REL entries are not implemented: never report a no-op as success. */
         if (relsec->sh_type == SHT_REL) return -ENOEXEC;
-        if (relsec->sh_entsize != sizeof(Elf64_Rela) ||
-            relsec->sh_size % sizeof(Elf64_Rela)) return -ENOEXEC;
+        /* Original sh_entsize was checked by setup_load_info() before
+         * layout_sections() repurposed it as a private image offset. */
+        if (relsec->sh_size % sizeof(Elf64_Rela)) return -ENOEXEC;
 
         int rc = apply_relocate_add(info->sechdrs, info->strtab, info->index.sym, i, mod);
         if (rc < 0) return rc;
@@ -493,7 +494,8 @@ static int setup_load_info(struct load_info *info)
     Elf_Shdr *shstr = &info->sechdrs[info->hdr->e_shstrndx];
     if (shstr->sh_type != SHT_STRTAB ||
         !elf_range_valid(shstr->sh_offset, shstr->sh_size, info->len) ||
-        !shstr->sh_size) {
+        !shstr->sh_size ||
+        *((const char *)info->hdr + shstr->sh_offset) != '\0') {
         set_load_error(info, "invalid ELF section-name string table");
         return -ENOEXEC;
     }
@@ -523,10 +525,17 @@ static int setup_load_info(struct load_info *info)
         return rc;
     }
 
-    if (!find_sec(info, ".kpm.init") || !find_sec(info, ".kpm.exit")) {
-        logke("no .kpm.init or .kpm.exit section\n");
-        set_load_error(info, "no .kpm.init or .kpm.exit section");
-        return -ENOEXEC;
+    {
+        int init_idx = find_sec(info, ".kpm.init");
+        int exit_idx = find_sec(info, ".kpm.exit");
+        if (!init_idx || !exit_idx ||
+            !(info->sechdrs[init_idx].sh_flags & SHF_EXECINSTR) ||
+            !(info->sechdrs[exit_idx].sh_flags & SHF_EXECINSTR) ||
+            !info->sechdrs[init_idx].sh_size ||
+            !info->sechdrs[exit_idx].sh_size) {
+            set_load_error(info, "missing or invalid .kpm.init/.kpm.exit sections");
+            return -ENOEXEC;
+        }
     }
 
     info->index.info = find_sec(info, ".kpm.info");
@@ -535,11 +544,21 @@ static int setup_load_info(struct load_info *info)
         set_load_error(info, "no .kpm.info section");
         return -ENOEXEC;
     }
+    if (info->sechdrs[info->index.info].sh_type != SHT_PROGBITS ||
+        !info->sechdrs[info->index.info].sh_size) {
+        set_load_error(info, ".kpm.info must be a non-empty PROGBITS section");
+        return -ENOEXEC;
+    }
     info->info.base = get_sh_base(info, ".kpm.info");
     info->info.size = get_sh_size(info, ".kpm.info");
+    if (!info->info.base || !info->info.size ||
+        info->info.base[info->info.size - 1] != '\0') {
+        set_load_error(info, "invalid .kpm.info string table");
+        return -ENOEXEC;
+    }
 
     const char *name = get_modinfo(info, "name");
-    if (!name) {
+    if (!name || !*name) {
         logke("module name not found\n");
         set_load_error(info, "module name not found");
         return -ENOEXEC;
@@ -549,7 +568,7 @@ static int setup_load_info(struct load_info *info)
     logkd("    name: %s\n", name);
 
     const char *version = get_modinfo(info, "version");
-    if (!version) {
+    if (!version || !*version) {
         logkd("module version not found\n");
         set_load_error(info, "module version not found");
         return -ENOEXEC;
@@ -568,9 +587,25 @@ static int setup_load_info(struct load_info *info)
     info->info.description = description;
     logkd("    description: %s\n", description);
 
+    /* Validate original RELA entry sizes before layout_sections() rewrites
+     * sh_entsize into an image offset/sentinel. */
+    for (int i = 1; i < info->hdr->e_shnum; i++) {
+        Elf_Shdr *relsec = &info->sechdrs[i];
+        if (relsec->sh_type == SHT_RELA &&
+            (relsec->sh_entsize != sizeof(Elf64_Rela) ||
+             relsec->sh_size % sizeof(Elf64_Rela))) {
+            set_load_error(info, "invalid ELF RELA section metadata");
+            return -ENOEXEC;
+        }
+    }
+
     for (int i = 1; i < info->hdr->e_shnum; i++) {
         if (info->sechdrs[i].sh_type == SHT_SYMTAB) {
             Elf_Shdr *symsec = &info->sechdrs[i];
+            if (info->index.sym) {
+                set_load_error(info, "multiple symbol tables are unsupported");
+                return -ENOEXEC;
+            }
             if (symsec->sh_link >= info->hdr->e_shnum ||
                 info->sechdrs[symsec->sh_link].sh_type != SHT_STRTAB ||
                 symsec->sh_entsize != sizeof(Elf_Sym) ||
@@ -581,8 +616,9 @@ static int setup_load_info(struct load_info *info)
             info->index.sym = i;
             info->index.str = symsec->sh_link;
             Elf_Shdr *strsec = &info->sechdrs[info->index.str];
-            if (!strsec->sh_size) {
-                set_load_error(info, "empty ELF symbol string table");
+            if (!strsec->sh_size ||
+                *((const char *)info->hdr + strsec->sh_offset) != '\0') {
+                set_load_error(info, "invalid ELF symbol string table");
                 return -ENOEXEC;
             }
             info->strtab = (char *)info->hdr + strsec->sh_offset;
