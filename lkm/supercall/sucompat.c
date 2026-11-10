@@ -150,11 +150,15 @@ const char *kp_su_get_path(void)
 
 int kp_su_reset_path(const char *path)
 {
+	size_t len;
+
 	if (!path || !path[0])
 		return -EINVAL;
-	/* Copy into a static buffer: the caller (kp_su_reset_path_sc) frees its
-	 * strndup_user buffer, so storing the pointer would dangle. */
-	strscpy(current_su_path, path, sizeof(current_su_path));
+	/* Reject rather than silently truncate a configured executable path. */
+	len = strnlen(path, sizeof(current_su_path));
+	if (len >= sizeof(current_su_path))
+		return -ENAMETOOLONG;
+	memcpy(current_su_path, path, len + 1);
 	logki("su path reset to %s\n", current_su_path);
 	return 0;
 }
