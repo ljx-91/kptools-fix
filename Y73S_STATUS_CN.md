@@ -1794,3 +1794,19 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - 候选方案：把入口 gate 代码和 closed-bit/active-count 状态放入 KPIMG 常驻 text/data；入口第一步原子取得 gate token，之后才读取 LKM module pointer 并尝试 `try_module_get()`。gate 关闭或 module-get 失败时，只走不依赖 LKM 的 relocated-original fallback；成功 pin 时才进入 LKM transit，返回后 module_put 并释放 gate token。退出路径先关闭 gate、撤 hook、等待 gate token 排空，再释放 LKM 资源。
 - 该方案可以覆盖“已跳入 stub、尚未进入 LKM/reader counter”的窗口，但目前只是设计草案。尚缺 AArch64 参数/x16 保存、各签名 fallback、KPIMG 导出和 module pointer handoff、原子顺序证明、CFI shadow ABI 与并发压力测试。
 - 未更改生产代码。self-pin 是短期常驻遏制方案；KPIMG gate 是长期可卸载架构候选。两者都尚未实现。
+
+
+## 59. KPIMG→LKM Gate 注册接口二次核查（2026-11-11）
+
+本轮进一步核对了真实 LKM 符号解析器和 LKM 内置 KPM loader，确认 Gate 注册接口不是简单的“尚未调用”，而是存在符号命名空间隔离：
+
+- KPIMG 的 `symbol_lookup_name/kp_symbol_count/kp_symbol_list` 仅在 KPIMG 私有 `.kp.symbol` 表中导出，不是 Linux kallsyms。
+- LKM 的 `kp_resolve_symbol()` 只调用 Linux `kallsyms_lookup_name()`；其可选遍历也只是 Linux `kallsyms_on_each_symbol()`。
+- `lkm/kpm/symbols.c` 的 KPM compatibility table 没有 KPIMG 私有 resolver 符号。
+- `lkm/kpm/module.c:simplify_symbols()` 只按 LKM compatibility table → Linux kallsyms 的顺序解析 undefined symbols，没有调用 KPIMG 私有符号表。
+
+因此，单独在 KPIMG 添加 `KP_EXPORT_SYMBOL(kp_hook_gate_register)` 并不能让当前 LKM 调用它。禁止通过猜测 KPIMG 基址、扫描私有符号表或借用任意内核全局变量绕过此问题。
+
+下一步先验证 Y73s 当前 KPIMG 是否存在已经可从 LKM 到达的稳定注册接口；若没有，则必须设计并审计新的跨组件 ABI（例如经过独立生命周期证明的 resident KPM shim），在此之前不写 Gate 汇编，不改生产 hook 路径。
+
+状态：方案 B 仍是用户选择；Gate 生产实现未开始，普通卸载安全未建立。无 vendor KDIR/Module.symvers，未进行 Y73s LKM 目标编译或真机验证。
