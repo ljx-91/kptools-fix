@@ -286,7 +286,12 @@ static void kp_after_prepare_binprm(hook_fargs1_t *args, void *udata)
 		return;
 	}
 	bprm->cred = new;
-	current_thread_info()->flags &= ~_TIF_SECCOMP;
+	/*
+	 * Keep the current task's seccomp state intact here. prepare_binprm()
+	 * runs before ELF validation and install_exec_creds(); the exec may
+	 * still fail after this callback. Clearing TIF_SECCOMP now would leak
+	 * the policy change into the still-running caller on an early failure.
+	 */
 	logki("sucompat: prepare_binprm redirected to shell; root cred prepared (uid=%u)\n",
 	      uid);
 }
