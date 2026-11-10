@@ -2267,3 +2267,13 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 ### compare-install 补充
 
 随后又将 syscall-table 安装从 stop_machine 下的无条件 8-byte 写入改为 kp_patch_cmpxchg64()：只在表项仍等于观察到的原 handler 时发布本 LKM handler，避免与并发第三方安装互相覆盖。若竞争者先修改表项，安装返回失败，不把该表项记作本 LKM 已安装。相关提交为 743b3d1，源码契约提交为 c00b611。旧的 -EUCLEAN rollback 分支已从 supercall install 路径移除，因为 compare-exchange helper 不执行多字写入回滚。
+
+
+### 最新提交与工作流补充
+
+- 743b3d1 将 syscall-table 安装也改为 compare-exchange；c00b611 增加对应源码契约。
+- 4768d61043c6159b5bdb55c29660e836fbb37a72 移除了 compare-exchange 安装路径中已不可能触发的旧 -EUCLEAN rollback 分支。
+- Host/offline audit run 42877088744（HEAD 4768d61）：success。
+- Ubuntu KPIMG job run 42877088855（HEAD 4768d61）：success；Windows job当时仍在执行。
+- Windows workflow run 42876898175（HEAD c00b611）：success，Ubuntu 与 Windows 两个 job 均成功。
+- 最新分支 HEAD 已推进到 c44910919aa6ad20886d9c3e51fe5425d14e379c；其后两次提交仅更新状态/设计审计文档，不包含生产代码变更。
