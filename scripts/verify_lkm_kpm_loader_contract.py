@@ -231,11 +231,16 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "module allocator/free pair")
     need(r"kp_execmem_alloc\s*&&\s*kp_execmem_free", kpm_init,
          "execmem allocator/free pair")
-    need(r"!kp_kpm_init_mm", kpm_init, "init_mm must be available for permission verification")
+    need(r"kp_kpm_can_skip_init_mm\(\)", kpm_init,
+         "4.14 executable module allocator may operate without hidden init_mm")
     need(r"pte_lockptr", permissions, "PTE permission updates must hold the page-table lock")
     need(r"set_pte_at", permissions, "PTE permission update must use set_pte_at")
-    need(r"KP_LKM_PTE_PXN.*?KP_LKM_PTE_UXN.*?KP_LKM_PTE_GP", permissions,
-         "clear PXN/UXN/BTI GP bits")
+    need(r"exec_deny_mask\s*=\s*KP_LKM_PTE_PXN\s*\|\s*KP_LKM_PTE_GP", permissions,
+         "clear PXN and BTI GP without clearing UXN")
+    need(r"nx_mask\s*=\s*exec_deny_mask\s*\|\s*KP_LKM_PTE_UXN", permissions,
+         "include UXN when restoring NX")
+    need(r"v\s*&=\s*~exec_deny_mask[\s\S]*?v\s*\|=\s*KP_LKM_PTE_UXN", permissions,
+         "kernel executable mappings must remain UXN for EL0")
     need(r"return\s+-EFAULT", permissions, "unmapped or unsupported PTEs must fail closed")
     need(r"kp_clear_bti_gp\(\(unsigned long\)mod->start,\s*mod->size\)", load,
          "verify KPM image permissions before init")
@@ -260,8 +265,8 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     need(r"KP_EXEC_BACKEND_VMALLOC", exec_alloc, "matched vmalloc allocator backend")
     need(r"pte_lockptr", permissions, "PTE changes must hold the page-table lock")
     need(r"set_pte_at", permissions, "PTE updates must use the architecture setter")
-    need(r"pte_val\(\*pte\).*?KP_LKM_PTE_PXN.*?KP_LKM_PTE_UXN.*?KP_LKM_PTE_GP",
-         permissions, "permission bits must be verified after the PTE update")
+    need(r"pte_val\(\*pte\)\s*&\s*exec_deny_mask[\s\S]*?pte_val\(\*pte\)\s*&\s*KP_LKM_PTE_UXN",
+         permissions, "PXN/GP are cleared while UXN remains set after PTE update")
 
     safe_iter = body(module, "int kp_kpm_safe_kallsyms_on_each_symbol(")
     need(r"kp_module_get_by_addr", safe_iter, "kallsyms callback owner acquisition")
