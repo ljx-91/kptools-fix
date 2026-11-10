@@ -1894,3 +1894,37 @@ KPIMG `syscalln_name_addr()` 对 syscall-name table 中的名字按 `__arm64_`/�
 - 这是源码级目标选择修复，加上 Host contract 和 KPIMG 构建证据；尚未在原始 Boot 副本上用最新 KPIMG 完成端到端重打包/反汇编复核。
 - 目标 Linux 4.14.141 LKM .ko 编译、MODVERSIONS、设备运行时和 syscall 并发压力测试仍未完成。
 - 不使用 Fastboot，不刷写、不修改分区，不执行真机启动测试。
+
+
+## 64. 2026-11-11：用原始 Boot 反汇编确认 syscall 45 入口，并界定 KPIMG/LKM 共存行为
+
+### 原始镜像反汇编
+
+本轮从资料库重新取得原始 boot.img，核对 SHA-256 为
+c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
+解压内核 SHA-256 为
+345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e，与既有离线报告一致。
+
+对原始 kernel.Image 的两个入口做 AArch64 反汇编：
+
+- syscall-name 表中的 sys_truncate：Image offset 0x019305cc，机器码 0x17aa743b，即单条 B 指令，目标 0x003cd6b8。
+- 相邻的 compat_SyS_truncate、SyS_ftruncate、compat_SyS_ftruncate 分别位于 0x019305d0、0x019305d4、0x019305d8，均是独立的 4 字节 B 入口。
+- SyS_truncate.cfi 实现体位于 0x003cd6b8，入口指令为 sub sp, sp, #0x50，后续是正常函数序言，不是 4 字节跳板。
+
+这确认 KPIMG 原先若对 sys_truncate 普通别名执行 16 字节 inline patch，会覆盖四个相邻入口；第 63 节的 Y73S 定向解析修复选择了正确实现体。
+
+### KPIMG 与 LKM 的部署边界
+
+继续追踪两个 Hook Engine 的实际机器码和失败路径：
+
+- KPIMG kernel/base/hook.c 的 branch_absolute() 固定生成四个 32-bit word：LDR X17, #8；BR X17；随后两个 word 是绝对目标地址。
+- 若 KPIMG 已经在 SyS_truncate.cfi 安装此 16 字节分支，LKM 再对同一入口执行 hook_prepare() 时，relo_ldr() 会发现 LDR literal 指向被覆盖范围内的 target+8，并通过 is_in_tramp() 返回 -HOOK_BAD_RELO。
+- 该失败发生在 hook_install() 写入新分支之前；LKM 的 kp_supercall_install() 将错误向上传递，kernelpatch_init() 进入 err_unwind，不会把第二套 branch 写到 KPIMG 的入口上。
+- 因此 KPIMG boot 与 standalone LKM 是 Y73s 上的互斥部署模式，不是可同时加载并共享 syscall 45 的模式。LKM README 已明确记录这一约束；不得移除 relocation fail-closed 检查来强行叠加。
+
+### 回归检查
+
+- 扩展 scripts/verify_y73s_syscall45_contract.py，增加 KPIMG 四字绝对分支、LKM literal-in-overwrite 拒绝、LKM init unwind 三项契约。
+- 新增契约已推送；本次记录生成时等待最新 Host CI 对新增断言的执行结果。
+- 这仍是原始 Boot 离线反汇编、源码控制流和静态契约证据；不替代目标 KDIR 编译或设备运行验证。
+- 不使用 Fastboot，不刷写、不修改分区，不执行真机启动测试。
