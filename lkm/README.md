@@ -33,6 +33,20 @@ has not yet been established.
 The LKM feature-control supercall remains a stub, and x86_64 is not supported
 by this ARM64 implementation.
 
+### Y73S deployment modes are mutually exclusive
+
+On vivo Y73s / Linux 4.14.141, use either the KPIMG-patched boot path or the
+standalone LKM path; do not load this LKM on top of a boot image where KPIMG
+already installed its syscall-45 hook.
+
+Both paths target the real SyS_truncate.cfi implementation. KPIMG's inline
+patch is a four-word literal-backed branch. If the LKM is loaded afterward,
+its relocation validator detects that the branch's literal points into the
+prologue being overwritten and rejects the second inline hook. LKM init then
+unwinds instead of stacking two independent patch registries on the same
+entry. This is intentional fail-closed behavior, not a supported coexistence
+mechanism. Do not weaken the relocation rejection to force both paths to load.
+
 ## Build
 
 ### What repository CI currently validates
