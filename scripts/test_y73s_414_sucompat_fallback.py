@@ -61,7 +61,7 @@ struct pt_regs { unsigned long regs[31]; int syscallno; };
 static struct pt_regs test_regs;
 
 struct file { int id; bool executable; };
-struct cred { uid_t uid; };
+struct cred { uid_t uid, euid, gid, egid; };
 struct linux_binprm {
     const char *filename;
     const char *interp;
@@ -89,6 +89,13 @@ static char last_sctx[128];
 
 static int current_user_ns(void) { return 0; }
 static uid_t current_uid(void) { return test_uid; }
+static uid_t current_euid(void) { return test_uid; }
+static uid_t current_egid(void) { return test_uid; }
+static void bprm_fill_uid(struct linux_binprm *bprm)
+{
+    bprm->cred->euid = current_euid();
+    bprm->cred->egid = current_egid();
+}
 static uid_t from_kuid(int ns, uid_t uid) { (void)ns; return uid; }
 static bool kp_is_su_allow_uid(uid_t uid) { (void)uid; return allow_uid; }
 static bool kp_is_manager_uid(uid_t uid) { (void)uid; return manager_uid; }
@@ -131,6 +138,9 @@ static int kp_apply_su_cred(struct cred **cred, uid_t uid, const char *sctx)
     snprintf(last_sctx, sizeof(last_sctx), "%s", sctx ? sctx : "");
     if (apply_result) return apply_result;
     (*cred)->uid = uid;
+    (*cred)->euid = uid;
+    (*cred)->gid = uid;
+    (*cred)->egid = uid;
     return 0;
 }
 #define logkw(...) ((void)0)
@@ -163,6 +173,28 @@ int main(void)
         return 1;
     }
     puts("[PASS] allowed su exec prepares root SELinux cred while preserving seccomp until exec commit");
+
+    /* Model binfmt_script's second prepare_binprm() after bprm_fill_uid(). */
+    {
+        struct file interpreter = { .id = 9, .executable = true };
+        hook_fargs1_t chained = { .arg0 = (uint64_t)(uintptr_t)&bprm };
+        bprm.file = &interpreter;
+        bprm_fill_uid(&bprm);
+        if (cred.euid != test_uid || cred.egid != test_uid) {
+            fprintf(stderr, "fixture did not model bprm_fill_uid reset\\n");
+            return 1;
+        }
+        kp_before_prepare_binprm(&chained, NULL);
+        chained.ret = 128;
+        kp_after_prepare_binprm(&chained, NULL);
+        if (chained.local.data0 != 2 || cred.uid != 0 || cred.gid != 0 ||
+            cred.euid != 0 || cred.egid != 0 || apply_calls != 1 ||
+            strcmp(last_sctx, "u:r:magisk:s0")) {
+            fprintf(stderr, "script interpreter hop lost pending SU credentials\\n");
+            return 1;
+        }
+    }
+    puts("[PASS] repeated prepare_binprm restores effective root IDs without reapplying SELinux context");
 
     {
         struct file old = { .id = 3 };
