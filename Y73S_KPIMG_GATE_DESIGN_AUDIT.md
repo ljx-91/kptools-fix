@@ -329,3 +329,25 @@ A correct consolidation needs an explicit command ownership map and a versioned 
 - how registration, callback invocation, teardown, and Gate closure are ordered.
 
 Do not implement a handler removal or command forwarding yet. The existing sources do not provide a proven LKM-visible KPIMG registration endpoint, and no shared policy-state ABI was found in this pass. The immediate blocker is now more specific: the Gate needs a real cross-component control/dispatch contract, not merely an exported function name.
+
+
+### Existing KPIMG syscall-dispatch API: useful internally, not an LKM bridge (2026-11-11)
+
+A further pass found that KPIMG does have a callback registry for syscall hooks, separate from its per-function inline Hook Engine:
+
+- `kernel/patch/common/syscall.c` exports `hook_syscalln()`, `hook_syscalln_override()`, `unhook_syscalln()`, `syscall_hook_global_enabled()`, and `syscall_hook_set_gate()` with `KP_EXPORT_SYMBOL`.
+- When the global dispatcher is active and handler-granular, `hook_syscalln_override(45, ...)` registers a callback in KPIMG's 64-slot syscall registry instead of installing a second per-syscall inline hook.
+- This could be the right *internal KPIMG dispatch point* for a unified syscall-45 owner, but it is not currently callable by the LKM through its normal resolver.
+
+Why it is not yet a bridge:
+1. `KP_EXPORT_SYMBOL` in `kernel/include/symbol.h` emits a private record into section `.kp.symbol`; it is not Linux `EXPORT_SYMBOL` and does not add the function to Linux kallsyms/module exports.
+2. KPIMG's own KPM loader resolves undefined symbols through its private `symbol_lookup_name()` first, then Linux kallsyms.
+3. The LKM's `kp_resolve_symbol()` calls only Linux `kallsyms_lookup_name()`; its own KPM loader similarly checks its own compatibility resolver and Linux kallsyms. Neither path invokes KPIMG's private `symbol_lookup_name()`.
+4. The KPIMG syscall registry snapshots raw callback and `udata` pointers under its private spinlock, then invokes them after releasing the lock. The inspected registry has no Linux-module owner token or `try_module_get()` around callbacks. Therefore merely making the registration function reachable would still not make an LKM callback safe to unload.
+5. KPIMG KPM owner pin APIs (`kp_kpm_owner_pin/unpin/call_get/call_put`) protect KPIMG-managed KPM images, not an ordinary Linux LKM image. They cannot be treated as an LKM module reference protocol.
+
+This narrows the implementation requirement. A real bridge needs both:
+- a KPIMG-resident registration/dispatch endpoint reachable through an explicitly established ABI from the LKM (not a guessed private symbol address); and
+- an owner-lifetime protocol that pins the Linux LKM before entering its text and drains in-flight calls before its image can be freed.
+
+The existing KPIMG syscall callback table is a promising internal owner for syscall 45, but it cannot safely host an LKM callback without those two additions. The existing KPIMG private symbol namespace and callback table do not, by themselves, satisfy the selected resident-Gate design.
