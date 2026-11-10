@@ -11,6 +11,7 @@
 #include "accctl.h"
 #include "sucompat.h"
 
+#include <asm/processor.h>
 #include <linux/binfmts.h>
 #include <linux/cred.h>
 #include <linux/err.h>
@@ -241,6 +242,7 @@ static void kp_before_prepare_binprm(hook_fargs1_t *args, void *udata)
 
 	args->local.data0 = 1;
 	args->local.data1 = uid;
+	args->local.data2 = supercmd;
 }
 
 static void kp_after_prepare_binprm(hook_fargs1_t *args, void *udata)
@@ -260,7 +262,17 @@ static void kp_after_prepare_binprm(hook_fargs1_t *args, void *udata)
 		return;
 
 	uid = (uid_t)args->local.data1;
-	sctx = kp_default_sctx(uid, sctx_buf, sizeof(sctx_buf));
+	sctx = NULL;
+	if (args->local.data2) {
+		struct pt_regs *regs = task_pt_regs(current);
+
+		/* Only execve has argv in x1; execveat and kernel_execve use
+		 * the configured default SELinux profile instead. */
+		if (regs && regs->syscallno == __NR_execve)
+			sctx = kp_get_supercmd_sctx(regs, sctx_buf, sizeof(sctx_buf));
+	}
+	if (!sctx)
+		sctx = kp_default_sctx(uid, sctx_buf, sizeof(sctx_buf));
 	new = bprm->cred;
 	rc = kp_apply_su_cred(&new, 0, sctx);
 	if (rc) {
