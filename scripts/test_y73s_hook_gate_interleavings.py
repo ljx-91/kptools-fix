@@ -200,5 +200,36 @@ def test_all_two_entrant_teardown_interleavings():
     )
 
 
+def test_delayed_branch_arrival_after_unload_uses_retained_fallback():
+    # A CPU may have fetched the old target branch but be delayed before
+    # executing the first instruction in the resident Gate. It is not counted
+    # yet. Teardown may therefore finish, but must retain both Gate code and
+    # the original trampoline/payload permanently.
+    state = State(
+        gate=CLOSED,
+        module_state="UNLOADED",
+        unhooked=True,
+        unload_step="done",
+        entrants=(Entrant(step="stub"), Entrant(step="done")),
+        gate_code_resident=True,
+        origin_retained=True,
+    )
+    check_invariants(state)
+    late = state.entrants[0]
+
+    # The first Gate instruction observes CLOSED. It must branch to the
+    # retained original trampoline without reading any LKM/module pointer.
+    assert state.gate & CLOSED
+    assert state.gate_code_resident
+    assert state.origin_retained
+    late = replace(late, step="done", fallback=True)
+    assert late.fallback
+    assert not late.token and not late.module_ref and not late.active
+    assert state.module_refs == 0
+    assert state.active_calls == 0
+
+
 if __name__ == "__main__":
     test_all_two_entrant_teardown_interleavings()
+    test_delayed_branch_arrival_after_unload_uses_retained_fallback()
+    print("KPIMG Gate delayed-entry fallback: 1/1 checks passed")
