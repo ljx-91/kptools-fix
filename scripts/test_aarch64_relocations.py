@@ -81,7 +81,7 @@ static u32 kp_aarch64_insn_encode_immediate(enum kp_aarch64_insn_imm_type type,
 }
 """
     call = "reloc_insn_imm(RELOC_OP_ABS, &word, value, lsb, len, IMM_TEST)"
-    return (prefix + "\n" + function + r"""
+    return prefix + "\n" + function + r"""
 
 static int run_case(const char *name, u64 value, int lsb, int len,
                     int expected, int expect_unchanged)
