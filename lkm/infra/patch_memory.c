@@ -92,17 +92,23 @@ static DEFINE_RAW_SPINLOCK(kp_fixmap_patch_lock);
 
 /*
  * With CONFIG_KALLSYMS_ALL=n, init_mm is not available by name on Y73s.
- * Text patching still needs to work for the kernel image and linear map.
- * ARM64 virt_to_phys() handles both via kimage_voffset/PHYS_OFFSET; reject
- * vmalloc and module_alloc ranges because they are not direct mappings.
+ * Translate kernel-image and linear-map addresses with virt_to_phys(), and
+ * vmalloc/module_alloc addresses with the exported vmalloc_to_page() API.
+ * The latter walks the kernel page tables internally, without resolving
+ * the hidden init_mm data symbol or guessing a page-table root.
  */
 static unsigned long kp_phys_from_virt_no_init_mm(unsigned long addr)
 {
+	struct page *page;
+
 	if ((addr >= (unsigned long)KERNEL_START &&
 	     addr < (unsigned long)KERNEL_END) ||
 	    virt_addr_valid((void *)addr))
 		return (unsigned long)virt_to_phys((void *)addr);
-	return 0;
+	page = vmalloc_to_page((void *)addr);
+	if (!page)
+		return 0;
+	return (unsigned long)page_to_phys(page) + (addr & ~PAGE_MASK);
 }
 
 __attribute__((no_sanitize("cfi")))
