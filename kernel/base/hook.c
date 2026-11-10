@@ -755,8 +755,12 @@ int hook_install(hook_t *hook)
         addrs[i] = (uint32_t *)hook->origin_addr + i;
     }
     /* Trampoline bytes are generated in executable memory before the branch
-     * is installed. Publish them to every CPU's I-cache first. */
-    flush_icache_all();
+     * is installed. Publish the relocated trampoline range before patching. */
+#ifndef KP_HOOK_FLUSH_ICACHE_RANGE
+#define KP_HOOK_FLUSH_ICACHE_RANGE(start, end) flush_icache_all()
+#endif
+    KP_HOOK_FLUSH_ICACHE_RANGE(hook->relo_addr,
+                               hook->relo_addr + hook->relo_insts_num * sizeof(uint32_t));
     return hotpatch(addrs, hook->tramp_insts, hook->tramp_insts_num);
 }
 KP_EXPORT_SYMBOL(hook_install);
