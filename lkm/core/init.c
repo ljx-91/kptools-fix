@@ -170,7 +170,7 @@ err_unwind:
 static void __exit kernelpatch_exit(void)
 {
 	BUG_ON(kp_sucompat_hook_exit());
-	hook_rename_lsm_exit();
+	BUG_ON(hook_rename_lsm_exit());
 	kp_supercall_uninstall();
 	/* Unhook the CFI bypass last so it shields the other teardown from
 	 * spurious CFI failures on LKM/KPM text. */
