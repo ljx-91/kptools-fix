@@ -135,14 +135,15 @@ int kp_bypass_kcfi(void)
 
 	unsigned long addr = kallsyms_lookup_name("find_check_fn");
 	if (addr) {
+		/* Track the address even on an uncertain patch result. hook() may
+		 * have published a record after a partial text-patch failure. */
+		kp_find_check_fn_addr = addr;
 		hook_rc = hook((void *)addr, (void *)__replace_find_check_fn,
 			       (void **)&__backup_find_check_fn);
 		if (hook_rc) {
 			logkw("hook find_check_fn error: %d\n", hook_rc);
 			if (!rc)
 				rc = hook_rc;
-		} else {
-			kp_find_check_fn_addr = addr;
 		}
 	} else {
 		logkw("find_check_fn not found; KPM kallsyms CFI check unshielded\n");
@@ -150,6 +151,7 @@ int kp_bypass_kcfi(void)
 
 	addr = kallsyms_lookup_name("report_cfi_failure");
 	if (addr) {
+		kp_report_cfi_failure_addr = addr;
 		hook_rc = hook((void *)addr, (void *)__replace_report_cfi_failure,
 			       (void **)&__backup_report_cfi_failure);
 		if (hook_rc) {
@@ -157,7 +159,6 @@ int kp_bypass_kcfi(void)
 			if (!rc)
 				rc = hook_rc;
 		} else {
-			kp_report_cfi_failure_addr = addr;
 			cfi_enforcement_hooked = true;
 		}
 	}
@@ -166,6 +167,7 @@ int kp_bypass_kcfi(void)
 	if (!addr)
 		addr = kallsyms_lookup_name("__cfi_slowpath");
 	if (addr) {
+		kp_cfi_slowpath_addr = addr;
 		hook_rc = hook((void *)addr, (void *)__replace_cfi_slowpath,
 			       (void **)&__backup_cfi_slowpath);
 		if (hook_rc) {
@@ -173,25 +175,20 @@ int kp_bypass_kcfi(void)
 			if (!rc)
 				rc = hook_rc;
 		} else {
-			kp_cfi_slowpath_addr = addr;
 			cfi_enforcement_hooked = true;
 		}
 	}
 
 #ifdef CONFIG_CFI_CLANG
-	/* The Y73S kernel uses Clang CFI. A KPM image is not registered in the
-	 * kernel module CFI shadow, so at least one enforcing slowpath hook must
-	 * be installed before any KPM callback can be entered. */
+	/* A KPM image is not registered in the kernel module CFI shadow. */
 	if (!cfi_enforcement_hooked && !rc)
 		rc = -ENOSYS;
 #endif
 
 	if (rc) {
-		int cleanup_rc;
+		int cleanup_rc = kp_bypass_kcfi_exit();
 
-		/* A patch may be uncertain even when hook() reports failure. Track
-		 * every attempted address and verify that cleanup really restored it. */
-		cleanup_rc = kp_bypass_kcfi_exit();
+		/* Do not hide a failed text restoration behind the original error. */
 		if (cleanup_rc) {
 			logke("CFI hook rollback failed: %d\n", cleanup_rc);
 			return cleanup_rc;
@@ -203,8 +200,8 @@ int kp_bypass_kcfi(void)
 	return 0;
 }
 
-/* Remove the CFI bypass hooks so the module can be unloaded without leaving
- * branches into freed module memory (IABT). Call last on exit. */
+/* Checked teardown is mandatory: module text must not be freed while a patched
+ * CFI entry can still branch into this module. */
 int kp_bypass_kcfi_exit(void)
 {
 	int rc = 0;
