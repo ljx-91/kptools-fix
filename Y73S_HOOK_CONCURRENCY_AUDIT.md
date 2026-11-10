@@ -1352,3 +1352,23 @@ No production pin/unpin change was made. Keep the LKM transit unload status **un
 - 编译时需要精确 Y73S KDIR/Module.symvers 确认 `try_module_get` 的符号 CRC 与 vendor 导出；当前没有该 KDIR，因此尚未证明目标 .ko 能编译/加载。
 
 本轮仍未启用 self-pin。需要用户明确接受“LKM 成功加载后不可普通卸载，更新需重启”的行为，才应提交生产代码改动。
+
+
+### 14.2. KPIMG-resident transit route: viable design candidate, not yet implemented
+
+Further source inspection refined the long-term alternative:
+
+- `kernel/kpimg.lds` already places `kernel/base/hook.c` `.transit0.text`, `.transit4.text`, `.transit8.text`, and `.transit12.text` into KPIMG `.kp.text`; the KPIMG image therefore has a resident copy of these transit routines.
+- However, `lkm/hook/hook_engine.c` defines `KP_HOOK_EXTERNAL_CHAIN_PREPARE` and supplies its own `hook_chain_prepare()`, which explicitly selects `_transit0/_transit4/_transit8/_transit12` from the LKM object. The chain stub therefore branches into LKM text today. Merely having transit sections in KPIMG does not change the LKM runtime target.
+- The transit body in `kernel/base/hook.c` calls `kp_hook_owner_call_get()` / `kp_hook_owner_call_put()`; their implementations are in `lkm/kpm/module.c`. A KPIMG-resident transit body still needs the LKM alive while those backend calls execute. A resident entry wrapper must acquire a valid module reference before it can dispatch to this body.
+- `hook_mem_zalloc()` places the chain payload itself in a separately allocated executable region (`kp_hook_exec_alloc()`), and `hook_mem_retire()` removes only its registry record while intentionally retaining that region. Thus the chain data / relocated-original pointer can remain available to a permanent KPIMG wrapper after the LKM registry metadata is retired.
+
+A dynamic-unload architecture can be designed around a **KPIMG-resident gate**, rather than putting the module reference acquisition in the first LKM instruction:
+
+1. Put the gate code and gate state in KPIMG-resident text/data, independent of the LKM image.
+2. The branch stub enters this resident gate. Its first operation atomically acquires an entry token from a combined closed-bit/active-count state; it must not dereference the LKM module pointer before acquiring the token.
+3. If the gate is closed, the resident path must not touch LKM data/text; it should invoke the relocated original function using the retained chain payload and return.
+4. If the gate is open, call `try_module_get(THIS_MODULE)`. If the module has already entered GOING, this fails and the resident path falls back to the relocated original. If it succeeds, dispatch to LKM transit (or resident transit whose owner-call dependencies are now protected), then `module_put()` and release the gate token.
+5. Teardown closes the resident gate first, removes all hooks, and waits for accepted gate tokens to drain before any LKM-owned state is freed. Delayed CPUs that have branched but not yet executed the first gate instruction remain safe because both gate code and gate state are permanent; once they run, they observe closed and never dereference the stale module pointer.
+
+This is a design outline, not a proven implementation. It still requires: an AArch64 entry preserving x0-x3 and x16; a defined safe fallback for every hooked signature; exact KPIMG export/lookup and module-pointer handoff; atomic gate ordering proof; CFI/CFI-shadow compatibility; and stress tests including a CPU delayed between branch and first gate instruction. Do not treat the existing KPIMG transit sections alone as closing the race.
