@@ -161,6 +161,11 @@ require("return kp_hook_prepare_binprm()" in sucompat_hook and
         'kp_resolve_symbol("open_exec")' in sucompat_hook and
         "kp_open_exec(KP_SH_PATH)" in sucompat_hook,
         "Y73S sucompat falls back to the real 4.14 prepare_binprm text symbol when sys_call_table is hidden")
+after_prepare_binprm = sucompat_hook.split("static void kp_after_prepare_binprm(", 1)[1].split("static int kp_hook_prepare_binprm(", 1)[0]
+require("bprm->cred = new" in after_prepare_binprm and
+        "current_thread_info()->flags &= ~_TIF_SECCOMP" not in after_prepare_binprm and
+        "exec may" in after_prepare_binprm,
+        "pending exec path preserves seccomp until install_exec_creds; prepare_binprm can still fail later")
 require("bprm->file = shell_file" in sucompat_hook and
         "bprm->filename = KP_SH_PATH" in sucompat_hook and
         "bprm->interp = KP_SH_PATH" in sucompat_hook and
