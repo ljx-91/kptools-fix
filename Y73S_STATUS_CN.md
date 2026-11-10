@@ -1146,7 +1146,7 @@ Host harness 使用 ELF64 的 `Elf64_Shdr`、`Elf64_Sym`、`Elf64_Rela` 构造�
 - fixture 断言修正：`d1dbddc679721704a523132814803614c6cfa842`
 - source contract 更新：`eb0dc062ad8c7ad66a7767c71c4a9ba61a605655`
 - workflow 增加 KPIMG 路径触发和 Host 测试：`fc87874b1f5ca94aeb70034c71eaef9ae5bc0396`、`ddfb429c69132532513ea4ff092c88209daab8be`
-- Host run `42796685283` 的 `Audit LKM KPM ELF loader source` job 成功；日志明确显示 KPIMG parser fixture 和“valid RELA still dispatches after sh_entsize is repurposed”均通过。同期 `build-kptools` 正在安装依赖/构建，待最终完成状态确认。
+- Host run `42796685283` 的 `Audit LKM KPM ELF loader source` 与 `build-kptools` 两个 job 均成功；日志明确显示 KPIMG parser fixture 和“valid RELA still dispatches after sh_entsize is repurposed”通过，Linux kptools 编译、打包和 artifact 上传也成功。GCC 14.2 KPIMG run `42796648024` 成功。Windows 构建 run `42796685498` 在本次记录时仍在运行，待最终确认。
 
 ### 验证边界
 
