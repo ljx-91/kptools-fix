@@ -878,3 +878,19 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 - `097084669f17a18ae7fdf7ec1d8a35f89ca65373`：删除旧脚本路径。
 
 验证边界：本轮新增数据重定位用例的 CI 尚待执行确认；Host harness 的地址计算仍使用 stub，不覆盖完整 ELF/RELA 表驱动执行。
+
+
+## 28. 数据重定位 Host 测试修正与 CI 结果（2026-11-10）
+
+扩展数据重定位 harness 时，首轮 CI 暴露的是测试生成器自身问题（C enum 类型占位符未完整替换，随后修复 Python 拼接括号）；不是 loader 运行逻辑失败。修正后，最新 Linux offline audit run `42790713488` 已成功，日志确认：
+- LKM 与 KPIMG 各自的 3 个 instruction relocation 用例通过。
+- LKM 与 KPIMG 各自的 6 个 data relocation 用例通过。
+- 新增 Host 测试之后，原有全部 source-contract verifier 也继续通过。
+- 同一 run 的 Linux kptools 构建成功。
+
+修正提交：
+- `d53c272abce871b0b6d3bef697e301ba1b87bfd6`：补全数据 harness enum 替换。
+- `88f2471c7cd9ffb8fb9a7cd8c1a61f6869b6d3cd`：修正替换作用范围。
+- `feaa7285d3e99e43e18b0332a74a174e432ecb01`：修复 instruction harness 字符串闭合。
+
+当前验证仍不等于完整 ELF/RELA 表驱动加载测试：`do_reloc` 和 instruction encoder 仍为 Host stub；尚未覆盖每一种 AArch64 relocation type、完整 ELF section/symbol 索引路径或 Y73s 内核运行环境。GCC 14.2 KPIMG 与 Windows 构建在本次状态记录时仍在运行。
