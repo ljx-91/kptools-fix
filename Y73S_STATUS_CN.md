@@ -1061,4 +1061,11 @@ Host harness 使用 ELF64 的 `Elf64_Shdr`、`Elf64_Sym`、`Elf64_Rela` 构造�
 - Host 测试提交：`645a3472fff12ec0642a54323ec57aa096015110`
 - workflow 接入提交：`a87a0eb677d16a5ac253c495f8bf36e7d262d980`
 
-本节记录时 Host CI 尚待执行；测试通过数量、构建结果和最终验证边界将在 CI 完成后补记。此项不是 Y73s 真机验证，也不替代精确 Linux 4.14.141 KDIR 编译。
+### CI 结果与测试夹具修正
+
+- 首轮 Host run `42795243926` 的符号测试失败，日志确认是 fixture 将 SYMTAB 的 `sh_size` 设置为整个三元素数组大小，却只初始化一个待测符号；后续空符号被生产代码按 ELF 语义解析，造成预期不符。该失败属于测试夹具，不是生产函数失败。
+- 已将 fixture 的 SYMTAB 大小改为两个条目（空符号 0 + 一个待测符号），修正提交：`21c8fd921c5155aaafd09ea92b7ef7a8d1f98162`。
+- 修正后 Host run `42795362396`：`Audit LKM KPM ELF loader source` 成功，`build-kptools` 成功；日志确认两套生产 `simplify_symbols()` 均执行完成，11 类用例分别对 LKM、KPIMG 通过。
+- 修正提交对应的 GCC KPIMG 构建 run `42795362369` 已完成编译和审计步骤，最后的 workflow 收尾状态当时仍在进行；Windows 构建另有对应任务，待最终状态确认。
+
+此项验证是 Host 合成符号表 + 真实函数体执行，并非完整 ELF 端到端加载。它不是 Y73s 真机验证，也不替代精确 Linux 4.14.141 KDIR 编译。
