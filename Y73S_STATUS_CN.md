@@ -636,3 +636,37 @@ Y73s 原始 Boot 已确认启用 CONFIG_CFI_CLANG=y 与 CONFIG_CFI_CLANG_SHADOW=
 ### 边界
 
 未进行 Clang 9.0.3 目标 KDIR 编译、modpost、真机加载或启动验证。没有修改 Boot、KPIMG、vbmeta 或设备分区；未执行 Fastboot、9008 或任何刷写操作。
+
+
+## 17. 2026-11-10：Linux 4.14 模块命名空间宏兼容修复
+
+### 发现
+
+对照原始 Y73s Boot 的 Linux 4.14.141 配置与 LKM 模块元数据代码时，发现 init.c 在所有低于 6.13 的内核上无条件调用旧形式 MODULE_IMPORT_NS(...)。但模块符号命名空间机制是在 Linux 5.4 开发周期引入，不能假设 4.14 的 module.h 定义了该宏。若目标 4.14 头文件没有此宏，编译会在模块元数据处失败。
+
+### 修复
+
+- 将 MODULE_IMPORT_NS 调用整体放入 #ifdef MODULE_IMPORT_NS。
+- 保留 6.13 及以上的字符串参数形式。
+- 对定义了该宏但早于 6.13 的内核保留旧 token 参数形式。
+- 对没有该宏的旧内核不生成 namespace import 元数据，避免把新内核 API 强加给 4.14。
+- scripts/verify_lkm_kpm_contract.py 增加宏存在性门控与新旧参数形式检查。
+
+### 复查
+
+- 从目标分支重新读取 init.c 与 verifier。
+- 5 项针对性检查通过：宏存在性保护、6.13 新参数形式、旧参数形式、回归脚本覆盖、原始 Boot 的 MODVERSIONS/LTO/CFI 配置记录。
+- 此项是基于 Linux 模块命名空间 API 引入时间的源码兼容修复；尚未使用 Y73s 精确 4.14.141 KDIR 进行编译确认。
+
+### 提交
+
+- 9ba310a：guard module namespace import on legacy kernels。
+- b0ea3fe：增加 legacy module namespace compatibility 契约测试。
+
+### CFI/LTO/MODVERSIONS 审计边界
+
+- 原始 Boot 的配置已确认同时启用 CONFIG_CFI_CLANG、CONFIG_CFI_CLANG_SHADOW、CONFIG_LTO_CLANG 和 CONFIG_MODVERSIONS。
+- 当前仓库的 GitHub Actions workflow 运行 KPIMG、Host 工具与源码契约验证；它没有用 Y73s 目标 KDIR 构建 kernelpatch.ko，因此这些 Actions 成功不能证明 LTO module link、CFI shadow module registration 或 MODVERSIONS CRC 兼容。
+- lkm/Kbuild 对 hook_engine.o 使用 -fno-lto，并对 hook_engine.o / secpass.o 设置局部 CFI 隔离；这些参数必须通过目标 Kbuild 的真实 V=1 命令和 Clang 9.0.3/LLD 9.0.3 链接结果核对，不能仅凭 Kbuild 文本推断最终编译参数。
+- 仍缺少与 Boot 完全匹配的 KDIR、生成头文件、Module.symvers 和完整构建输出。MODVERSIONS CRC、模块 CFI metadata/shadow 注册及 LTO 混合对象链接均保持未验证。
+- 没有修改 Boot、KPIMG、vbmeta 或设备分区；未连接设备，未执行 Fastboot、9008、刷写或真机启动测试。
