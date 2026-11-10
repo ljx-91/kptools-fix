@@ -2169,3 +2169,47 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 本轮修复了 manager rename Hook teardown 中一个明确的活动 reader 等待缺陷，并由 Host CI 验证新增源码契约。重新审计后，LKM 整体卸载安全仍是 **未解决的高风险项**，主要阻塞为 resident Gate 未实现和 pre-reader window。当前版本不能宣称完整兼容或可安全 rmmod。
 
 不执行 Fastboot、不刷写、不修改分区、不做真机启动测试。
+
+
+## 70. 2026-11-11：补充迟到 Gate 入口模型，并修正 standalone LKM 的 Gate 宿主选择
+
+### 本轮代码与测试
+
+- 重新读取最新分支 HEAD、Hook runtime、Hook Engine、direct/chain Hook、init/exit、KPIMG/LKM 符号解析和已有 Gate 设计审计。
+- 新增 `test_delayed_branch_arrival_after_unload_uses_retained_fallback()`，并让模型显式经过 `stub` 状态：CPU 已取得旧分支，但尚未执行 resident Gate 第一条指令；模块卸载已经完成后，迟到入口必须观察 CLOSED，只走保留的 original trampoline，不获取 module ref、不进入 LKM。
+- 新测试通过现有 Y73S Host audit workflow 执行。
+
+### 架构复核与修正
+
+此前 KPIMG-resident Gate 方案不能直接用于 standalone LKM：
+- Y73S KPIMG-patched Boot 与 standalone LKM 是互斥部署模式；KPIMG 已 patch `SyS_truncate.cfi` 时，LKM relocation guard 会拒绝重叠 Hook。
+- KPIMG 的 `.kp.symbol` 是私有符号表，不是 Linux kallsyms；LKM 的 `kp_resolve_symbol()` 只访问 Linux kallsyms。
+- KPIMG 与 LKM 的 syscall-45 handler、Hook registry、owner registry、engine lock 相互独立。没有发现可供 standalone LKM 调用的 KPIMG Gate 注册 ABI。
+- 因此不能把 KPIMG 的 `_transitN` 直接当作 LKM 的常驻 Gate，也不能假设 KPIMG 一定与 LKM 同时存在。
+
+当前候选架构修正为：**由 LKM 在初始化时通过独立 `module_alloc()` 分配 Gate executable page，复制无 relocation 的位置无关 Gate 代码；该页及每个 stale-entry payload/trampoline 在普通 LKM 卸载后永久保留。** 这仍是设计候选，尚未进入生产代码。需验证 copied code 的位置无关性、目标 CFI entrypoints、per-hook/global state、直接与 chain ABI、KPM parent-LKM reference 释放路径。
+
+### 新增测试与 CI
+
+- 测试提交 `68b23a44761b46b8a740ad97f39595e48a1b0b0f`：增加迟到入口测试。
+- 测试完善提交 `e93dc3e2a139b06ca24a92982e049db5f072f741`：让模型真实执行 `stub → closed fallback` 转移。
+- 架构记录提交 `a884dee87a3b5ed58117ae7b51d6e1ca4869a829`：明确 standalone LKM 不依赖 KPIMG Gate，改为 detached LKM-owned resident page 候选。
+- Linux Host/offline audit run `42873071455`（HEAD `e93dc3e`）：success，包含 Gate exhaustive model、迟到入口测试及完整源码契约。
+- GCC 14.2 KPIMG run `42873071587`（HEAD `e93dc3e`）：success。
+- Windows workflow run `42873071573`：Ubuntu KPIMG job success；Windows job 在 `Setup MSYS2 UCRT64` 步骤 failure，Windows 编译步骤未运行。此结果不能归因于源码编译失败，也不能记作 Windows 构建通过。
+- 架构文档提交 `a884dee` 后的最新 HEAD/CI 需在下一轮重新读取确认；上面两项成功结果对应 `e93dc3e`，不自动覆盖后续文档提交。
+
+### 重新检查后的状态
+
+1. **生产 Gate 仍未实现。** 当前 chain stub 仍跳入 LKM `_transitN`；direct `hook()` 仍直接跳入 LKM replacement。
+2. **KPIMG Gate 不能作为 standalone LKM 的宿主。** 采用 detached LKM-owned executable page 是当前候选，但尚未完成目标编译、反汇编或复制后执行验证。
+3. **per-hook 与 global gate 必须分层。** 单 Hook remove 要关闭该 Hook 的 dispatch 并等待其 token；module_exit 要先关闭 global gate，再撤销所有 Hook 并等待全部 token。仅用一个全局 count 无法表示单 Hook callback 已逻辑退役。
+4. **KPM parent-LKM reference 仍未解决。** LKM 加载的 KPM 可能持有指向 LKM 的 raw relocations；其最后一个 parent ref 必须在 LKM frame 已返回 resident Gate 后释放，不能在 LKM 函数尾部直接 `module_put()`。
+5. **direct Hook ABI 仍缺显式 argno。** 1、4、3、1、6 参数路径仍需迁移到显式 ABI；chain 的 0–12 参数路径需完整保留。
+6. **目标验证仍缺失。** 无匹配 Y73s 4.14.141+ KDIR；没有 `.ko` 目标构建、MODPOST、Module.symvers CRC、Clang 9.0.3 Gate 汇编验证或设备运行测试。
+
+### 结论
+
+本轮新增了迟到入口的抽象回归模型，并纠正了 Gate 宿主选择：standalone LKM 不能依赖 KPIMG 私有 resident code，当前应评估独立保留的 LKM-owned Gate page。Host audit 和 GCC KPIMG 构建在代码/测试 HEAD `e93dc3e` 上成功；Windows job 的环境准备失败。**没有生产 Gate 修复，也不能宣称 LKM 卸载安全。**
+
+不执行 Fastboot、不刷写、不修改分区、不做真机启动测试。
