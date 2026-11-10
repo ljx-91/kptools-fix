@@ -150,6 +150,12 @@ int kp_supercall_install(void)
 			      KP_SUPERCALL_NR);
 			return 0;
 		}
+		if (rc == -EUCLEAN) {
+			/* Failed rollback leaves the table slot uncertain. A second
+			 * backend cannot make returning from init safe. */
+			logke("syscall-table patch rollback is uncertain; refusing fallback\n");
+			BUG_ON(1);
+		}
 		logkw("syscall-table supercall unavailable (%d); falling back to wrapper hook\n", rc);
 	}
 	rc = kp_install_inline_supercall("__arm64_sys_truncate",
@@ -172,19 +178,26 @@ int kp_supercall_install(void)
 	return rc;
 }
 
-void kp_supercall_uninstall(void)
+int kp_supercall_uninstall(void)
 {
+	int rc = 0;
+
 	if (kp_supercall_backend == KP_SUPERCALL_BACKEND_TABLE) {
-		kp_syscall_unhook(KP_SUPERCALL_NR, kp_orig_truncate_regs);
+		rc = kp_syscall_unhook(KP_SUPERCALL_NR, kp_supercall_handler,
+				       kp_orig_truncate_regs);
 	} else if (kp_supercall_inline_target) {
-		int rc = unhook_checked(kp_supercall_inline_target);
-		if (rc && rc != -ENOENT) {
-			logke("supercall inline hook restore failed: %d\n", rc);
-			BUG_ON(1);
-		}
+		rc = unhook_checked(kp_supercall_inline_target);
+		if (rc == -ENOENT)
+			rc = 0;
 	}
+	if (rc) {
+		logke("supercall hook restore failed: %d; retaining callback state\n", rc);
+		return rc;
+	}
+
 	kp_supercall_inline_target = NULL;
 	kp_supercall_backend = KP_SUPERCALL_BACKEND_NONE;
 	kp_orig_truncate_regs = NULL;
 	kp_orig_truncate_args = NULL;
+	return 0;
 }
