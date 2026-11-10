@@ -756,7 +756,7 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 
 - 在 `setup_load_info()` 中、`layout_sections()` 改写节头之前，验证每个 SHT_RELA 节的原始 `sh_entsize == sizeof(Elf64_Rela)`，并验证 `sh_size` 是 RELA 项大小的整数倍。
 - `kp_apply_relocate_add()` 保留节类型和长度整除检查，但不再读取布局阶段已被复用的 `rsec->sh_entsize`。
-- 更新三个独立回归契约：`verify_lkm_kpm_contract.py`、`verify_lkm_kpm_loader_contract.py` 和 `verify_lkm_kpm_loader_contract.py` 的独立 RELA 装载检查，要求原始元数据在 setup 阶段验证，并禁止 apply 阶段读取过期字段。
+- 更新两个独立 LKM 回归契约：`verify_lkm_kpm_contract.py` 和 `verify_lkm_kpm_loader_contract.py`，要求原始元数据在 setup 阶段验证，并禁止 apply 阶段读取过期字段。
 
 ### 提交
 
@@ -770,6 +770,6 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 
 - 已重新读取修改后的 `module.c`、`relo.c` 和相关 verifier，确认原始 RELA entry size / divisibility 在 setup 阶段检查，apply 阶段不再检查 `rsec->sh_entsize`。
 - 中间 CI 运行曾因旧 verifier 仍要求 apply 阶段检查 `sh_entsize` 而失败；日志明确显示是测试契约过时。随后已更新该 verifier，并再次触发完整 Actions。
-- 当前最新 HEAD：`ea913aeef5fc20d27d7978dba3b041f40b7ab1c1`；该 HEAD 的 Linux Host、Windows、GCC 14.2 KPIMG Actions 正在运行，结果未确认，不能标记为通过。
+- 代码提交 `ea913aeef5fc20d27d7978dba3b041f40b7ab1c1` 对应的 Linux Host 构建与完整源码契约 Actions（Run `42780756358`）已成功，包含两个独立 LKM/KPM loader verifier。该提交的 Windows 与 GCC 14.2 KPIMG Actions 当时仍在运行；文档更新提交为 `bf6f3fff4dd8974a4622c4327f509cfc1db79c75`，其后续 CI 仍待确认。
 - 该修复尚未通过真实 KPM 文件加载或畸形 ELF 测试；目标 Linux 4.14.141 KDIR 编译、Clang 9.0.3/LLD、MODVERSIONS、CFI Shadow 和真机测试仍未完成。
 - 没有修改 Boot、vbmeta 或设备分区；未使用 Fastboot、9008 或刷写。
