@@ -480,7 +480,7 @@ int kp_sucompat_hook_exit(void)
 			kp_prepare_binprm_addr = 0;
 			kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
 		} else {
-			logke("sucompat: prepare_binprm hook is still live: %d\\n",
+			logke("sucompat: prepare_binprm hook is still live: %d\n",
 			      unhook_rc);
 			rc = unhook_rc;
 		}
@@ -492,7 +492,7 @@ int kp_sucompat_hook_exit(void)
 		if (!unhook_rc || unhook_rc == -ENOENT)
 			kp_getname_flags_addr = 0;
 		else {
-			logke("sucompat: getname_flags hook is still live: %d\\n",
+			logke("sucompat: getname_flags hook is still live: %d\n",
 			      unhook_rc);
 			if (!rc)
 				rc = unhook_rc;
