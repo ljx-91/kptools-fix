@@ -714,3 +714,30 @@ lkm/infra/secpass.c 原先在调用 unhook() 后无条件清零 Hook 地址和 b
 ### 验证边界
 
 本轮是基于源码控制流的安全修复与结构检查；未取得 Y73s 精确 4.14.141 KDIR，未运行 Clang 9.0.3 模块构建、modpost、CFI shadow 运行测试或真机加载。fail-closed 分支尚未通过故障注入验证。没有修改 Boot、KPIMG、vbmeta 或设备分区；未执行 Fastboot、9008 或刷写。
+
+
+## 21. 2026-11-10：收紧 LKM CFI 可信目标范围
+
+### 发现
+
+重新对照 Android common android-trusty-4.14/kernel/cfi.c 后，发现 lkm/infra/secpass.c 的 kp_target_in_module() 原先把整个 core_layout.size 及 init_layout 视为可信目标；6.4+ 分支还遍历所有 module memory types。这比 Android 4.14 CFI Shadow 实际登记范围更宽。
+
+android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 core_layout.base + core_layout.text_size 的代码页面。模块数据区不应因属于 THIS_MODULE 就被视为可信间接调用目标。
+
+### 修复
+
+- 4.14 至 6.3：只允许 core_layout.base 起始、长度为 core_layout.text_size 的可执行核心文本。
+- 6.4+：只允许 THIS_MODULE->mem[MOD_TEXT]，不再遍历数据、只读数据等其他类型。
+- 使用 target - base < size 做有界检查，避免上界加法溢出。
+- 移除 init_layout 放行；只信任仍在模块 CFI 文本映射内的代码。
+
+### 契约与复查
+
+- scripts/verify_lkm_kpm_contract.py 新增 MOD_TEXT、core_layout.text_size 检查，并明确拒绝 MOD_MEM_NUM_TYPES、core_layout.size、init_layout。
+- 重新读取 secpass.c 和 verifier；6 项源码结构检查全部通过（现代 MOD_TEXT、现代长度边界、旧内核 text_size、旧内核有界返回、verifier 覆盖 MOD_TEXT、verifier 拒绝宽范围）。
+- 代码提交：8e56e9e（修复范围）、05d0896（增加测试）、bc77340（修正测试断言）。
+- Android 4.14 对照源码：https://android.googlesource.com/kernel/common/+/android-trusty-4.14/kernel/cfi.c
+
+### 验证边界
+
+本轮是源码级范围修复与契约审计；没有目标 KDIR 编译、modpost、CFI Shadow 运行验证或真机测试。Y73s 精确 4.14.141 KDIR、生成头文件和 Module.symvers 仍未确认。没有修改 Boot、KPIMG、vbmeta 或设备分区。
