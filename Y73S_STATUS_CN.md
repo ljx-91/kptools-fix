@@ -1826,3 +1826,19 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 下一步必须先核对 Y73s syscall 45 name-table 的最终符号地址、KPIMG/LKM 两个 Hook 安装路径是否作用于同一入口，以及两个 handler 同时存在时的实际分发顺序。确认前不写 Gate 汇编、不改生产 Hook、不把 KPIMG supercall 当作隐式 Gate 桥接。
 
 状态：本轮仅追加审计文档；Gate 未实现，普通 LKM 卸载安全仍未建立。无 vendor KDIR/Module.symvers，未完成 Y73s .ko 目标编译或真机验证。
+
+## 61. 2026-11-11：确认 KPIMG/LKM syscall Hook Engine 注册表彼此独立
+
+继续追踪实际 patch 后端，确认两套 syscall 45 Hook 并不共享 Hook Engine registry：
+
+- KPIMG 路径：hook_syscalln_override() → inline_wrap_syscalln() → hook_wrap()；chain registry 和 payload 归 KPIMG 自身，文本修改由 kernel/base/hotpatch.c 完成。
+- LKM 路径：kp_install_inline_supercall() → hook()，目标为 SyS_truncate.cfi；registry 是 lkm/hook/hook_runtime.c 中 LKM 自己的 kp_hook_mems，文本修改经 kp_patch_text_batch()。
+- 两边虽然都编译 kernel/base/hook.c，但它们没有共享 chain 对象、origin registry 或锁。LKM 的重复 origin 检查看不到 KPIMG hook，KPIMG registry 也看不到 LKM hook。
+- LKM 安装时会读取目标现有指令并生成 relocation。如果目标已被 KPIMG 改成 branch，LKM trampoline 可能保留跳往 KPIMG trampoline 的分支；但这不是共享 chain 注册，也不能自动证明 callback 顺序或卸载安全。
+- 两套 patch backend 不协调对方的指令快照。如果解析地址或覆盖范围重叠，后续 install/uninstall 可能覆盖另一方安装的 branch。
+
+结论：syscall 45 双 Hook 是明确的架构风险；但 Y73s 上是否精确重叠，仍需核对 KPIMG syscall name-table 的实际解析地址与 LKM SyS_truncate.cfi 的地址/分支别名。当前没有设备运行时 trace，不能宣称已经确定实际安装序列。
+
+Gate 方案必须先明确 syscall 45 的唯一常驻分发 owner，并为另一组件提供显式、版本化注册 ABI；或者移除其中一套竞争 handler。不能把另一镜像里的 callback 当成当前 Hook Engine 的 chain 项。
+
+状态：本轮仅追加审计文档，未修改生产代码。Gate 未实现，普通 LKM 卸载安全仍未建立。
