@@ -2,7 +2,7 @@
 
 > 更新时间：2026-11-10  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 当前源码 HEAD（含本轮修复与状态文档）：`d1f116d0720edf1fb84e5dff65e5fc2ca235d074`  
+> 最近代码修复基线（不含本次状态文档提交）：`980bec8310860927aaf3469a607e1484e79579c0`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -1321,3 +1321,44 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 4. 目标设备运行时验证（在用户明确要求设备操作前不执行刷写或设备操作）。
 
 **本节没有把 Host ABI fixture、KALLSYMS 符号存在性或 GCC KPIMG 构建等同于 Y73s LKM 可加载。**
+
+
+## 39. Y73s 4.14 sucompat 安装失败回滚与并发卸载加固（2026-11-10）
+
+### 发现的生产代码问题
+
+针对 Y73s 的 `prepare_binprm` 回退路径复核 `hook_wrap1()`、`hook_unwrap_remove()` 与 `kernelpatch_init()` 的完整生命周期，发现两个实际风险：
+
+1. `hook_wrap1()` 在文本补丁不确定时可能返回 `-HOOK_PATCH_UNCERTAIN`，但原 `kp_hook_prepare_binprm()` 只在返回成功后记录目标地址和 backend。这样 init rollback 不知道存在可能已发布的 hook。
+2. sucompat teardown 原先调用不返回状态的 `hook_unwrap()`，忽略 `hook_unwrap_remove()` 的 `-EBUSY`。若 transit reader 仍在执行，模块卸载可能在回调代码仍被引用时继续。
+
+### 修复
+
+- 在执行 `hook_wrap1()` 之前保存 `prepare_binprm` 目标地址和 BINPRM backend，使不确定安装结果仍可撤销。
+- `kernelpatch_init()` 在调用 `kp_sucompat_hook_init()` 前先标记 rollback responsibility；即使 init 返回错误，也会执行清理。
+- `kp_sucompat_hook_exit()` 改为返回错误状态，使用 `hook_unwrap_remove()` 的 checked API。
+- 新增 `kp_unwrap_wait()`：遇到 `-EBUSY` 时 `cond_resched()` 并重试，直到 transit readers 排空；只有撤销成功或 `-ENOENT` 才清除目标地址和 backend 状态。
+- init rollback 和 module_exit 对仍无法撤销的 sucompat hook 使用 fail-closed 处理，避免释放仍可能被执行的 LKM 代码。
+- 同样将 getname_flags hook 的 teardown 改为 checked retirement。
+
+### 测试与 CI 记录
+
+相关代码提交：
+- `cdcb31a77723add87f770c40f7fcbe84715192d7`：不确定安装前记录 prepare_binprm 目标；
+- `7849a667a7170f2cd588815811d6a2cf77778b56`：teardown API 改为返回状态；
+- `ddac2be42b3438826db38b7f100b1f10cb4f25fd`：init rollback / module_exit fail-closed；
+- `d315bc0a895da713b1b2df94663a40ef4a2ed42f`：等待活动 transit readers 排空；
+- `b7645988010d7e8623614998f7d8c422d9917246`：更新 LKM lifecycle source contract；
+- `941cab5e72167c4bd15d29c12c20cf05c3f0887a`：增加 reader-drain source contract；
+- `63ef0d82e8759e0567aa69ae72f1455123943a00`、`980bec8310860927aaf3469a607e1484e79579c0`：修复 API contract 测试脚本自身的 Python 语法与诊断字符串断言。
+
+此前失败的 CI 均已定位为测试/契约问题，而非目标内核编译结果：
+- 旧 lifecycle contract 仍要求 unchecked void teardown；
+- API contract 测试曾误写 JavaScript `const`，造成 Python SyntaxError；
+- SELinux diagnostic contract 曾把实际字符串 `selinux_blob_sizes hidden` 错写为 `kp_selinux_blob_sizes hidden`。
+
+最新代码基线 `980bec8310860927aaf3469a607e1484e79579c0` 的 GCC 14.2 KPIMG 和 Windows workflow 当时仍在运行；不得提前记为成功。前置独立 LKM/KPM lifecycle contract 已通过。
+
+### 验证边界
+
+本轮证明的是源码生命周期修复和 Host/source contract 覆盖；尚未完成精确 Y73s vendor KDIR 编译、Clang 9.0.3 CFI/LTO + modpost、真实 `prepare_binprm.cfi` 机器码反汇编或真机执行。等待 reader drain 若 reader 永不退出会阻塞卸载，这是有意的安全取舍，避免带着仍活动的回调释放 LKM text。
