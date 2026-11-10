@@ -108,8 +108,10 @@ require("kp_syscall_table_init()" not in init_source,
         "Y73S init no longer fails on hidden sys_call_table data symbol")
 require("kp_phys_from_virt_no_init_mm" in patch_memory and
         "virt_addr_valid((void *)addr)" in patch_memory and
-        "virt_to_phys((void *)addr)" in patch_memory,
-        "4.14 text patching has a direct-map/kernel-image translation fallback")
+        "virt_to_phys((void *)addr)" in patch_memory and
+        "vmalloc_to_page((void *)addr)" in patch_memory and
+        "page_to_phys(page)" in patch_memory,
+        "4.14 patching translates kernel image, linear-map, vmalloc and module pages without init_mm")
 require("kp_hook_alloc_backend == KP_HOOK_ALLOC_MODULE" in hook_runtime and
         "module_memfree() removes that mapping" in hook_runtime and
         "flush_icache_all" not in hook_runtime,
