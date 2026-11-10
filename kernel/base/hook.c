@@ -825,29 +825,48 @@ fail:
 }
 KP_EXPORT_SYMBOL(hook);
 
-void unhook(void *func)
+int unhook_checked(void *func)
 {
     uint64_t origin;
     hook_t *hook;
     unsigned long flags;
     int rc;
 
-    if (is_bad_address(func)) return;
+    if (is_bad_address(func))
+        return -EINVAL;
     origin = branch_func_addr((uint64_t)func);
-    if (is_bad_address((void *)origin)) return;
+    if (is_bad_address((void *)origin))
+        return -EINVAL;
+
     flags = hook_engine_lock();
     hook = hook_get_mem_from_origin_type(origin, INLINE);
-    if (!hook || hook_mem_claim_retire(hook)) {
+    if (!hook) {
         hook_engine_unlock(flags);
-        return;
+        return -ENOENT;
+    }
+    rc = hook_mem_claim_retire(hook);
+    if (rc) {
+        hook_engine_unlock(flags);
+        return rc;
     }
     hook_engine_unlock(flags);
 
     rc = hook_uninstall(hook);
-    if (!rc)
+    if (!rc) {
         hook_mem_retire(hook);
-    else
-        hook_mem_cancel_retire(hook);
+        return 0;
+    }
+
+    hook_mem_cancel_retire(hook);
+    return rc;
+}
+KP_EXPORT_SYMBOL(unhook_checked);
+
+/* Preserve the legacy fire-and-forget API for existing callers. Security
+ * sensitive teardown paths should use unhook_checked() and inspect its result. */
+void unhook(void *func)
+{
+    (void)unhook_checked(func);
 }
 KP_EXPORT_SYMBOL(unhook);
 
