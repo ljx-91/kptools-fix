@@ -1,0 +1,79 @@
+#!/usr/bin/env python3
+"""Fail-closed Y73S syscall-45 target selection contract.
+
+The Y73S 4.14.141 image has a short sys_truncate CFI alias adjacent to other
+CFI entries. KPIMG must select the real SyS_truncate.cfi body when it needs an
+inline hook and must not fall back to patching the short alias.
+"""
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read(path):
+    return (ROOT / path).read_text(encoding="utf-8")
+
+
+def function_body(source, signature):
+    start = source.find(signature)
+    if start < 0:
+        raise AssertionError(f"missing function: {signature}")
+    brace = source.find("{", start)
+    if brace < 0:
+        raise AssertionError(f"missing body: {signature}")
+    depth = 0
+    for pos in range(brace, len(source)):
+        if source[pos] == "{":
+            depth += 1
+        elif source[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                return source[brace + 1:pos]
+    raise AssertionError(f"unterminated body: {signature}")
+
+
+def before(source, first, second, message):
+    a, b = source.find(first), source.find(second)
+    if a < 0 or b < 0 or a >= b:
+        raise AssertionError(message)
+
+
+def main():
+    syscall_c = read("kernel/patch/common/syscall.c")
+    sysname_c = read("kernel/patch/common/sysname.c")
+    kp_supercall = read("kernel/patch/common/supercall.c")
+    lkm_supercall = read("lkm/supercall/supercall.c")
+    resolver = function_body(syscall_c, "uintptr_t syscalln_name_addr(")
+
+    checks = {
+        "Y73S-only syscall-45 inline path is gated to native no-wrapper kernels":
+            "#if defined(KP_TARGET_Y73S)" in resolver and
+            "!is_compat && !has_syscall_wrapper && nr == 45" in resolver,
+        "Y73S syscall 45 resolves the verified implementation body":
+            'kallsyms_lookup_name("SyS_truncate.cfi")' in resolver,
+        "missing Y73S implementation symbol fails closed":
+            "if (!y73s_truncate)\n            return 0;" in resolver,
+        "Y73S implementation is cached before generic alias lookup":
+            "syscall_name_table[nr].addr = y73s_truncate;" in resolver and
+            resolver.index("return y73s_truncate;") < resolver.index("const char *name = 0;"),
+        "generic syscall table's syscall 45 alias remains unchanged":
+            '[45] = { "sys_truncate", 0 }' in sysname_c,
+        "KPIMG supercall keeps the six-register legacy ABI":
+            "hook_syscalln_override(__NR_supercall, 6, before, 0, 0)" in kp_supercall,
+        "LKM 4.14 path selects the same implementation body":
+            '"SyS_truncate.cfi"' in lkm_supercall and
+            "KP_SUPERCALL_BACKEND_INLINE_ARGS" in lkm_supercall,
+        "Y73S profile define is wired into the KPIMG build":
+            "ifdef Y73S_TARGET" in read("kernel/Makefile") and
+            "-DKP_TARGET_Y73S=1" in read("kernel/Makefile"),
+    }
+
+    for label, ok in checks.items():
+        print(("PASS" if ok else "FAIL") + ": " + label)
+    if not all(checks.values()):
+        raise SystemExit(1)
+    print(f"Y73S syscall-45 contract: {len(checks)}/{len(checks)} checks passed")
+
+
+if __name__ == "__main__":
+    main()
