@@ -364,12 +364,12 @@ int hook_rename_lsm_exit(void)
 	} while (rc == -EBUSY);
 
 	if (rc && rc != -ENOENT) {
-		logke("rename LSM hook removal failed: %d\\n", rc);
+		logke("rename LSM hook removal failed: %d\n", rc);
 		return rc;
 	}
 
 	kp_rename_hook_addr = 0;
 	kp_rename_hook_cb = NULL;
-	logki("rename LSM hook removed\\n");
+	logki("rename LSM hook removed\n");
 	return 0;
 }
