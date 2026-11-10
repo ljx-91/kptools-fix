@@ -66,14 +66,16 @@ int kp_accctl_init(void)
 	if (kp_selinux_blob_sizes) {
 		kp_selinux_cred_offset = kp_selinux_blob_sizes->lbs_cred;
 	} else {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0) && defined(CONFIG_SECURITY_SELINUX)
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0) && defined(CONFIG_SECURITY_SELINUX) && \
+	!defined(CONFIG_SECURITY_APPARMOR) && !defined(CONFIG_SECURITY_SMACK) && \
+	!defined(CONFIG_SECURITY_TOMOYO)
 		/*
 		 * Android 4.14 uses the legacy single-SELinux cred blob. The
 		 * target config has SELinux enabled and all other optional LSMs
 		 * disabled, so its cred_security_struct starts at cred->security.
 		 */
 		kp_selinux_cred_offset = 0;
-		logkw("selinux_blob_sizes hidden; using verified 4.14 cred offset 0\n");
+		logkw("selinux_blob_sizes hidden; using verified single-SELinux 4.14 cred offset 0\n");
 #endif
 	}
 
