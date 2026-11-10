@@ -151,3 +151,13 @@ A valid bridge must be explicitly created on both sides and have a stable lifeti
 ### Next safe action
 
 Before writing Gate assembly, map every KPIMG entry/registration interface that is already reachable from the LKM on Y73S and identify a real, stable handoff. If none exists, stop and report that the selected architecture needs a deliberate cross-component ABI change. No production code should call an unresolved KPIMG address.
+
+### Additional check: KPIMG's own KPM loader is not an LKM bridge
+
+The repository also contains `kernel/patch/module/module.c`, the KPIMG-side KPM loader. Its `simplify_symbols()` resolves undefined symbols with KPIMG's private `symbol_lookup_name()`, which is the correct namespace for KPIMG-exported symbols. However:
+
+- This loader is distinct from `lkm/kpm/module.c`, which is the loader used by the LKM supercall path reviewed here.
+- The KPIMG loader's `load_module_ex()`, `load_module()`, and `unload_module()` entrypoints are not marked with `KP_EXPORT_SYMBOL` in the reviewed file; they are not established as callable public registration APIs for the LKM.
+- The LKM loader's `simplify_symbols()` does not call the KPIMG-side loader or KPIMG `symbol_lookup_name()`.
+
+Thus, the presence of a working KPIMG-side KPM resolver does not by itself solve the LKM handoff. Any bridge based on a resident KPM must explicitly route its load/registration through a proven KPIMG entrypoint, and its KPM image must remain resident until the LKM Gate has been closed and drained. The current source does not establish that route.
