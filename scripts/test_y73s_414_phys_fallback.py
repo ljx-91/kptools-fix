@@ -38,6 +38,10 @@ def main():
 #include <stdio.h>
 #define KERNEL_START 0x1000UL
 #define KERNEL_END   0x2000UL
+#define PAGE_MASK    (~0xfffUL)
+struct page { unsigned long phys; };
+static struct page vmalloc_page = { .phys = 0x9000UL };
+static struct page module_page = { .phys = 0xb000UL };
 static bool virt_addr_valid(const void *p)
 {
     unsigned long a = (unsigned long)p;
@@ -47,6 +51,14 @@ static unsigned long virt_to_phys(const void *p)
 {
     return (unsigned long)p - 0x1000UL;
 }
+static struct page *vmalloc_to_page(const void *p)
+{
+    unsigned long a = (unsigned long)p;
+    if (a >= 0x4000UL && a < 0x5000UL) return &vmalloc_page;
+    if (a >= 0xa000UL && a < 0xb000UL) return &module_page;
+    return NULL;
+}
+static unsigned long page_to_phys(struct page *p) { return p->phys; }
 """
     tests = r"""
 int main(void)
@@ -67,12 +79,26 @@ int main(void)
     }
     puts("[PASS] valid linear-map address uses virt_to_phys");
 
-    pa = kp_phys_from_virt_no_init_mm(0x4000UL);
-    if (pa != 0) {
-        fprintf(stderr, "unmapped/vmalloc address accepted: %lx\n", pa);
+    pa = kp_phys_from_virt_no_init_mm(0x4120UL);
+    if (pa != 0x9120UL) {
+        fprintf(stderr, "vmalloc page translation wrong: %lx\n", pa);
         return 1;
     }
-    puts("[PASS] non-direct-map address rejected without init_mm");
+    puts("[PASS] vmalloc address uses exported vmalloc_to_page");
+
+    pa = kp_phys_from_virt_no_init_mm(0xa120UL);
+    if (pa != 0xb120UL) {
+        fprintf(stderr, "module_alloc page translation wrong: %lx\n", pa);
+        return 1;
+    }
+    puts("[PASS] module_alloc address uses vmalloc_to_page");
+
+    pa = kp_phys_from_virt_no_init_mm(0x6000UL);
+    if (pa != 0) {
+        fprintf(stderr, "unmapped address accepted: %lx\n", pa);
+        return 1;
+    }
+    puts("[PASS] unmapped address rejected without init_mm");
 
     pa = kp_phys_from_virt_no_init_mm(0x2000UL);
     if (pa != 0) {
