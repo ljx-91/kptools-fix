@@ -86,8 +86,14 @@ static const char symbol_names[] = "\0foo\0";
 
 static unsigned int name_offset(const char *name)
 {
-    const char *p = strstr(section_names, name);
-    return (unsigned int)(p - section_names);
+    const char *p = section_names;
+    const char *end = section_names + sizeof(section_names);
+    while (p < end && *p) {
+        if (!strcmp(p, name))
+            return (unsigned int)(p - section_names);
+        p += strlen(p) + 1;
+    }
+    return 0xffffffffU;
 }
 
 static void reset_fixture(struct kp_load_info *info)
