@@ -23,30 +23,20 @@ struct pt_regs;
 static bool kp_target_in_module(unsigned long target)
 {
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
-	/* 6.4+ replaced core_layout/init_layout with a per-type mem[] array. */
-	enum mod_mem_type type;
+	/* Only executable module text is a valid CFI call target. Data and
+	 * read-only data must never be treated as trusted branch destinations. */
+	struct module_memory *m = &THIS_MODULE->mem[MOD_TEXT];
 
-	for (type = MOD_TEXT; type < MOD_MEM_NUM_TYPES; type++) {
-		struct module_memory *m = &THIS_MODULE->mem[type];
-		if (m->base &&
-		    target >= (unsigned long)m->base &&
-		    target < (unsigned long)m->base + m->size)
-			return true;
-	}
+	return m->base && target >= (unsigned long)m->base &&
+	       target - (unsigned long)m->base < m->size;
 #else
-	if (target >= (unsigned long)THIS_MODULE->core_layout.base &&
-	    target < (unsigned long)THIS_MODULE->core_layout.base +
-			      THIS_MODULE->core_layout.size)
-		return true;
-
-	/* Init section (freed after module init, but safe to check). */
-	if (THIS_MODULE->init_layout.base &&
-	    target >= (unsigned long)THIS_MODULE->init_layout.base &&
-	    target < (unsigned long)THIS_MODULE->init_layout.base +
-			      THIS_MODULE->init_layout.size)
-		return true;
+	/* Android 4.14 CFI shadow covers core_layout.text_size, not the complete
+	 * core_layout allocation. Keep the bypass range identical to that text. */
+	return THIS_MODULE->core_layout.base &&
+	       target >= (unsigned long)THIS_MODULE->core_layout.base &&
+	       target - (unsigned long)THIS_MODULE->core_layout.base <
+		       THIS_MODULE->core_layout.text_size;
 #endif
-	return false;
 }
 
 /* Check if the CFI-mismatch target is in LKM-controlled memory. */
