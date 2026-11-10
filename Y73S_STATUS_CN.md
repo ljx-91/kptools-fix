@@ -1898,6 +1898,8 @@ KPIMG `syscalln_name_addr()` 对 syscall-name table 中的名字按 `__arm64_`/�
 
 ## 64. 2026-11-11：用原始 Boot 反汇编确认 syscall 45 入口，并界定 KPIMG/LKM 共存行为
 
+> 本节的原始镜像反汇编和失败路径核对，更新并覆盖第 61-62 节关于 syscall 45 解析地址及双 Hook 实际行为的未决判断。
+
 ### 原始镜像反汇编
 
 本轮从资料库重新取得原始 boot.img，核对 SHA-256 为
