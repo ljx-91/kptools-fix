@@ -36,6 +36,8 @@ patch_memory = read("lkm/infra/patch_memory.c")
 secpass = read("lkm/infra/secpass.c")
 accctl = read("lkm/supercall/accctl.c")
 sucompat_hook = read("lkm/supercall/sucompat_hook.c")
+su_source = read("lkm/supercall/su.c")
+sucompat_source = read("lkm/supercall/sucompat.c")
 init_source = read("lkm/core/init.c")
 
 # In upstream v4.14.141 ARM64:
@@ -231,5 +233,28 @@ commit_su = accctl.split("int kp_commit_su(", 1)[1].split("int kp_task_su(", 1)[
 require(commit_su.index("kp_apply_su_cred(&new, to_uid, sctx)") <
         commit_su.index("current_thread_info()->flags &= ~_TIF_SECCOMP"),
         "seccomp is changed only after credential preparation succeeds")
+
+
+# Fixed-size SU profiles originate in user memory and in KStorage.
+su_sc = su_source.split("long kp_su_sc(", 1)[1].split("long kp_su_task_sc(", 1)[0]
+su_grant = su_source.split("long kp_su_grant_uid_sc(", 1)[1].split("long kp_su_revoke_uid_sc(", 1)[0]
+su_task = su_source.split("long kp_su_task_sc(", 1)[1].split("long kp_su_grant_uid_sc(", 1)[0]
+require("memchr(profile->scontext, '\\\\0', sizeof(profile->scontext))" in su_sc and
+        "memchr(profile->scontext, '\\\\0', sizeof(profile->scontext))" in su_grant,
+        "user-provided fixed-size SU profile contexts must be NUL-terminated before string use")
+require("return -EOPNOTSUPP;" in su_task and "memdup_user(" not in su_task,
+        "disabled cross-task SU rejects before copying or parsing an unused user profile")
+add_allow = sucompat_source.split("int kp_su_add_allow_uid(", 1)[1].split("int kp_su_remove_allow_uid(", 1)[0]
+profile_read = sucompat_source.split("int kp_su_allow_uid_profile(", 1)[1].split("/* APatch module exclude", 1)[0]
+default_sctx = sucompat_hook.split("static const char *kp_default_sctx(", 1)[1].split("static long kp_execve_handler(", 1)[0]
+require("strnlen(scontext, sizeof(profile.scontext))" in add_allow and
+        "sctx_len >= sizeof(profile.scontext)" in add_allow,
+        "allowlist storage rejects oversized SELinux context strings instead of truncating")
+require("ks->dlen != sizeof(*out_profile)" in profile_read and
+        "!out_profile" in profile_read,
+        "SU profile retrieval validates output pointer and exact KStorage record size")
+require("strnlen(profile.scontext, sizeof(profile.scontext))" in default_sctx and
+        "memcpy(sctx, profile.scontext, sctx_len + 1)" in default_sctx,
+        "default SELinux context copy is bounded by the stored fixed-size profile")
 
 print("[PASS] Y73S 4.14.141 source compatibility contract")
