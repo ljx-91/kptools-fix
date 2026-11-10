@@ -1502,3 +1502,28 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - GCC 14.2 Y73S KPIMG run 42823027868：success；verify_kpm_loader_contract.py、Y73S 4.14.141 API contract、LKM/KPIMG parser tests 均通过。
 - Windows workflow run 42823027880：success，包含 Ubuntu KPIMG 与 Windows kptools.exe job。
 - 状态文档本次提交之后的文档 HEAD 不改变以上代码/测试基线。
+
+
+## 45. Y73s 4.14 无 init_mm 场景下 KPM NX 回收失败关闭（2026-11-10）
+
+### 发现
+
+- LKM KPM 的 kp_restore_nx_gp() 原先调用 set_memory_nx() 却忽略返回值；当 init_mm 不可解析且 module allocator/execmem 后端允许跳过 PTE walker 时，kp_update_bti_gp() 会按后端策略返回成功，可能掩盖 set_memory_nx() 的失败，随后 kp_free_exec() 将仍可能可执行的页面交还 allocator。
+- Y73s 4.14 的 KALLSYMS profile 要求存在 set_memory_nx；但回收逻辑仍必须检查调用结果，不能只依赖符号存在。
+
+### 修复
+
+- kp_restore_nx_gp() 现在先调用 set_memory_nx() 并保存返回值。
+- init_mm 不可用时，只有 set_memory_nx() 存在且返回成功，才允许 no-init_mm 快速路径完成；函数缺失或调用失败均返回错误，使 kp_free_exec() 按既有 fail-closed 策略泄漏该区域，而不是将可执行页交还通用 allocator。
+- init_mm 可用时，仍允许 PTE walker 作为权威恢复/验证路径；即使 set_memory_nx() 报错，只要 PTE walker 成功更新并验证 NX/UXN/BTI 位，才允许释放。
+- 删除 kp_unload_module() 中重复且未检查返回值的 set_memory_nx() 调用，统一由 kp_free_exec() 的 checked retirement 负责。
+- 新增 scripts/test_kpm_execmem_restore.py，对缺失函数、NX 失败、NX 成功、init_mm PTE fallback 和恢复失败注入执行生产 helper。
+
+### 验证
+
+- GCC 14.2 Y73S KPIMG run 42824411097，代码/测试 HEAD 6311981f85030dad04de92a087bd4a29496c3fee：success；新增 NX restore fixture 五项全部 PASS。
+- 同一提交 Windows workflow run 42824411048：success；Ubuntu job 中独立 LKM KPM loader contract、KPIMG build、Linux kptools/source contracts 均成功，Windows kptools.exe 构建及 artifacts 上传成功。
+
+### 边界
+
+该修复覆盖 no-init_mm 回收分支的失败关闭逻辑并由 Host failure-injection 验证；仍未在 Y73s 真机上实测 set_memory_nx 对 module_alloc 页面实际修改 PTE 的行为。目标 vendor KDIR 下 LKM 编译/modpost、Clang 9.0.3 CFI/LTO 链接和真机运行仍未完成。
