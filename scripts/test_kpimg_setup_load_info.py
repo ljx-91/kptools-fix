@@ -183,14 +183,9 @@ static int run_case(const char *name, int expected)
     struct load_info info;
     int rc;
     reset_fixture(&info);
-    fprintf(stderr, "[TRACE] %s: before elf_header_check\\n", name);
     rc = elf_header_check(&info);
-    fprintf(stderr, "[TRACE] %s: elf_header_check rc=%d\\n", name, rc);
-    if (!rc) {
-        fprintf(stderr, "[TRACE] %s: before setup_load_info\\n", name);
+    if (!rc)
         rc = setup_load_info(&info);
-        fprintf(stderr, "[TRACE] %s: setup_load_info rc=%d\\n", name, rc);
-    }
     if ((rc == 0) != (expected == 0)) {
         fprintf(stderr, "%s: expected %d-class result, got %d (%s)\n",
                 name, expected, rc, info.info.error_msg);
@@ -225,8 +220,8 @@ int main(void)
     puts("[PASS] undefined section-name table index rejected");
 
     reset_fixture(&info);
-    elf_header_check(&info);
-    info.sechdrs[2].sh_offset++;
+    if (elf_header_check(&info)) return 1;
+    ((Elf_Shdr *)(image + SHOFF))[2].sh_offset++;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] misaligned file-backed section rejected");
 
@@ -244,19 +239,19 @@ int main(void)
 
     reset_fixture(&info);
     elf_header_check(&info);
-    info.sechdrs[6].sh_entsize = 1;
+    ((Elf_Shdr *)(image + SHOFF))[6].sh_entsize = 1;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] incorrect SYMTAB entry size rejected");
 
     reset_fixture(&info);
     elf_header_check(&info);
-    info.sechdrs[6].sh_size--;
+    ((Elf_Shdr *)(image + SHOFF))[6].sh_size--;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] non-integral SYMTAB size rejected");
 
     reset_fixture(&info);
     elf_header_check(&info);
-    info.sechdrs[6].sh_link = 4;
+    ((Elf_Shdr *)(image + SHOFF))[6].sh_link = 4;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] SYMTAB link to non-STRTAB rejected");
 
@@ -269,7 +264,7 @@ int main(void)
 
     reset_fixture(&info);
     elf_header_check(&info);
-    info.sechdrs[5].sh_size = 4;
+    ((Elf_Shdr *)(image + SHOFF))[5].sh_size = 4;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] unterminated symbol name rejected");
 
@@ -289,19 +284,19 @@ int main(void)
 
     reset_fixture(&info);
     elf_header_check(&info);
-    info.sechdrs[7].sh_entsize = 1;
+    ((Elf_Shdr *)(image + SHOFF))[7].sh_entsize = 1;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] incorrect RELA entry size rejected before layout");
 
     reset_fixture(&info);
     elf_header_check(&info);
-    info.sechdrs[7].sh_size--;
+    ((Elf_Shdr *)(image + SHOFF))[7].sh_size--;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] non-integral RELA size rejected before layout");
 
     reset_fixture(&info);
     elf_header_check(&info);
-    info.sechdrs[6].sh_link = 99;
+    ((Elf_Shdr *)(image + SHOFF))[6].sh_link = 99;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] out-of-range SYMTAB string-table link rejected");
 
