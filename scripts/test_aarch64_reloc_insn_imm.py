@@ -116,6 +116,72 @@ int main(void)
 """
 
 
+def data_harness(function: str, kpimg: bool) -> str:
+    enum_op = "aarch64_reloc_op" if kpimg else "kp_aarch64_reloc_op"
+    prefix = r"""
+#include <stdint.h>
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+typedef uint64_t u64;
+typedef int64_t s64;
+typedef uint32_t u32;
+typedef int16_t s16;
+typedef int32_t s32;
+#define pr_err(...) ((void)0)
+enum ENUM_OP { RELOC_OP_NONE, RELOC_OP_ABS, RELOC_OP_PREL, RELOC_OP_PAGE };
+static u64 do_reloc(enum ENUM_OP op, void *place, u64 val)
+{
+    (void)op; (void)place;
+    return val;
+}
+""".replace("ENUM_OP", enum_op)
+    return prefix + "\n" + function + r"""
+
+static int run_data_case(const char *name, u64 value, int len, int op,
+                         int expected, int unchanged, u64 expected_low)
+{
+    u64 storage = 0xAABBCCDDEEFF0011ULL;
+    u64 before = storage;
+    int rc = reloc_data((enum ENUM_OP)op, &storage, value, len);
+    if (rc != expected) {
+        fprintf(stderr, "%s: expected rc %d, got %d\n", name, expected, rc);
+        return 1;
+    }
+    if (unchanged && storage != before) {
+        fprintf(stderr, "%s: failed relocation modified destination\n", name);
+        return 1;
+    }
+    if (!unchanged && (storage & (len == 16 ? 0xffffULL :
+                                  len == 32 ? 0xffffffffULL : ~0ULL)) != expected_low) {
+        fprintf(stderr, "%s: encoded value mismatch: storage=%016llx\n",
+                name, (unsigned long long)storage);
+        return 1;
+    }
+    printf("[PASS] %s\n", name);
+    return 0;
+}
+
+int main(void)
+{
+    int failed = 0;
+    failed |= run_data_case("PREL16 positive maximum accepted", 32767, 16,
+                            RELOC_OP_PREL, 0, 0, 32767);
+    failed |= run_data_case("PREL16 positive overflow rejected atomically", 32768, 16,
+                            RELOC_OP_PREL, -ERANGE, 1, 0);
+    failed |= run_data_case("PREL16 negative minimum accepted", (u64)(s64)-32768, 16,
+                            RELOC_OP_PREL, 0, 0, 0x8000);
+    failed |= run_data_case("ABS16 unsigned maximum accepted", 65535, 16,
+                            RELOC_OP_ABS, 0, 0, 65535);
+    failed |= run_data_case("ABS16 unsigned overflow rejected atomically", 65536, 16,
+                            RELOC_OP_ABS, -ERANGE, 1, 0);
+    failed |= run_data_case("unsupported width rejected atomically", 7, 8,
+                            RELOC_OP_ABS, -EINVAL, 1, 0);
+    return failed;
+}
+"""
+
+
 def main() -> int:
     compiler = shutil.which("cc") or shutil.which("gcc")
     if not compiler:
@@ -129,17 +195,24 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="kp-reloc-test-") as tmp:
         tmpdir = Path(tmp)
         for label, path, signature in sources:
-            function = extract_function(path.read_text(encoding="utf-8"), signature)
-            source = tmpdir / f"{label.lower()}_reloc_test.c"
-            binary = tmpdir / f"{label.lower()}_reloc_test"
-            source.write_text(harness(function, label == "KPIMG"), encoding="utf-8")
-            subprocess.run(
-                [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
-                 str(source), "-o", str(binary)],
-                check=True,
-            )
-            subprocess.run([str(binary)], check=True)
-    print("[PASS] both loader relocation implementations executed in host harness")
+            source_text = path.read_text(encoding="utf-8")
+            imm_function = extract_function(source_text, signature)
+            data_signature = "static int reloc_data("
+            data_function = extract_function(source_text, data_signature)
+            for suffix, code in (
+                ("insn", harness(imm_function, label == "KPIMG")),
+                ("data", data_harness(data_function, label == "KPIMG")),
+            ):
+                source = tmpdir / f"{label.lower()}_{suffix}_test.c"
+                binary = tmpdir / f"{label.lower()}_{suffix}_test"
+                source.write_text(code, encoding="utf-8")
+                subprocess.run(
+                    [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+                     str(source), "-o", str(binary)],
+                    check=True,
+                )
+                subprocess.run([str(binary)], check=True)
+    print("[PASS] both loaders' instruction and data relocation helpers executed")
     return 0
 
 
