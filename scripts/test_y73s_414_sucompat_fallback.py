@@ -52,7 +52,7 @@ typedef unsigned int uid_t;
 #define PTR_ERR(p) ((long)(intptr_t)(p))
 #define _TIF_SECCOMP 0x10UL
 
-struct file { int id; };
+struct file { int id; bool executable; };
 struct cred { uid_t uid; };
 struct linux_binprm {
     const char *filename;
@@ -71,7 +71,7 @@ typedef struct {
 } hook_fargs1_t;
 struct thread_info { unsigned long flags; };
 static struct thread_info ti = { .flags = _TIF_SECCOMP };
-static struct file shell_file = { .id = 2 };
+static struct file shell_file = { .id = 2, .executable = true };
 static uid_t test_uid = 10001;
 static bool allow_uid = true, manager_uid;
 static bool fail_shell_open;
@@ -90,13 +90,13 @@ static const char *kp_default_sctx(uid_t uid, char *buf, size_t size)
     if (size) snprintf(buf, size, "%s", "u:r:magisk:s0");
     return buf;
 }
-static struct file *filp_open(const char *path, int flags, int mode)
+static struct file *open_exec_stub(const char *path)
 {
-    (void)flags; (void)mode;
     if (strcmp(path, KP_SH_PATH) || fail_shell_open)
         return (struct file *)(intptr_t)-ENOENT;
     return &shell_file;
 }
+static struct file *(*kp_open_exec)(const char *name) = open_exec_stub;
 static void fput(struct file *file) { (void)file; fput_calls++; }
 static struct thread_info *current_thread_info(void) { return &ti; }
 static int kp_apply_su_cred(struct cred **cred, uid_t uid, const char *sctx)
@@ -123,7 +123,7 @@ int main(void)
     hook_fargs1_t args = { .arg0 = (uint64_t)(uintptr_t)&bprm };
 
     kp_before_prepare_binprm(&args, NULL);
-    if (!args.local.data0 || bprm.file != &shell_file ||
+    if (!args.local.data0 || bprm.file != &shell_file || !bprm.file->executable ||
         strcmp(bprm.filename, KP_SH_PATH) || strcmp(bprm.interp, KP_SH_PATH) ||
         bprm.argc != 3 || fput_calls != 1) {
         fprintf(stderr, "su exec redirect failed\n");
