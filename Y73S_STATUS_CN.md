@@ -858,3 +858,23 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 - 这是对两个真实函数体的 Host 执行测试，但 encoder 与地址计算使用 stub；没有覆盖 ELF section/symbol/RELA 解析、所有 relocation type 或目标内核环境。
 - 新 CI 正在执行；需要等待日志确认三组 case 均通过。
 - Y73s 精确 4.14.141 KDIR、Clang 9.0.3 CFI/LTO、MODVERSIONS 和真机运行仍未验证。
+
+
+## 27. AArch64 数据重定位 Host 边界测试扩展（2026-11-10）
+
+在指令立即数字段测试基础上，继续把同一 Host harness 扩展到两份 loader 的 `reloc_data()` 实际函数体。覆盖 PREL16 正负边界、ABS16 无符号上界、溢出失败不写入，以及不支持宽度失败不写入。测试 harness 对 `do_reloc` 使用确定性 stub，保留真实 `reloc_data()` 的范围检查与目标写入代码。
+
+新增/调整：
+- 测试脚本统一命名为 `scripts/test_aarch64_relocations.py`。
+- 对 LKM 与 KPIMG 分别编译并执行 instruction/data 两组实际函数体。
+- 数据重定位覆盖：PREL16 +32767 成功、+32768 拒绝、-32768 成功；ABS16 65535 成功、65536 拒绝；非法宽度拒绝。
+- 所有拒绝用例均检查目标缓冲区保持原值。
+- Linux Host audit workflow 已切换到新脚本名称。
+
+提交：
+- `0ae2ed0677eb6d5b3f773880075d1ca5f5d1742f`：扩展数据重定位可执行测试。
+- `37ad0adc2de758610f4dfc296e686e9924082f9e`：采用统一脚本名。
+- `a15f0c4592b8fba470316387d1f837bf7417ff02`：更新 CI 调用。
+- `097084669f17a18ae7fdf7ec1d8a35f89ca65373`：删除旧脚本路径。
+
+验证边界：本轮新增数据重定位用例的 CI 尚待执行确认；Host harness 的地址计算仍使用 stub，不覆盖完整 ELF/RELA 表驱动执行。
