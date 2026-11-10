@@ -316,10 +316,31 @@ static int simplify_symbols(struct module *mod, struct load_info *info)
             }
             sym[i].st_value = addr;
             break;
-        default:
-            secbase = info->sechdrs[sym[i].st_shndx].sh_addr;
+        default: {
+            Elf_Shdr *symsh;
+
+            /* setup_load_info() validates indices before layout, but keep
+             * this conversion safe when called with malformed load metadata. */
+            if (sym[i].st_shndx >= info->hdr->e_shnum) {
+                set_load_error(info, "invalid ELF symbol section index");
+                return -ENOEXEC;
+            }
+            symsh = &info->sechdrs[sym[i].st_shndx];
+
+            /* ET_REL st_value is an offset, not a runtime address. */
+            if (sym[i].st_value > symsh->sh_size ||
+                sym[i].st_size > symsh->sh_size - sym[i].st_value) {
+                set_load_error(info, "ELF symbol extent exceeds its defining section");
+                return -ENOEXEC;
+            }
+            secbase = symsh->sh_addr;
+            if (sym[i].st_value > ~0UL - secbase) {
+                set_load_error(info, "ELF symbol runtime address overflows");
+                return -ENOEXEC;
+            }
             sym[i].st_value += secbase;
             break;
+        }
         }
     }
     return ret;
