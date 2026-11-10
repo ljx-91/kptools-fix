@@ -96,6 +96,9 @@ int kp_get_module_info(const char *name, char *out_info, int size);
 /* Init the module registry list. */
 int kp_kpm_init(void);
 
+/* Tear down a KPM runtime that was initialized but never exposed to callers. */
+void kp_kpm_exit(void);
+
 /*
  * CFI / BTI shielding for KPM kallsyms iteration. On Qualcomm-hardened kernels
  * (cf. find_check_fn in the vendor kallsyms/CFI code) a callback address that
