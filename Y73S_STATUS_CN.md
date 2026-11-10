@@ -836,3 +836,25 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 验证边界：
 - 本轮修复针对 relocation 表达式中被移除的低位，避免静默截断；静态 verifier 和新 CI 仍需验证。
 - 尚未使用实际 AArch64 ELF fixture 执行 relocation 函数，也没有真实 KPM 加载或真机运行结果。
+
+
+## 26. AArch64 指令重定位可执行 Host 测试（2026-11-10）
+
+本轮把此前仅有源码契约检查的指令重定位路径推进到可执行测试。复核时还发现 LKM 的 `reloc_insn_imm()` 在检查立即数溢出前就把编码后的指令写回 `place`；若后续返回 `-ERANGE`，当前重定位条目会留下局部写入。KPIMG 版本已先校验再提交，LKM 版本现已统一为先做对齐与范围验证、最后写回指令。
+
+修改：
+- `lkm/kpm/relo.c`：把指令写回移到溢出检查之后。
+- 新增 `scripts/test_aarch64_reloc_insn_imm.py`：从 LKM 与 KPIMG 两份真实源文件中提取 `reloc_insn_imm()` 函数体，生成临时 Host C harness，以系统 C 编译器编译并执行。仅对 `do_reloc` 与指令 immediate encoder 使用最小 stub，实际执行两个 loader 的函数体。
+- 覆盖三种场景：未对齐值返回 `-ENOEXEC` 且不写入；对齐且在范围内的值成功编码；超出字段范围返回 `-ERANGE` 且不写入。
+- 在 Linux Host 离线审计 workflow 中加入该可执行测试，并在静态 verifier 中增加“溢出检查先于指令写回”的顺序断言。
+
+提交：
+- `72eb93bc354d183323383a41181f76446e6113b7`：修复 LKM 指令写回时序。
+- `5c53b746e4203dc277deb01df957fe0f443eeb38`：新增 Host C harness。
+- `ede8f263264067b4a96675eab15f42677ecae3c4`：CI 执行 harness。
+- `910f7b59a75570abca177a6a5c78b7b40d2dc7b4`：增加原子写回顺序契约。
+
+测试边界：
+- 这是对两个真实函数体的 Host 执行测试，但 encoder 与地址计算使用 stub；没有覆盖 ELF section/symbol/RELA 解析、所有 relocation type 或目标内核环境。
+- 新 CI 正在执行；需要等待日志确认三组 case 均通过。
+- Y73s 精确 4.14.141 KDIR、Clang 9.0.3 CFI/LTO、MODVERSIONS 和真机运行仍未验证。
