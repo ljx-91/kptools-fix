@@ -3,6 +3,7 @@ name: Build Linux kptools for Y73S offline audit
 on:
   push:
     branches:
+      - y73s-cred-layout-guards-20261108
       - y73s-dcache-coherency-20261108
     paths:
       - 'tools/**'
@@ -10,7 +11,6 @@ on:
       - 'lkm/**'
       - 'kernel/patch/**'
       - '.github/workflows/build-y73s-kptools-host.yml'
-      - y73s-cred-layout-guards-20261108
 
 permissions:
   contents: read
