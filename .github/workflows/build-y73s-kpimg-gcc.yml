@@ -63,6 +63,7 @@ jobs:
           python3 scripts/test_kpimg_kpm_loader.py
           python3 scripts/test_y73s_414_phys_fallback.py
           python3 scripts/test_y73s_414_supercall_abi.py
+          python3 scripts/verify_y73s_414_kallsyms_profile.py
           cd kernel
           make clean
           make -j"$(nproc)" hdr kpimg
