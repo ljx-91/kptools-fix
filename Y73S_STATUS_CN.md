@@ -430,8 +430,14 @@
    - 但配置启用了 `CONFIG_HUAWEI_KERNEL`、`CONFIG_KALLSYMS_ALL=y`，项目名为 `k6853v1_64`，不是目标 Boot 的 `k6853v1_64_6360` / `KALLSYMS_ALL=n`；不是精确 KDIR。
    - 链接：https://github.com/R0rt1z2/android_kernel_huawei_franklin
 
+3. `R0rt1z2/android_kernel_huawei_franklin`（branch `harmony-os-2.0`）
+   - Makefile 为 Linux `4.14.141`；存在 `k6853v1_64_6360_defconfig`，其配置设置 `CONFIG_MACH_MT6853=y`、`CONFIG_MTK_PLATFORM="mt6853"`、`CONFIG_ARCH_MTK_PROJECT="k6853v1_64_6360"`、`CONFIG_LTO_CLANG=y`、`CONFIG_CFI_CLANG=y`，DTB overlay 名也为 `mediatek/k6853v1_64_6360`。
+   - 该分支导入提交日期为 2021-09-26，提交说明为从 `JFRLM-AN00a_02_HM_opensource.tar.gz` 导入。它是目前发现的最接近“同 Linux patchlevel + 同 MT6853 board/project”的源码候选。
+   - 但其来源是 Huawei 开源包，不是 Y73s/Vivo 原厂来源；当前只验证了 Makefile 和 defconfig，未对整树、结构体/驱动差异、生成配置及 Module.symvers 做同一性验证。只能作为静态比较候选，不能直接当成已确认 KDIR。
+   - 链接：https://github.com/R0rt1z2/android_kernel_huawei_franklin/tree/harmony-os-2.0
+
 ### 当前判断
 
-- 已找到同版本、同 SoC、同板级命名的 4.14.141 源码参考，但尚未找到可证明对应 2022-02-15 Y73s 原厂构建的源码提交、生成头文件和 `Module.symvers`。
+- 已找到同版本、同 SoC、同板级命名的 4.14.141 源码候选（Huawei 开源包），以及较老的 Realme 4.14.141 和较新的 Vivo 4.14.186 参考；仍没有可证明对应 2022-02-15 Y73s 原厂构建的源码提交、生成头文件和 `Module.symvers`。
 - 不会拿 4.14.186 或 Huawei/Realme 不完全匹配的源码生成 `.ko` 并声称可加载；也不会把近似 defconfig 当成原始完整配置。
 - 下一步优先比对 Realme V5 4.14.141 候选与 Y73s Boot 的驱动目录、关键结构体/函数、Kbuild 和完整配置差异；在确认源码基线前继续只做静态审计和 Host/KPIMG 离线测试。
