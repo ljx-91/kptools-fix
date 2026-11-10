@@ -47,6 +47,11 @@ def main():
         original = signature.split("(")[0].split()[-1]
         functions.append(fn.replace(original + "(", new_name + "(", 1))
 
+    functions[2] = functions[2].replace("get_offset(", "get_offset_lkm(").replace(
+        "kp_align_module_size(", "kp_align_module_size_lkm(")
+    functions[6] = functions[6].replace("get_offset(", "get_offset_kpimg(").replace(
+        "align_module_size(", "align_module_size_kpimg(")
+
     prefix = r"""
 #include <elf.h>
 #include <errno.h>
@@ -310,7 +315,7 @@ int main(void)
         binary = Path(tmp) / "layout_copy"
         cfile.write_text(code, encoding="utf-8")
         subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror",
-                        "-Wno-unused-parameter", "-Wno-unused-function",
+                        "-Wno-unused-parameter", "-Wno-unused-function", "-Wno-sign-compare",
                         str(cfile), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
     print("[PASS] both production KPM layout/copy paths executed")
