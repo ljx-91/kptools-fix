@@ -804,3 +804,31 @@ The parent-reference scheme and the Gate are mutually dependent:
 - A direct self-pin, a final `module_put` inside LKM, or a delayed-work callback in LKM text is not an acceptable substitute.
 
 This is a source-derived design contract only. No production implementation or assembly has been added. Before implementation, verify the target vendor's `try_module_get`/`module_put` availability and symbol CRC/export details with its KDIR/Module.symvers, which is not currently available. Also verify the exact KPIMG Gate-to-LKM handoff and return ABI before writing Gate assembly.
+
+
+### Why KPIMG's existing resident transit cannot simply replace LKM transit (2026-11-11)
+
+The source confirms two separately compiled Hook Engine instances:
+
+- `lkm/hook/hook_engine.c` defines `KP_HOOK_EXTERNAL_CHAIN_PREPARE` and then includes `../../kernel/base/hook.c`. This compiles the `_transit0/_transit4/_transit8/_transit12` bodies into the LKM image. Its local `hook_chain_prepare()` emits the chain stub that branches to those LKM-local transit bodies.
+- `kernel/kpimg.lds` separately places KPIMG's own `kernel/base/hook.o(.transit*.text)` sections in resident `.kp.text`. These are a different compiled instance, not aliases to the LKM functions.
+
+The source-level structure layout is shared, but the runtime ownership dependencies are not interchangeable:
+- KPIMG transit calls KPIMG's own `hook_engine_lock()`, `kp_hook_owner_call_get()`, `kp_hook_owner_call_put()`, and owner unregister helpers.
+- LKM transit calls the LKM instance's corresponding functions, which operate on the LKM's own KPM registry and lock.
+- KPIMG owner tokens and LKM owner tokens belong to separate registries. A KPM owner pointer created by the LKM cannot safely be passed to KPIMG's owner-call helpers.
+- The locks are also instance-local. Reusing KPIMG transit against an LKM chain would not automatically synchronize with LKM's chain mutation/retirement protocol.
+
+Consequently, changing the LKM chain stub target from LKM `_transitN` to KPIMG `_transitN` is not a valid Gate implementation. It would route LKM chain callbacks through the wrong owner-reference and lock domain.
+
+#### Required resident Gate split
+
+A valid design needs a distinct KPIMG-resident entry/return envelope and an LKM-specific backend contract:
+1. Resident entry preserves the full hooked ABI (including x0-x7, x16 chain context, LR, NZCV and any required FP/SIMD state for the supported hook class), acquires a resident gate token, and obtains a Linux module reference before touching any LKM text/data.
+2. Only after the module reference succeeds may the resident wrapper call the LKM backend.
+3. The LKM backend owns LKM chain reader accounting, LKM KPM owner pin/call references, callback ordering, original trampoline invocation, and chain result semantics. Its ABI must be explicitly versioned and fixed-width; no LKM-private owner pointer may be interpreted by KPIMG's owner registry.
+4. The resident return envelope receives the final result, ensures all LKM backend frames have returned, publishes/drains any deferred persistent parent-reference drops, releases the temporary module reference as the final access to the Linux module object, then returns to the original kernel caller without returning through LKM text.
+5. The resident gate token and chain payload must remain valid from the first branch target instruction until the resident return envelope has completed. LKM's current `active_readers` increment occurs too late to protect the branch-to-first-instruction window.
+6. On gate-closed or failed `try_module_get`, the resident path must use a safe original-function fallback without dereferencing LKM callbacks, owner tokens, or stale LKM data. This requires a valid per-signature original trampoline lifetime contract.
+
+This split is architectural, not implemented. In particular, the resident envelope must be audited for AArch64 ABI preservation, CFI behavior, exception/unwind assumptions, and all supported argument counts before assembly is written.
