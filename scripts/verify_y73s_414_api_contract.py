@@ -27,6 +27,8 @@ init = read("lkm/core/init.c")
 secpass = read("lkm/infra/secpass.c")
 hook_runtime = read("lkm/hook/hook_runtime.c")
 kpm = read("lkm/kpm/module.c")
+sucompat = read("lkm/supercall/sucompat_hook.c")
+kstorage = read("lkm/supercall/kstorage.c")
 
 # In upstream v4.14.141 ARM64:
 # - __flush_dcache_area is declared/implemented but not exported;
@@ -53,6 +55,20 @@ require("return kallsyms_lookup_name(name);" in resolver,
         "symbol resolver bootstrap is kallsyms_lookup_name (verified GPL export on 4.14.141)")
 require("MODULE_LICENSE(\"GPL\")" in init,
         "LKM license permits GPL-only kallsyms_lookup_name")
+
+# Additional direct kernel APIs used by the LKM were checked against the
+# v4.14.141 export table/source: strscpy, strncpy_from_user, filp_open,
+# filp_close, vmalloc, vfree and kernel_read are available to modules.
+require("#include <linux/ptrace.h>" in sucompat and
+        "current_user_stack_pointer()" in sucompat,
+        "4.14 generic ptrace header provides current_user_stack_pointer")
+require("strscpy(" in sucompat and "strncpy_from_user(" in sucompat,
+        "4.14 string and user-string helpers used by sucompat are available")
+require("filp_open(" in kpm and "kernel_read(" in kpm and
+        "filp_close(" in kpm,
+        "4.14 KPM file read path uses available file APIs")
+require("vmalloc(" in kstorage and "vfree(" in kstorage,
+        "4.14 KStorage allocation uses exported vmalloc/vfree")
 
 # Newer APIs must remain isolated behind version checks so 4.14 never
 # parses/includes headers or struct members introduced in later kernels.
