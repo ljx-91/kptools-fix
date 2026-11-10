@@ -1862,3 +1862,35 @@ KPIMG `syscalln_name_addr()` 对 syscall-name table 中的名字按 `__arm64_`/�
 下一步：定位 KPIMG syscall-name table 的 native 45 号表项；对原始 boot Image 的 `0x019305cc..0x019305e0` 和 `0x003cd6b8` 做反汇编；若确认 KPIMG 命中 4 字节 stub，先修 resolver/表项选择或移除竞争 handler，并增加拒绝 4-byte CFI stub 的回归检查，再重新审计安装/卸载链。
 
 本轮只更新审计文档，未修改生产代码；无目标运行时 trace、vendor KDIR 编译或真机测试。
+
+## 63. 2026-11-11：修复 Y73s KPIMG syscall 45 命中短 CFI 跳板
+
+### 根因确认
+
+- kernel/patch/common/sysname.c 将 syscall 45 映射为 sys_truncate。
+- kernel/patch/common/syscall.c:syscalln_name_addr() 的通用解析顺序为 __arm64_<name>.cfi_jt、__arm64_<name>.cfi、__arm64_<name>，随后再尝试不带前缀的 .cfi_jt、.cfi 和普通符号。
+- Y73s 原始 Boot 的 KALLSYMS 离线记录显示，普通 sys_truncate 是 4 字节 CFI 跳板；真实实现体是 SyS_truncate.cfi。KPIMG 的 16 字节 inline patch 若命中普通别名，会覆盖相邻 CFI 入口。
+- LKM 已经选择 SyS_truncate.cfi，但 KPIMG 先前没有对应的 Y73s 特例。Y73s CONFIG_ARCH_HAS_SYSCALL_WRAPPER 不启用且 sys_call_table 不可解析时，KPIMG 会走危险的 per-syscall inline 路径。
+
+### 修复
+
+- 在 syscalln_name_addr() 增加 KP_TARGET_Y73S 专用分支，仅对 native syscall 45 且无 syscall wrapper 生效。
+- 该分支只解析 SyS_truncate.cfi，成功后缓存到 syscall 45 的地址槽；符号缺失直接返回 0，禁止回退到 sys_truncate 短跳板。
+- 保持通用 syscall_name_table[45] = "sys_truncate" 不变，避免影响其他目标内核。
+- 保持 KPIMG supercall 的 6 寄存器 legacy ABI；专项契约同时核对 LKM 4.14 路径也选择 SyS_truncate.cfi。
+
+### 提交与 CI
+
+- 生产修复：5ec20d244031e7167362cefb166deac19249d3f1。
+- 专项回归检查：b5709f4ee3aeb33df75f310d24b23d238d218b58。
+- Host 工作流换行修正：018e127311917d11dc0f5854243c245ef46c69dd。
+- Host 源码契约 Run 42864893943：success；专项检查 8/8 通过。
+- Y73S GCC 14.2 KPIMG Run 42864768593：success。该构建包含 syscall 45 生产修复。
+- Windows workflow 在最新文档更新时仍在运行，不作为本项修复的通过依据。
+- 中间提交 dd342da 的 Host Run 因工作流 shell continuation 格式错误失败；已在 018e127 修正，最新 Host Run 已通过。
+
+### 验证边界
+
+- 这是源码级目标选择修复，加上 Host contract 和 KPIMG 构建证据；尚未在原始 Boot 副本上用最新 KPIMG 完成端到端重打包/反汇编复核。
+- 目标 Linux 4.14.141 LKM .ko 编译、MODVERSIONS、设备运行时和 syscall 并发压力测试仍未完成。
+- 不使用 Fastboot，不刷写、不修改分区，不执行真机启动测试。
