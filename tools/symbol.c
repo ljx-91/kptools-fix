@@ -5,6 +5,7 @@
 
 #include "symbol.h"
 #include "common.h"
+#include "insn.h"
 
 struct on_each_symbol_struct
 {
@@ -351,6 +352,88 @@ static int get_cand_arr_symbol_offset_zero(kallsym_t *kallsym, char *img_buf, ch
     return offset;
 }
 
+/*
+ * Resolve the local kernel_init entry that is passed to kernel_thread from
+ * rest_init. CONFIG_KALLSYMS_ALL=n can omit this static function from the
+ * symbol table. On the Y73S 4.14.141 image, the function pointer is loaded
+ * with ADRP+ADD, points at a CFI branch stub, and that stub branches back into
+ * rest_init's symbol extent. Only accept a unique in-image target in that
+ * extent; otherwise fail closed and leave kernel-init KPM events unavailable.
+ */
+static int32_t resolve_kernel_init_from_rest_init(kallsym_t *kallsym, char *img_buf, int imglen,
+                                                   int32_t target_is_be)
+{
+    int32_t rest_init_size = 0;
+    int32_t rest_init_offset;
+    int32_t kernel_thread_offset;
+    int64_t rest_init_end;
+    int32_t resolved = 0;
+
+    if (!kallsym || !img_buf || imglen <= 0 || kallsym->arch != ARM64) return 0;
+
+    rest_init_offset = get_symbol_offset_and_size(kallsym, img_buf, "rest_init", &rest_init_size);
+    if (rest_init_offset <= 0 || rest_init_size <= 0 ||
+        (int64_t)rest_init_offset + rest_init_size > imglen) return 0;
+
+    kernel_thread_offset = try_get_symbol_offset_zero(kallsym, img_buf, "kernel_thread.cfi");
+    if (!kernel_thread_offset) {
+        kernel_thread_offset = try_get_symbol_offset_zero(kallsym, img_buf, "kernel_thread");
+    }
+    if (kernel_thread_offset <= 0) return 0;
+
+    rest_init_end = (int64_t)rest_init_offset + rest_init_size;
+    for (int32_t pc = rest_init_offset; (int64_t)pc + 4 <= rest_init_end; pc += 4) {
+        uint32_t call_insn = (uint32_t)uint_unpack(img_buf + pc, 4, target_is_be);
+        uint32_t adrp_insn;
+        uint32_t add_insn;
+        uint32_t stub_insn;
+        int64_t call_target;
+        int64_t page;
+        int64_t stub_offset;
+        int64_t body_offset;
+        uint64_t add_imm;
+
+        if (!aarch64_insn_is_bl(call_insn)) continue;
+        call_target = (int64_t)pc + aarch64_get_branch_offset(call_insn);
+        if (call_target != kernel_thread_offset || pc < 8) continue;
+
+        adrp_insn = (uint32_t)uint_unpack(img_buf + pc - 8, 4, target_is_be);
+        add_insn = (uint32_t)uint_unpack(img_buf + pc - 4, 4, target_is_be);
+        if (!aarch64_insn_is_adrp(adrp_insn) ||
+            aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, adrp_insn) != AARCH64_INSN_REG_0 ||
+            !aarch64_insn_is_add_imm(add_insn) ||
+            !(add_insn & 0x80000000U) ||
+            aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, add_insn) != AARCH64_INSN_REG_0 ||
+            aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, add_insn) != AARCH64_INSN_REG_0) {
+            continue;
+        }
+
+        page = ((int64_t)(pc - 8)) & ~((int64_t)0xfff);
+        page += aarch64_insn_adrp_get_offset(adrp_insn);
+        add_imm = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_12, add_insn);
+        if ((add_insn >> 22) & 1) add_imm <<= 12;
+        stub_offset = page + (int64_t)add_imm;
+        if (stub_offset < 0 || stub_offset + 4 > imglen) continue;
+
+        stub_insn = (uint32_t)uint_unpack(img_buf + stub_offset, 4, target_is_be);
+        body_offset = stub_offset;
+        if (aarch64_insn_is_b(stub_insn)) {
+            body_offset += aarch64_get_branch_offset(stub_insn);
+        }
+
+        /* The Y73S local kernel_init body is embedded in rest_init's
+         * KALLSYMS size range; kthreadd's CFI stub branches outside it. */
+        if (body_offset <= rest_init_offset || body_offset >= rest_init_end ||
+            body_offset + 4 > imglen) continue;
+
+        if (resolved && resolved != body_offset) return 0;
+        resolved = (int32_t)body_offset;
+    }
+
+    return resolved;
+}
+
+
 int fillin_patch_config(kallsym_t *kallsym, char *img_buf, int imglen, patch_config_t *symbol, int32_t target_is_be,
                         bool is_android)
 {
@@ -369,12 +452,15 @@ int fillin_patch_config(kallsym_t *kallsym, char *img_buf, int imglen, patch_con
     if (!symbol->rest_init && !symbol->cgroup_init) tools_loge_exit("no symbol rest_init");
 
     symbol->kernel_init = try_get_symbol_offset_zero(kallsym, img_buf, "kernel_init");
-    if (!symbol->kernel_init) {
-        if (symbol->rest_init) {
-            tools_logw("no symbol kernel_init (PRE_KERNEL_INIT will use rest_init fallback; POST_KERNEL_INIT unavailable)\n");
-        } else {
-            tools_logw("no symbol kernel_init (kernel-init KPM events unavailable without rest_init)\n");
+    if (!symbol->kernel_init && symbol->rest_init) {
+        symbol->kernel_init = resolve_kernel_init_from_rest_init(kallsym, img_buf, imglen, target_is_be);
+        if (symbol->kernel_init) {
+            tools_logi("kernel_init resolved from rest_init kernel_thread callsite: 0x%08x\n",
+                       (unsigned int)symbol->kernel_init);
         }
+    }
+    if (!symbol->kernel_init) {
+        tools_logw("no symbol kernel_init (rest_init callsite resolution failed; PRE/POST_KERNEL_INIT events unavailable)\n");
     }
 
     symbol->report_cfi_failure = get_symbol_offset_zero(kallsym, img_buf, "report_cfi_failure");
