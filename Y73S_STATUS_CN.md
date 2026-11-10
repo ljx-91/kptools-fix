@@ -1769,3 +1769,17 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - 不能在 `kernelpatch_exit()` 里才尝试 pin/unpin；该函数触发时机已经太晚。
 - 长期方案应把 inline transit 放进 KPIMG 常驻文本或完全独立保留的可执行对象，并保证其全部调用依赖都不指向 LKM text。
 - **本轮没有更改生产逻辑**，暂不启用永久 self-pin，避免在没有用户明确接受“不可普通卸载”的情况下改变模块管理行为。LKM transit 卸载安全仍未通过。
+
+
+## 56. 2026-11-10：原始 Boot 确认 MODULE_FORCE_UNLOAD 关闭
+
+- 从资料库中原始提取的 `vivo-y73s-4.14.141-extracted(1).config` 直接读取到：
+  - `CONFIG_MODULES=y`
+  - `CONFIG_MODULE_UNLOAD=y`
+  - `# CONFIG_MODULE_FORCE_UNLOAD is not set`
+- 配置文件 SHA-256：`f70215f43982b627eac9021aca8f9f1c47035c0c97890bee73adabdb2ec3cb8d`。
+- 对照 Linux v4.14.141 `kernel/module.c`，force-unload 未启用时 `try_force_unload()` 恒返回 0；模块仍有额外引用时，普通卸载返回 `-EWOULDBLOCK`。
+- 进一步确认 init 时序：模块 init 在 `MODULE_STATE_COMING` 执行；`try_module_get(THIS_MODULE)` 在状态非 GOING 且 refcount 非零时可获取引用；init 成功后 loader 才释放临时引用并切换为 LIVE。
+- 因此 self-pin 可作为“成功加载后常驻、禁止普通卸载”的遏制方案。代价是不能正常 rmmod/热更新，只能重启后替换；它不是可卸载架构的修复。
+- 本轮只更新审计记录，没有改生产代码。**等待用户明确接受常驻不可卸载行为后，才考虑启用 self-pin。**
+- LKM 卸载安全状态仍为未通过；vendor KDIR 编译和目标设备验证均未完成。
