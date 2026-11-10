@@ -2,6 +2,7 @@
 /* Reuse KernelPatch's ARM64 relocation and hook-chain engine. */
 #include <linux/compiler.h>
 #include <linux/types.h>
+#include <asm/cacheflush.h>
 
 #ifndef __noinline
 #define __noinline noinline
@@ -11,6 +12,8 @@
  * transit function into hook memory. Linux modules have no such linker
  * markers, so emit a small absolute branch to the resident LKM function. */
 #define KP_HOOK_EXTERNAL_CHAIN_PREPARE
+#define KP_HOOK_FLUSH_ICACHE_RANGE(start, end) \
+	flush_icache_range((unsigned long)(start), (unsigned long)(end))
 
 #include "../../kernel/base/hook.c"
 
@@ -36,5 +39,9 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
 	transit[3] = ARM64_NOP;
 	transit[4] = (uint64_t)chain;
 	transit[5] = (uint64_t)chain >> 32;
-	return branch_absolute(&transit[6], target) ? HOOK_NO_ERR : -HOOK_TRANSIT_NO_MEM;
+	if (!branch_absolute(&transit[6], target))
+		return -HOOK_TRANSIT_NO_MEM;
+	flush_icache_range((unsigned long)transit,
+			   (unsigned long)(transit + TRANSIT_INST_NUM));
+	return HOOK_NO_ERR;
 }
