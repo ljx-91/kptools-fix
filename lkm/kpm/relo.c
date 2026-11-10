@@ -141,6 +141,10 @@ static int reloc_insn_imm(enum kp_aarch64_reloc_op op, void *place, u64 val, int
 	u32 insn = *(u32 *)place;
 
 	sval = do_reloc(op, place, val);
+	/* Scaled immediates and PC-relative branch fields discard low bits.
+	 * Reject misaligned expressions instead of silently rounding them down. */
+	if (lsb && ((u64)sval & ((1ULL << lsb) - 1)))
+		return -ENOEXEC;
 	sval >>= lsb;
 	imm_mask = (BIT(lsb + len) - 1) >> lsb;
 	imm = sval & imm_mask;
