@@ -16,6 +16,9 @@ hook = read("kernel/base/hook.c")
 hook_engine = read("lkm/hook/hook_engine.c")
 fphook = read("kernel/base/fphook.c")
 patch_memory = read("lkm/infra/patch_memory.c")
+manager = read("lkm/manager/manager.c")
+manager_h = read("lkm/manager/manager.h")
+init = read("lkm/core/init.c")
 
 def function_body(source, signature):
     start = source.find(signature)
@@ -47,6 +50,7 @@ hook_update_exec = function_body(runtime, "static int kp_hook_update_exec(")
 hook_exec_free = function_body(runtime, "static void kp_hook_exec_free(void *region, unsigned long size)\n{")
 hook_install = function_body(hook, "int hook_install(")
 phys_from_virt = function_body(patch_memory, "static unsigned long kp_phys_from_virt(")
+manager_exit = function_body(manager, "int hook_rename_lsm_exit(void)")
 
 hook_kbuild = read("lkm/Kbuild")
 transit4 = function_body(hook, "uint64_t __attribute__((section(\".transit4.text\")))")
@@ -216,6 +220,17 @@ checks = {
         "pmd_sect(*pmd)" in phys_from_virt and
         "pmd_page_paddr(*pmd) & PMD_MASK" in phys_from_virt and
         phys_from_virt.index("pmd_sect(*pmd)") < phys_from_virt.index("pmd_bad(*pmd)"),
+    "manager rename hook teardown retires callback and waits for active readers":
+        "hook_unwrap_remove(" in manager_exit and
+        "kp_rename_hook_cb, 1" in manager_exit and
+        "rc == -EBUSY" in manager_exit and
+        "cond_resched();" in manager_exit and
+        manager_exit.index("kp_rename_hook_addr = 0;") >
+            manager_exit.index("if (rc && rc != -ENOENT)"),
+    "manager teardown failure prevents module image release":
+        "int hook_rename_lsm_exit(void);" in manager_h and
+        "BUG_ON(hook_rename_lsm_exit());" in init and
+        "hook_unwrap(" not in manager_exit,
 }
 
 for label, ok in checks.items():
