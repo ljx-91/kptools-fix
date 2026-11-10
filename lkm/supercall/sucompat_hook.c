@@ -43,6 +43,8 @@ static enum kp_sucompat_backend kp_sucompat_backend;
 /* Resolved hook targets are retained for exact teardown. */
 static unsigned long kp_getname_flags_addr;
 static unsigned long kp_prepare_binprm_addr;
+typedef struct file *(*kp_open_exec_fn_t)(const char *name);
+static kp_open_exec_fn_t kp_open_exec;
 static const char *kp_default_sctx(uid_t uid, char *sctx, size_t sctx_size);
 
 /*
@@ -220,7 +222,9 @@ static void kp_before_prepare_binprm(hook_fargs1_t *args, void *udata)
 	if (!su_exec && !supercmd)
 		return;
 
-	shell_file = filp_open(KP_SH_PATH, O_RDONLY | O_NOFOLLOW, 0);
+	if (!kp_open_exec)
+		return;
+	shell_file = kp_open_exec(KP_SH_PATH);
 	if (IS_ERR(shell_file)) {
 		logkw("sucompat: open shell for %s failed: %ld\n",
 		      bprm->filename, PTR_ERR(shell_file));
@@ -274,15 +278,22 @@ static int kp_hook_prepare_binprm(void)
 {
 	unsigned long addr;
 
+	kp_open_exec = (kp_open_exec_fn_t)kp_resolve_symbol("open_exec");
+	if (!kp_open_exec) {
+		logke("sucompat: open_exec not found; cannot safely replace bprm->file\n");
+		return -ENOENT;
+	}
 	addr = kp_resolve_symbol("prepare_binprm.cfi");
 	if (!addr)
 		addr = kp_resolve_symbol("prepare_binprm");
 	if (!addr) {
+		kp_open_exec = NULL;
 		logke("sucompat: prepare_binprm not found; no safe execve fallback\n");
 		return -ENOENT;
 	}
 
-	logki("sucompat: prepare_binprm at %px\n", (void *)addr);
+	logki("sucompat: prepare_binprm at %px; open_exec=%px\n",
+	      (void *)addr, kp_open_exec);
 	/*
 	 * Record the target before patching: hook_wrap1() can return
 	 * -HOOK_PATCH_UNCERTAIN after publishing a live chain. Init rollback
@@ -477,6 +488,7 @@ int kp_sucompat_hook_exit(void)
 					       kp_after_prepare_binprm);
 		if (!unhook_rc || unhook_rc == -ENOENT) {
 			kp_prepare_binprm_addr = 0;
+			kp_open_exec = NULL;
 			kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
 		} else {
 			logke("sucompat: prepare_binprm hook is still live: %d\n",
