@@ -1451,3 +1451,24 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 ### 验证边界
 
 这是使用原始 Y73s Boot 的静态机器码与符号别名核对，不证明 hook 在运行时安装、回调 ABI 或卸载并发行为正确。目标 vendor KDIR 下的 LKM 编译/modpost、Clang 9.0.3 CFI/LTO 链接和真机运行仍未验证；没有刷写或设备操作。
+
+
+## 42. KPIMG 原始 ELF metadata parser 测试接入与修正（2026-11-10）
+
+### 变更
+
+- 将 scripts/test_kpimg_setup_load_info.py 加入 .github/workflows/build-y73s-kpimg-gcc.yml，不再只是仓库中存在但未执行的测试。
+- 测试从生产 kernel/patch/module/module.c 提取并执行 elf_header_check()、setup_load_info() 及其真实辅助函数，覆盖合法 ELF metadata 与畸形 section table、section-name table、文件 section 对齐、空 module name/version、SYMTAB/STRTAB 关系、符号名称偏移/终止符、符号 section index、RELA metadata。
+- 第一次执行暴露的是测试夹具缺陷：elf_header_check() 不负责初始化 info->sechdrs，夹具却在调用 setup_load_info() 前解引用该指针。ASan 将故障定位到测试 main() 的空指针读取（地址 0x98），不是生产 parser 的执行路径。
+- 修复夹具：畸形输入直接修改原始 ELF section-header table（image + SHOFF），并对合法 header check 的返回值作显式检查；保留 AddressSanitizer 运行以捕捉后续内存错误。
+
+### 验证
+
+- GCC 14.2 Y73S KPIMG run 42821643290，提交 0369d57f99ee88ef997f8dd6bd2bca25816d51db：success。
+- 新增 KPIMG setup_load_info() 测试 16 项全部 PASS，且 AddressSanitizer 未报告错误。
+- 同一工作流内原有 LKM setup_load_info() 测试、双 loader simplify_symbols() 测试、双 loader layout/final-copy 测试及 KPIMG metadata/RELA dispatcher 测试均通过。
+- 同一提交 Windows kptools workflow 42821644835 在记录时仍 queued；需后续确认最终状态。
+
+### 结论与边界
+
+KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试夹具后通过。该结果不替代 Y73s 4.14.141 vendor KDIR 下的 LKM 编译/modpost、Clang 9.0.3 CFI/LTO 链接或真机运行验证。
