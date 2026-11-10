@@ -109,8 +109,11 @@ static int kp_install_inline_supercall(const char *symbol, void *handler,
 		logke("failed to resolve supercall target %s\n", symbol);
 		return -ENOENT;
 	}
+	/* Publish the ABI/backend before the patch becomes reachable. */
+	kp_supercall_backend = backend;
 	hook_rc = hook((void *)addr, handler, backup);
 	if (hook_rc) {
+		kp_supercall_backend = KP_SUPERCALL_BACKEND_NONE;
 		if (hook_rc == -HOOK_PATCH_UNCERTAIN) {
 			int undo_rc = unhook_checked((void *)addr);
 			if (undo_rc && undo_rc != -ENOENT) {
@@ -122,7 +125,6 @@ static int kp_install_inline_supercall(const char *symbol, void *handler,
 		return -EIO;
 	}
 	kp_supercall_inline_target = (void *)addr;
-	kp_supercall_backend = backend;
 	return 0;
 }
 
