@@ -71,12 +71,16 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
                   "e_ehsize", "e_shentsize", "e_shstrndx",
                   "kp_elf_range_valid"):
         need(re.escape(token), header, f"ELF header validation missing {token}")
+    need(r"e_shoff\s*&\s*\(__alignof__\(Elf_Shdr\)\s*-\s*1\)", header,
+         "section-header table offset must satisfy Elf_Shdr alignment")
 
     ranges = body(module, "static int rewrite_section_headers(")
     need(r"shstr->sh_type\s*!=\s*SHT_STRTAB", ranges, "section-name table type")
     need(r"kp_elf_range_valid\(info->len", ranges, "section file extent bounds")
     need(r"kp_elf_string_valid\(info->secstrings", ranges, "section name termination")
     need(r"sh_addralign.*sh_addralign\s*-\s*1", ranges, "section alignment")
+    need(r"sh_type\s*!=\s*SHT_NOBITS.*?sh_addralign\s*>\s*1.*?sh_offset\s*&\s*\(shdr->sh_addralign\s*-\s*1\)", ranges,
+         "file-backed section offsets must honor declared alignment")
 
     setup = body(module, "static int setup_load_info(")
     need(r"relsec->sh_type\s*==\s*SHT_RELA[\s\S]*?relsec->sh_entsize\s*!=\s*sizeof\(Elf64_Rela\)[\s\S]*?relsec->sh_size\s*%\s*sizeof\(Elf64_Rela\)", setup,
