@@ -5,10 +5,10 @@
 #ifndef _KP_LKM_SUCOMPAT_HOOK_H_
 #define _KP_LKM_SUCOMPAT_HOOK_H_
 
-/* Hook __NR_execve to intercept su binary execs. Returns 0 on success. */
+/* Hook prepare_binprm to prepare pending SU exec credentials. Returns 0 on success. */
 int kp_sucompat_hook_init(void);
 
-/* Restore the execve hook. */
+/* Retire the prepare_binprm hook and wait for in-flight callbacks. */
 int kp_sucompat_hook_exit(void);
 
 #endif /* _KP_LKM_SUCOMPAT_HOOK_H_ */
