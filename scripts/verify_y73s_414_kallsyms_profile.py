@@ -12,12 +12,12 @@ REQUIRED = {
     "kallsyms_lookup_name", "kallsyms_on_each_symbol",
     "__flush_dcache_area", "flush_icache_range", "stop_machine",
     "security_secctx_to_secid", "prepare_binprm", "prepare_binprm.cfi",
-    "open_exec", "open_exec.cfi",
+    "open_exec", "open_exec.cfi", "rest_init", "cgroup_init",
 }
 ABSENT = {
     "init_mm", "sys_call_table", "set_memory_x", "set_memory_nx",
     "find_check_fn", "report_cfi_failure", "__cfi_slowpath_diag",
-    "selinux_blob_sizes",
+    "selinux_blob_sizes", "kernel_init", "kernel_init_freeable",
 }
 
 
