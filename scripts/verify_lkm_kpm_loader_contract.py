@@ -250,9 +250,7 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "KPM release must restore NX/BTI PTE bits")
     need(r"!kp_kpm_init_mm\s*&&\s*rc", restore_perm,
          "without init_mm, failed or missing set_memory_nx must prevent executable page release")
-    need(r"!kp_kpm_init_mm\\s*&&\\s*rc", restore_perm,
-         "without init_mm, failed or missing set_memory_nx must retain executable pages")
-    need(r"kp_restore_nx_gp\\(\\(unsigned long\\)region,\\s*size\\)", exec_free,
+    need(r"kp_restore_nx_gp\(\(unsigned long\)region,\s*size\)", exec_free,
          "all executable-page frees must pass through checked NX restoration")
     unload_mem = body(module, "long kp_unload_module(")
     if "kp_set_memory_nx" in unload_mem or "kp_do_set_memory_nx" in unload_mem:
