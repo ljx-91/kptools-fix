@@ -272,11 +272,15 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "scaled and PC-relative instruction relocations must reject discarded non-zero low bits")
     need(r"return\s+-ENOEXEC[\s\S]*?sval\s*>>=\s*lsb", imm,
          "instruction relocation alignment must be checked before immediate encoding")
+    need(r"if\s*\(\(u64\)\(sval\s*\+\s*1\)\s*>=\s*2\)[\s\S]*?\*\(u32\s*\*\)place\s*=\s*insn",
+         imm, "LKM instruction word must be committed only after overflow validation")
     kp_imm = body(kp_relo, "static int reloc_insn_imm(")
     need(r"if\s*\(lsb\s*&&.*?\(1ULL\s*<<\s*lsb\)", kp_imm,
          "KPIMG scaled and PC-relative instruction relocations must reject discarded low bits")
     need(r"return\s+-ENOEXEC[\s\S]*?sval\s*>>=\s*lsb", kp_imm,
          "KPIMG relocation alignment must be checked before immediate encoding")
+    need(r"if\s*\(\(u64\)\(sval\s*\+\s*1\)\s*>=\s*2\)[\s\S]*?\*\(u32\s*\*\)place\s*=\s*cpu_to_le32\(insn\)",
+         kp_imm, "KPIMG instruction word must be committed only after overflow validation")
     data = body(relo, "static int reloc_data(")
     need(r"len\s*==\s*64", data, "explicit 64-bit relocation width")
     need(r"1ULL\s*<<\s*len", data, "unsigned 64-bit narrow mask")
