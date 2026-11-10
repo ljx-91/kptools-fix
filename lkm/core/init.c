@@ -127,10 +127,12 @@ int __init kernelpatch_init(void)
 	/* Install the optional execve compatibility hook before publishing the
 	 * supercall entry. The supercall is the final fallible init step: once it
 	 * is visible, no later init failure can strand a live entry into this LKM. */
+	/* Mark cleanup responsibility before install: an uncertain text patch
+	 * may publish a live hook while returning an error. */
+	sucompat_installed = true;
 	rc = kp_sucompat_hook_init();
 	if (rc)
 		goto err_unwind;
-	sucompat_installed = true;
 
 	rc = kp_supercall_install();
 	if (rc)
@@ -155,7 +157,7 @@ err_unwind:
 	if (supercall_installed)
 		kp_supercall_uninstall();
 	if (sucompat_installed)
-		kp_sucompat_hook_exit();
+		BUG_ON(kp_sucompat_hook_exit());
 	if (kpm_initialized)
 		kp_kpm_exit();
 	/* Never return an init error while a CFI branch may still target this
@@ -167,7 +169,7 @@ err_unwind:
 
 static void __exit kernelpatch_exit(void)
 {
-	kp_sucompat_hook_exit();
+	BUG_ON(kp_sucompat_hook_exit());
 	hook_rename_lsm_exit();
 	kp_supercall_uninstall();
 	/* Unhook the CFI bypass last so it shields the other teardown from
