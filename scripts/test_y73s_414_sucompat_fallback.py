@@ -51,6 +51,11 @@ typedef unsigned int uid_t;
 #define IS_ERR(p) ((intptr_t)(p) < 0)
 #define PTR_ERR(p) ((long)(intptr_t)(p))
 #define _TIF_SECCOMP 0x10UL
+#define __NR_execve 221
+#define current ((void *)1)
+
+struct pt_regs { unsigned long regs[31]; int syscallno; };
+static struct pt_regs test_regs;
 
 struct file { int id; bool executable; };
 struct cred { uid_t uid; };
@@ -77,6 +82,7 @@ static bool allow_uid = true, manager_uid;
 static bool fail_shell_open;
 static int fput_calls, apply_calls;
 static int apply_result;
+static const char *last_sctx;
 
 static int current_user_ns(void) { return 0; }
 static uid_t current_uid(void) { return test_uid; }
@@ -99,10 +105,18 @@ static struct file *open_exec_stub(const char *path)
 static struct file *(*kp_open_exec)(const char *name) = open_exec_stub;
 static void fput(struct file *file) { (void)file; fput_calls++; }
 static struct thread_info *current_thread_info(void) { return &ti; }
+static struct pt_regs *task_pt_regs(void *task) { (void)task; return &test_regs; }
+static const char *kp_get_supercmd_sctx(const struct pt_regs *regs,
+                                        char *buf, size_t size)
+{
+    if (regs->syscallno != __NR_execve) return NULL;
+    if (size) snprintf(buf, size, "%s", "u:r:custom:s0");
+    return buf;
+}
 static int kp_apply_su_cred(struct cred **cred, uid_t uid, const char *sctx)
 {
-    (void)sctx;
     apply_calls++;
+    last_sctx = sctx;
     if (apply_result) return apply_result;
     (*cred)->uid = uid;
     return 0;
@@ -131,7 +145,8 @@ int main(void)
     }
     args.ret = 128;
     kp_after_prepare_binprm(&args, NULL);
-    if (apply_calls != 1 || cred.uid != 0 || (ti.flags & _TIF_SECCOMP)) {
+    if (apply_calls != 1 || cred.uid != 0 || (ti.flags & _TIF_SECCOMP) ||
+        strcmp(last_sctx, "u:r:magisk:s0")) {
         fprintf(stderr, "su exec pending root cred failed\n");
         return 1;
     }
@@ -145,6 +160,7 @@ int main(void)
             .argc = 4, .cred = &c
         };
         hook_fargs1_t a = { .arg0 = (uint64_t)(uintptr_t)&b };
+        test_regs.syscallno = __NR_execve;
         kp_before_prepare_binprm(&a, NULL);
         if (!a.local.data0 || b.file != &shell_file || b.argc != 1) {
             fprintf(stderr, "SUPERCMD argument stripping failed\n");
@@ -152,7 +168,8 @@ int main(void)
         }
         a.ret = 128;
         kp_after_prepare_binprm(&a, NULL);
-        if (apply_calls != 2 || c.uid != 0) {
+        if (apply_calls != 2 || c.uid != 0 ||
+            strcmp(last_sctx, "u:r:custom:s0")) {
             fprintf(stderr, "SUPERCMD root cred failed\n");
             return 1;
         }
