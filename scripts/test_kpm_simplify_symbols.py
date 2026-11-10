@@ -120,7 +120,7 @@ static void reset_fixture(void)
     ehdr.e_shnum = 4;
     sections[1].sh_type = SHT_SYMTAB;
     sections[1].sh_addr = (unsigned long)symbols;
-    sections[1].sh_size = sizeof(symbols);
+    sections[1].sh_size = 2 * sizeof(symbols[0]);
     sections[2].sh_addr = 0x100000UL;
     sections[2].sh_size = 16;
     symbols[1].st_name = name_offset("defined");
