@@ -513,8 +513,8 @@
 使用本轮 CI 构建的 Linux kptools 执行 `-f -i kernel`，退出码 0。成功提取内核内嵌的完整 Linux 4.14.141 配置：
 
 - 配置起始偏移：`31,892,704`（`0x01e6a7e0`）。
-- 配置长度：33,577 bytes；输出 5,488 行。
-- 当前保存的 dump SHA-256：`d779e40924f251d5f0e17bd009b5e1030440da58dcd63af0c6a70f20bba9dd88`。
+- IKCONFIG 压缩数据长度：33,577 bytes；解压后的完整 `.config` 为 148,325 bytes、5,486 行。
+- 已提取干净配置文件 `vivo-y73s-4.14.141-extracted.config`，SHA-256：`f70215f43982b627eac9021aca8f9f1c47035c0c97890bee73adabdb2ec3cb8d`。原始 `kptools -f` 控制台 dump（含偏移/长度头行）SHA-256：`d779e40924f251d5f0e17bd009b5e1030440da58dcd63af0c6a70f20bba9dd88`。
 - 配置确认：`CONFIG_MACH_MT6853=y`、`CONFIG_MTK_PLATFORM="mt6853"`、`CONFIG_ARCH_MTK_PROJECT="k6853v1_64_6360"`、`CONFIG_LTO_CLANG=y`、`CONFIG_CFI_CLANG=y`、`CONFIG_CFI_CLANG_SHADOW=y`、`CONFIG_MODVERSIONS=y`、`CONFIG_KALLSYMS=y`、`CONFIG_NR_CPUS=8`、`CONFIG_PREEMPT=y`、`CONFIG_ARM64_4K_PAGES=y`、`CONFIG_ARM64_VA_BITS=39`。
 - 设备树 overlay 配置名为 `mediatek/mt6853`；Boot banner 的实际编译器为 Clang 9.0.3，构建时间为 2022-02-15。
 
@@ -524,7 +524,7 @@
 
 - Makefile 确认 Linux 4.14.141。
 - `k6853v1_64_6360_defconfig` 与目标的 MT6853、project 名、LTO、CFI、NR_CPUS、PREEMPT、DTB overlay 名等核心项目一致。
-- 但该 defconfig 未显式设置目标配置中的 `CONFIG_MODVERSIONS=y` 与 `CONFIG_CFI_CLANG_SHADOW=y`。其中 MODVERSIONS 在该候选的 `init/Kconfig` 中没有默认启用；不能直接拿该 defconfig 的默认结果编译模块。
+- 但该 defconfig 未显式设置目标配置中的 `CONFIG_MODVERSIONS=y`；候选 `init/Kconfig` 对 MODVERSIONS 没有默认启用，因此仅按该 defconfig 生成时不能假设模块版本 CRC 已启用。`CONFIG_CFI_CLANG_SHADOW` 虽未写在 defconfig 中，但候选 `arch/Kconfig` 明确在 `CFI_CLANG` 启用时默认设为 y，故这一项本身不构成差异。
 - 更重要的是该树来自 Huawei 开源包，不是 Vivo Y73s 原厂源代码；源码来源、驱动差异、CFI ABI、导出符号 CRC 和生成头文件均未与目标 Boot 证明一致。
 
 ### 结论
