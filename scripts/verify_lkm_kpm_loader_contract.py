@@ -267,6 +267,11 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     need(r"kp_module_get_by_addr", safe_iter, "kallsyms callback owner acquisition")
     need(r"kp_module_put\(owner\)", safe_iter, "kallsyms callback owner release")
 
+    imm = body(relo, "static int reloc_insn_imm(")
+    need(r"if\s*\(lsb\s*&&.*?\(1ULL\s*<<\s*lsb\)", imm,
+         "scaled and PC-relative instruction relocations must reject discarded non-zero low bits")
+    need(r"return\s+-ENOEXEC[\s\S]*?sval\s*>>=\s*lsb", imm,
+         "instruction relocation alignment must be checked before immediate encoding")
     data = body(relo, "static int reloc_data(")
     need(r"len\s*==\s*64", data, "explicit 64-bit relocation width")
     need(r"1ULL\s*<<\s*len", data, "unsigned 64-bit narrow mask")
