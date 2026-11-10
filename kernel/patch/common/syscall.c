@@ -104,6 +104,23 @@ typedef long (*raw_syscall6_f)(long arg0, long arg1, long arg2, long arg3, long 
 
 uintptr_t syscalln_name_addr(int nr, int is_compat)
 {
+#if defined(KP_TARGET_Y73S)
+    /*
+     * Y73S Linux 4.14.141 has no arm64 syscall wrapper and does not expose
+     * sys_call_table with KALLSYMS_ALL=n. Its syscall-name table entry
+     * "sys_truncate" resolves to a 4-byte CFI jump-table stub, not the
+     * implementation body. Inline hook_install() writes four instructions,
+     * which would overwrite adjacent CFI entries. Use the verified body
+     * symbol and fail closed rather than falling back to the short alias.
+     */
+    if (!is_compat && !has_syscall_wrapper && nr == 45) {
+        uintptr_t y73s_truncate = kallsyms_lookup_name("SyS_truncate.cfi");
+        if (!y73s_truncate)
+            return 0;
+        syscall_name_table[nr].addr = y73s_truncate;
+        return y73s_truncate;
+    }
+#endif
     const char *name = 0;
     if (!is_compat) {
         if (syscall_name_table[nr].addr) {
