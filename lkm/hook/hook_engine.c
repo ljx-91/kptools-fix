@@ -12,8 +12,10 @@
  * transit function into hook memory. Linux modules have no such linker
  * markers, so emit a small absolute branch to the resident LKM function. */
 #define KP_HOOK_EXTERNAL_CHAIN_PREPARE
-#define KP_HOOK_FLUSH_ICACHE_RANGE(start, end) \
-	flush_icache_range((unsigned long)(start), (unsigned long)(end))
+#define KP_HOOK_FLUSH_ICACHE_RANGE(start, end) do { \
+	flush_icache_range((unsigned long)(start), (unsigned long)(end)); \
+	__flush_icache_all(); \
+} while (0)
 
 #include "../../kernel/base/hook.c"
 
@@ -43,5 +45,6 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
 		return -HOOK_TRANSIT_NO_MEM;
 	flush_icache_range((unsigned long)transit,
 			   (unsigned long)(transit + TRANSIT_INST_NUM));
+	__flush_icache_all();
 	return HOOK_NO_ERR;
 }
