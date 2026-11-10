@@ -1,0 +1,18 @@
+# Extracted from the uploaded vivo Y73s / MT6853 Linux 4.14.141 KALLSYMS dump.
+# Addresses are image-relative offsets from that dump, not runtime VAs.
+0x000c604c t module_alloc.cfi
+0x0192cb24 t module_alloc
+0x00236a9c t module_memfree.cfi
+0x019425e0 t module_memfree
+0x0038b20c t vmalloc_to_page.cfi
+0x01914870 t vmalloc_to_page
+0x003cd6b8 t SyS_truncate.cfi
+0x019305cc t sys_truncate
+0x002ddc00 t __cfi_slowpath
+0x0023dd88 t kallsyms_on_each_symbol.cfi
+0x019133d4 t kallsyms_on_each_symbol
+0x0023dfa0 t kallsyms_lookup_name.cfi
+0x01922680 t kallsyms_lookup_name
+0x00005084 T __flush_dcache_area
+0x00004fb4 T flush_icache_range
+0x019135b4 t stop_machine
