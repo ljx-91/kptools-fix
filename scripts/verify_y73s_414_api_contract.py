@@ -112,9 +112,11 @@ require("kp_phys_from_virt_no_init_mm" in patch_memory and
         "vmalloc_to_page((void *)addr)" in patch_memory and
         "page_to_phys(page)" in patch_memory,
         "4.14 patching translates kernel image, linear-map, vmalloc and module pages without init_mm")
-require("kp_hook_alloc_backend == KP_HOOK_ALLOC_MODULE" in hook_runtime and
-        "module_memfree() removes that mapping" in hook_runtime and
-        "flush_icache_all" not in hook_runtime,
+require("kp_hook_module_alloc && kp_hook_module_memfree" in hook_runtime and
+        "kp_hook_alloc_backend = KP_HOOK_ALLOC_MODULE" in hook_runtime and
+        "if (!kp_hook_init_mm && kp_hook_alloc_backend != KP_HOOK_ALLOC_MODULE)" in hook_runtime and
+        "module_memfree()" in hook_runtime and
+        "__flush_icache_all" not in hook_runtime,
         "Hook runtime supports PAGE_KERNEL_EXEC module memory without init_mm/global flush")
 require("KP_HOOK_FLUSH_ICACHE_RANGE" in hook_engine and
         "flush_icache_range(" in hook_engine,
