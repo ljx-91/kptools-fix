@@ -883,3 +883,26 @@ For module exit, close the global gate, close and restore all per-hook entries, 
 KPMs loaded through the LKM are an additional parent/child lifetime problem. Their raw relocations into LKM text require a persistent parent-LKM reference for each published child. The last such reference cannot be dropped in LKM text; it must be deferred until a resident return path has left all LKM frames. Until this protocol exists, safe ordinary LKM unload remains blocked even if inline Hook entry Gate is implemented.
 
 No production Gate code was changed by this correction. No target KDIR build, MODPOST, Module.symvers validation or device test is claimed.
+
+
+## Additional AArch64 ABI and parent-module constraints (2026-11-11)
+
+### Full PCS register surface
+
+The earlier local 440-byte prototype notes are insufficient for a generic inline Hook Gate. AAPCS64 argument/result state includes more than integer x0-x8:
+- General-purpose argument registers x0-x7 and indirect-result register x8.
+- SIMD/FP argument registers v0-v7 (q0-q7); HFA/HVA and vector return conventions may use v0-v3.
+- Stack-passed arguments for signatures whose parameter allocation spills beyond the register banks.
+- Integer return values may use x0/x1; SIMD/HFA return values require the corresponding SIMD result registers to survive the Gate epilogue.
+
+A Gate that calls try_module_get(), then dispatches to a replacement/transit callback, must preserve and restore every incoming argument bank that is part of the target's PCS before dispatch. After callback return it must preserve the complete return-value bank while executing module_put() and token-release logic. The implementation must also keep 16-byte SP alignment, maintain the original stack-argument image, preserve the caller's LR, and satisfy the configured BTI/CFI/SCS rules. A prototype that saves only x0-x8 and integer x0/x1 return values is not acceptable as a generic inline Hook Gate.
+
+The production ABI test matrix must include integer-only, FP scalar, vector, HFA/HVA, mixed integer/FP, indirect structure return via x8, and stack-spilled argument signatures. Tests must exercise both direct replacement and chain transit, and verify all argument and return registers at the callback boundary.
+
+### KPM child image holds references into LKM-owned APIs
+
+The LKM KPM symbol table explicitly publishes LKM-owned functions including kp_kpm_owner_pin(), kp_kpm_owner_unpin(), kp_kpm_owner_call_get(), and kp_kpm_owner_call_put(). KPM code can therefore hold direct relocations into the parent LKM image. The ordinary kernelpatch_exit() path currently does not invoke kp_kpm_exit(); that function is documented and implemented for private init rollback only. A KPM child can remain loaded while the parent LKM is being removed unless a parent lifetime barrier prevents it.
+
+A parent reference is necessary, but a naive module_put(THIS_MODULE) from kp_unload_module() is not sufficient: dropping the last ref while still executing an LKM stack frame can permit module_exit and image release before that frame returns. The final parent-ref release must occur from code that is not in the LKM image after the final LKM return boundary (for example, a validated resident Gate return path or a kernel-supported non-returning release mechanism). Until this is proven, KPM child lifetime remains an independent rmmod blocker.
+
+No production Gate or KPM parent-reference change is made here. No claim of safe rmmod is made.
