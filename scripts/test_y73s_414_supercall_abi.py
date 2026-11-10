@@ -50,6 +50,7 @@ static uid_t test_uid;
 static bool manager_allowed;
 static bool su_allowed;
 static int original_calls;
+static long original_arg0, original_arg1;
 static long original_result = -77;
 static int dispatch_calls;
 static unsigned long dispatch_args[5];
@@ -63,7 +64,8 @@ static bool kp_is_su_allow_uid(uid_t uid) { (void)uid; return su_allowed; }
 static long original_truncate(long a0, long a1)
 {
     original_calls++;
-    if (a0 != 0x1111 || a1 != 0x10002) return -99;
+    original_arg0 = a0;
+    original_arg1 = a1;
     return original_result;
 }
 static long kp_handle_supercall(long cmd, unsigned long a2, unsigned long a3,
@@ -104,7 +106,8 @@ int main(void)
     manager_allowed = false;
     su_allowed = false;
     rc = kp_supercall_handler_legacy(0x1111, 0x10002, 1, 2, 3, 4);
-    if (rc != original_result || original_calls != 1 || dispatch_calls != 1) {
+    if (rc != original_result || original_calls != 1 || dispatch_calls != 1 ||
+        original_arg0 != 0x1111 || original_arg1 != 0x10002) {
         fprintf(stderr, "unauthorized truncate passthrough failed\n");
         return 1;
     }
@@ -112,13 +115,16 @@ int main(void)
 
     manager_allowed = true;
     rc = kp_supercall_handler_legacy(0x1111, 0x1ffff, 1, 2, 3, 4);
-    if (rc != original_result || original_calls != 2 || dispatch_calls != 1) {
+    if (rc != original_result || original_calls != 2 || dispatch_calls != 1 ||
+        original_arg0 != 0x1111 || original_arg1 != 0x1ffff) {
         fprintf(stderr, "invalid command passthrough failed\n");
         return 1;
     }
     puts("[PASS] invalid command is passed to original SyS_truncate");
 
     kp_orig_truncate_args = NULL;
+    manager_allowed = false;
+    su_allowed = false;
     rc = kp_supercall_handler_legacy(0x1111, 0x10002, 1, 2, 3, 4);
     if (rc != -ENOSYS) {
         fprintf(stderr, "missing original trampoline was not fail-closed\n");
