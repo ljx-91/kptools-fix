@@ -169,8 +169,15 @@ static int kp_clear_bti_gp(unsigned long base, unsigned long size)
 __attribute__((no_sanitize("cfi"), __noinline__))
 static int kp_restore_nx_gp(unsigned long base, unsigned long size)
 {
+	int rc = -ENOSYS;
+
 	if (kp_set_memory_nx)
-		kp_set_memory_nx(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
+		rc = kp_set_memory_nx(base, (size + PAGE_SIZE - 1) >> PAGE_SHIFT);
+	/* Without init_mm the allocator-backed path cannot inspect PTEs. Only a
+	 * successful set_memory_nx() proves it is safe to return pages to the
+	 * executable-memory allocator; otherwise kp_free_exec() must leak them. */
+	if (!kp_kpm_init_mm && rc)
+		return rc;
 	return kp_update_bti_gp(base, size, false);
 }
 
