@@ -1187,7 +1187,7 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 ### 目标证据核对
 
 本轮不再只使用通用 4.14 假设，而是同时核对了资料库中提取的 Y73s 目标内核配置与 KALLSYMS：
-- Linux/arm64 4.14.141，4 KiB page（`CONFIG_ARM64_PAGE_SHIFT=12`）；
+- Linux/arm64 4.14.141，4 KiB page（`CONFIG_ARM64_PAGE_SHIFT=12`），39-bit VA（`CONFIG_ARM64_VA_BITS=39`），`CONFIG_PGTABLE_LEVELS=3`；
 - `CONFIG_MODULES=y`、`CONFIG_MODVERSIONS=y`；
 - `CONFIG_LTO_CLANG=y`、`CONFIG_CFI_CLANG=y`、`CONFIG_CFI_CLANG_SHADOW=y`；
 - `CONFIG_KALLSYMS=y`，但 `CONFIG_KALLSYMS_ALL` 未启用；
@@ -1220,7 +1220,7 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 - CI 接入：`215443687cafcba789c6517009bc384e5a651e7f`
 - Kbuild 说明：`621bdb0420f1ee90760c928d40a07b2226d72501`
 - 最新 contract 断言排除注释误报：`02f99cb7b0506f49fda5e7fe0893b39935715304`
-- GCC KPIMG run `42801460895` 曾因 contract 测试把 C 注释中的 `__flush_dcache_area()` 误识别为直接调用而失败；已修正为先剥离 C 注释再检查。该失败是测试脚本误报，不是生产代码构建错误。修正后的 run `42801737368` 正在执行，待最终结果确认。
+- GCC KPIMG run `42801460895` 曾因 contract 测试把 C 注释中的 `__flush_dcache_area()` 误识别为直接调用而失败；已修正为先剥离 C 注释再检查。该失败是测试脚本误报，不是生产代码构建错误。修正后的 run `42801737368` 已成功：Arm GNU GCC 14.2 KPIMG 构建、完整 source contract、4.14.141 API contract、kptools headers / Linux kptools build 与 artifact 上传全部通过。Windows kptools 的同一 run job 在记录时仍运行中。
 
 ### 4.14 版本兼容核对中的更正
 
