@@ -1180,3 +1180,58 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 ### 验证边界
 
 这一步实际执行了 LKM metadata 字符串解析器，但仍使用合成 ELF fixture。没有替代真实第三方 KPM 端到端加载、精确 Y73s Linux 4.14.141 KDIR 编译或真机验证。
+
+
+## 36. Y73s 4.14.141 ARM64 缓存 API / 模块链接兼容修复（2026-11-10）
+
+### 目标证据核对
+
+本轮不再只使用通用 4.14 假设，而是同时核对了资料库中提取的 Y73s 目标内核配置与 KALLSYMS：
+- Linux/arm64 4.14.141，4 KiB page（`CONFIG_ARM64_PAGE_SHIFT=12`）；
+- `CONFIG_MODULES=y`、`CONFIG_MODVERSIONS=y`；
+- `CONFIG_LTO_CLANG=y`、`CONFIG_CFI_CLANG=y`、`CONFIG_CFI_CLANG_SHADOW=y`；
+- `CONFIG_KALLSYMS=y`，但 `CONFIG_KALLSYMS_ALL` 未启用；
+- Clang banner 为 9.0.3。
+- 目标 KALLSYMS 仍实际包含 `__flush_dcache_area`（偏移 `0x5084`）和 `flush_icache_range`（偏移 `0x4fb4`）。因此，即使 `KALLSYMS_ALL=n`，本目标的函数符号运行时查找仍有直接证据支持。
+
+### 生产代码修复
+
+对照上游 Linux stable `v4.14.141`：
+- ARM64 `asm/cacheflush.h` 声明 `__flush_dcache_area` 与 `flush_icache_range`，但没有 `__flush_icache_range`；
+- `arch/arm64/mm/flush.c` 导出 `flush_icache_range`；
+- `__flush_dcache_area` 在 `arch/arm64/mm/cache.S` 实现，但未由该版本 `flush.c` 导出；
+- `kernel/kallsyms.c` 将 `kallsyms_lookup_name` 以 GPL 符号导出。
+
+原 LKM 旧缓存分支直接引用 `__flush_dcache_area`，并调用 4.14 不存在的 `__flush_icache_range`。前者会形成外部模块的未导出符号依赖，后者会形成声明/链接不兼容。
+
+修复：
+1. 旧 D-cache 路径改为通过 `kp_resolve_symbol("__flush_dcache_area")` 运行时解析，不再生成未导出符号的模块重定位；
+2. 解析失败时 `kp_patch_memory_init()` 返回 `-ENOSYS`，在任何内存 patch 发生前 fail-closed；
+3. 对原始汇编 D-cache helper 的间接调用封装在 `no_sanitize("cfi")` wrapper，避免对没有编译器 CFI 类型记录的汇编入口做无效间接调用检查；
+4. 旧 I-cache 路径改用 4.14 已导出的 `flush_icache_range()`；
+5. 更新 Kbuild 注释和新增 `scripts/verify_y73s_414_api_contract.py`，在 CI 检查旧 API 分支、未导出符号间接解析、CFI wrapper、I-cache API、版本门控和折叠 P4D 用法。
+
+### 测试与 CI
+
+- 生产修复：`42d1897f35f53afd38a561c4d1364813302eb81a`
+- CFI wrapper：`9d8ee9588016b67c1a131cddb120e36ca562d693`
+- 4.14 API contract：`f2e372d28515b41469ac3a83ba44eca93056d7cb`
+- contract 断言修正：`fc3975aabca090aca7772e63501e33b16a4e898f`、`bdafa14b4f3b6bfb674beee3dfc664c55ae7388c`
+- CI 接入：`215443687cafcba789c6517009bc384e5a651e7f`
+- Kbuild 说明：`621bdb0420f1ee90760c928d40a07b2226d72501`
+- 最新 contract 断言排除注释误报：`02f99cb7b0506f49fda5e7fe0893b39935715304`
+- GCC KPIMG run `42801460895` 曾因 contract 测试把 C 注释中的 `__flush_dcache_area()` 误识别为直接调用而失败；已修正为先剥离 C 注释再检查。该失败是测试脚本误报，不是生产代码构建错误。修正后的 run `42801737368` 正在执行，待最终结果确认。
+
+### 4.14 版本兼容核对中的更正
+
+曾一度把 ARM64 4.14 的 P4D 当成不存在；进一步核对发现它由 `asm-generic/pgtable-nop4d.h` 折叠提供，`p4d_t` / `p4d_offset()` 在 4.14 仍有效。因此未按错误结论修改三处页表遍历代码。
+
+### 未完成的目标构建门槛
+
+目标配置启用了 `CONFIG_MODVERSIONS=y`、LTO 和 Clang CFI。要证明 LKM 对 Y73s 真正可装载，仍必须用同一份 4.14.141 vendor KDIR、生成头文件和匹配的 `Module.symvers`，在目标 Clang 9.0.3 / 对应 LLD 环境中完成完整外部模块编译与 modpost。当前资料库有 boot、提取配置和 KALLSYMS，但没有完整 vendor KDIR / `Module.symvers`；因此此项仍未通过验证，也不能由 Host 或 GCC KPIMG CI 替代。
+
+上游 API 核对源：
+- `https://github.com/gregkh/linux/blob/v4.14.141/arch/arm64/include/asm/cacheflush.h`
+- `https://github.com/gregkh/linux/blob/v4.14.141/arch/arm64/mm/flush.c`
+- `https://github.com/gregkh/linux/blob/v4.14.141/arch/arm64/mm/cache.S`
+- `https://github.com/gregkh/linux/blob/v4.14.141/kernel/kallsyms.c`
