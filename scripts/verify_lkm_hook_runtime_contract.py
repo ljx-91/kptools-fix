@@ -52,6 +52,9 @@ hook_install = function_body(hook, "int hook_install(")
 phys_from_virt = function_body(patch_memory, "static unsigned long kp_phys_from_virt(")
 manager_exit = function_body(manager, "int hook_rename_lsm_exit(void)")
 
+syscall_unhook = function_body(read("lkm/infra/syscall_table.c"), "int kp_syscall_unhook(")
+supercall_uninstall = function_body(read("lkm/supercall/supercall.c"), "int kp_supercall_uninstall(void)")
+
 hook_kbuild = read("lkm/Kbuild")
 transit4 = function_body(hook, "uint64_t __attribute__((section(\".transit4.text\")))")
 reader_enter = hook.index("hook_chain_reader_enter(hook_chain, 0);", hook.index("_transit4("))
@@ -220,6 +223,18 @@ checks = {
         "pmd_sect(*pmd)" in phys_from_virt and
         "pmd_page_paddr(*pmd) & PMD_MASK" in phys_from_virt and
         phys_from_virt.index("pmd_sect(*pmd)") < phys_from_virt.index("pmd_bad(*pmd)"),
+    "syscall-table teardown compare-restores only the owned handler":
+        "kp_patch_cmpxchg64(" in syscall_unhook and
+        "current == orig" in syscall_unhook and
+        "current != expected" in syscall_unhook,
+    "supercall teardown propagates restore failures and preserves callback state":
+        "kp_syscall_unhook(KP_SUPERCALL_NR, kp_supercall_handler" in supercall_uninstall and
+        "if (rc)" in supercall_uninstall and
+        "retaining callback state" in supercall_uninstall and
+        supercall_uninstall.index("if (rc)") < supercall_uninstall.index("kp_supercall_backend = KP_SUPERCALL_BACKEND_NONE"),
+    "module exit checks supercall restore before other callback teardown":
+        "BUG_ON(kp_supercall_uninstall());" in init and
+        init.index("BUG_ON(kp_supercall_uninstall());") < init.index("BUG_ON(kp_sucompat_hook_exit());"),
     "manager rename hook teardown retires callback and waits for active readers":
         "hook_unwrap_remove(" in manager_exit and
         "kp_rename_hook_cb, 1" in manager_exit and
