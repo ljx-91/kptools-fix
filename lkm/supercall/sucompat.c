@@ -49,11 +49,16 @@ int kp_su_add_allow_uid(uid_t uid, uid_t to_uid, const char *scontext)
 	if (su_group < 0)
 		return -ENODEV;
 	struct su_profile profile;
+	size_t sctx_len;
 	memset(&profile, 0, sizeof(profile));
 	profile.uid = uid;
 	profile.to_uid = to_uid;
-	if (scontext)
-		strscpy(profile.scontext, scontext, sizeof(profile.scontext));
+	if (scontext) {
+		sctx_len = strnlen(scontext, sizeof(profile.scontext));
+		if (sctx_len >= sizeof(profile.scontext))
+			return -ENAMETOOLONG;
+		memcpy(profile.scontext, scontext, sctx_len);
+	}
 	int rc = kp_kstorage_write(su_group, (long)uid, &profile, 0, sizeof(profile), false);
 	logki("allow uid %u -> %u (sctx %s) rc=%d\n", uid, to_uid, profile.scontext, rc);
 	return rc;
@@ -94,11 +99,17 @@ int kp_su_allow_uid_profile(uid_t uid, struct su_profile *out_profile)
 {
 	if (su_group < 0)
 		return -ENODEV;
+	if (!out_profile)
+		return -EINVAL;
 	rcu_read_lock();
 	const struct kp_kstorage *ks = kp_kstorage_get(su_group, (long)uid);
 	if (IS_ERR(ks)) {
 		rcu_read_unlock();
 		return PTR_ERR(ks);
+	}
+	if (ks->dlen != sizeof(*out_profile)) {
+		rcu_read_unlock();
+		return -EINVAL;
 	}
 	memcpy(out_profile, ks->data, sizeof(*out_profile));
 	rcu_read_unlock();
