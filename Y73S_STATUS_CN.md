@@ -1951,3 +1951,35 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 ### 严格限制
 
 这两个脚本都是抽象协议模型；它们没有测试生产 AArch64 Gate 机器码、Linux 4.14 module state/refcount 的真实实现、内存序、stop_machine/CPU pipeline 或设备运行时。当前 LKM transit 函数仍编译在可卸载的 LKM 映像内，生产 Gate 尚未接入。因此 LKM 正常卸载安全仍是未关闭项，不能因模型通过而标记修复完成。
+
+
+## 66. 2026-11-11：LKM 常驻 Gate 的可实现性核对（尚未改生产代码）
+
+本轮继续把 Gate 从抽象模型推进到 Y73s 原始内核 ABI 与现有分配器的可实现性检查。
+
+### 已确认的构件
+
+- 原始 KALLSYMS 中存在 try_module_get：入口偏移 0x01913714，CFI 跳板目标实现偏移 0x002342bc。
+- 原始 KALLSYMS 中存在 module_put：入口偏移 0x0193e844，CFI 跳板目标实现偏移 0x00234708。
+- 同时存在 __module_get（0x0193e848）和 __module_put_and_exit（0x0191338c）；Gate 应使用带 module-state 检查的 try_module_get，而不是无条件 __module_get。
+- LKM kp_hook_exec_alloc() 使用独立 module_alloc()/execmem_alloc() 可执行区域；该区域不等同于 LKM 模块映像。
+- hook_mem_retire() 只从 kp_hook_mems registry 删除元数据并 kfree 元数据对象，不调用 kp_hook_exec_free()；因此退役后的 hook payload 与其中的 original trampoline 会保留在独立可执行分配区。
+- hook_t 是 hook_chain_t 的首成员；当前 hook_chain_t 已有 0x70 个 32-bit transit words（448 bytes），可作为候选 Gate code 区，但 hook() 直接替换路径也必须获得同等的 Gate stub，不能只修 hook_wrap()。
+
+### 生产 Gate 的候选流程
+
+1. 在 hook 发布前，给每个 hook payload 填入 THIS_MODULE、try_module_get/module_put 指针、LKM transit/replacement 指针、original trampoline 和 64-bit closed/count 状态。
+2. 将位置无关的 AArch64 Gate 代码复制到独立 module_alloc 区域；Gate 入口先用原子 CAS 获取 token，再调用 try_module_get(THIS_MODULE)。
+3. try_module_get 成功时才进入 LKM 的 _transitN 或 replace callback；返回后先 module_put，再释放 Gate token。
+4. Gate 已关闭或 try_module_get 失败时，不再读取 LKM callback/module 字段，只调用保留的 original trampoline。
+5. 卸载顺序必须是 close Gate → unhook 原入口 → 等待 Gate token 归零 → 退役 callback/owner 元数据；Gate 代码和 original trampoline 不释放，以覆盖已取到旧分支但尚未进入 Gate 的 CPU。
+6. Gate 必须同时覆盖 hook() 直接替换和 hook_wrap() 链式替换；当前 LKM 还有 supercall、sucompat、manager rename 和 CFI bypass 等多个入口，不能只保护 syscall 45。
+
+### 尚未解决的工程要求
+
+- Gate 需要严格保存 x0-x7、x16、LR 和 9-12 参数函数的栈参数；还要保留返回值，且代码必须位置无关、满足目标 BTI/CFI 配置。
+- Gate 关闭后的分支只能访问 retained payload 中的 closed 状态与 original trampoline，不能读取已释放的 LKM 静态变量或 owner registry。
+- 需要精确 KDIR/Clang 9.0.3 编译、反汇编审计、AArch64 ABI 测试及并发压力测试。当前没有与 Y73s 固件匹配的完整 KDIR，因此本轮不提交未编译的 Gate 汇编或结构体 ABI 改动。
+- 现有 511 状态/12 终态模型只验证协议假设，不验证上述 Gate 机器码实现。
+
+结论：原始内核提供 try_module_get/module_put，LKM 已有可独立保留的可执行 payload，这使“常驻 Gate + module ref + retained trampoline”具备实现基础；但 Gate 尚未实现，LKM 正常卸载仍未通过安全验证。
