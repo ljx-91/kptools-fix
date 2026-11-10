@@ -2,7 +2,7 @@
 
 > 更新时间：2026-11-10  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 当前源码 HEAD（含本轮修复与状态文档）：`ab98b30cd727766e7eae74736d62a828a59909e2`  
+> 当前源码 HEAD（含本轮修复与状态文档）：`d1f116d0720edf1fb84e5dff65e5fc2ca235d074`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -1283,3 +1283,41 @@ LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查�
 ### 未完成的验证门槛
 
 虽然现在已用目标真实 KALLSYMS 校准了运行时解析路径，但 LKM 仍未在目标 vendor KDIR 上完成编译与 modpost。目标配置开启 \`CONFIG_MODVERSIONS=y\`、Clang 9.0.3 LTO/CFI；没有同一份 4.14.141 vendor KDIR、生成头文件和匹配的 \`Module.symvers\`，就无法证明外部模块 CRC 与 CFI/LTO 链接兼容。Host、GCC KPIMG 和源代码 contract 均不能替代这一项。没有进行真机加载或设备操作。
+
+
+## 38. Y73s 4.14.141 Supercall / Hook 运行时链路复核（2026-11-10）
+
+### 当前分支与 CI 核对
+
+- 当前分支 HEAD：`d1f116d0720edf1fb84e5dff65e5fc2ca235d074`。
+- GCC 14.2 Y73S KPIMG run `42809836646`：成功。
+- Windows kptools run `42809836617`：成功。
+- 本次只进行代码链路复核和状态文档校正，没有声称新增目标内核构建或真机验证。
+
+### 4.14 Supercall 路径复核
+
+逐段检查 `lkm/supercall/supercall.c`、`lkm/infra/syscall_table.c`、`kernel/base/hook.c`：
+
+- 非 `CONFIG_ARCH_HAS_SYSCALL_WRAPPER` 分支使用 `SyS_truncate.cfi`，不依赖目标缺失的 `sys_call_table`。
+- 4.14 handler 将 x0/x1 作为原始 truncate 参数，x1 低 16 位识别 supercall command，x2-x5 传递四个 payload 参数。
+- inline hook 安装前设置 backend；安装失败时清除 backend；`-HOOK_PATCH_UNCERTAIN` 路径尝试 `unhook_checked()`，恢复失败 fail-closed。
+- 卸载使用 `unhook_checked()`，恢复失败触发 fail-closed，不会静默清除仍可能生效的 hook 状态。
+
+已有 `scripts/test_y73s_414_supercall_abi.py` 从生产 handler 提取真实函数体，Host 测试覆盖授权 dispatch、未授权 truncate passthrough、非法 command passthrough、缺失 trampoline fail-closed。
+
+### Hook / executable memory 路径复核
+
+- Y73s profile 中 `module_alloc` 与 `module_memfree` 均存在；4.14 ARM64 module allocator 作为 `PAGE_KERNEL_EXEC` 后端使用。
+- 在 `init_mm` 不可解析且 4.14 没有 PTE_GP 的路径，hook runtime 仅接受成对的 module allocator/free backend；不会对 vmalloc 后端假定可执行权限。
+- trampoline 的分支生成使用 x17；被搬迁的指令仍由 AArch64 relocation helper 处理。
+- patch-memory 在没有 `init_mm` 时使用 direct-map / kernel-image `virt_to_phys()` 或 vmalloc/module 区域 `vmalloc_to_page()`；需要 `stop_machine` 才执行文本批量修改。目标 KALLSYMS profile 中包含 `stop_machine`、`vmalloc_to_page` 和 `__flush_dcache_area`。
+
+### 验证边界与待办
+
+以上是源码调用链复核 + 目标 KALLSYMS 存在性证据，不证明函数地址在运行时解析成功，也不证明 syscall entry 的 x2-x5 在目标 vendor 编译产物中实际保持到 hook trampoline。后续仍需：
+1. 精确 vendor 4.14.141 KDIR + 生成头文件 + Module.symvers 的 Clang 9.0.3 外部 LKM 编译和 modpost；
+2. 对 `SyS_truncate.cfi` 真实机器码进行反汇编，核对前四条被搬迁指令、入口 thunk 和 CFI 入口布局；
+3. 目标 Clang 9.0.3 / LLD 9 CFI/LTO 模块链接；
+4. 目标设备运行时验证（在用户明确要求设备操作前不执行刷写或设备操作）。
+
+**本节没有把 Host ABI fixture、KALLSYMS 符号存在性或 GCC KPIMG 构建等同于 Y73s LKM 可加载。**
