@@ -1723,3 +1723,38 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - Windows workflow run `42842659767`：Ubuntu KPIMG build/source-contract job **success**；Windows kptools.exe job **success**。
 - 本节新增的源码契约尚需在本次文档/测试提交后的新 CI run 中再次执行。
 - 仍未取得 Y73s vendor KDIR/完整内核源码；LKM vendor KDIR 编译与 modpost、Clang CFI/LTO 链接、目标设备运行验证均未完成。没有执行 Fastboot、刷写或其他设备写入操作。
+
+
+## 54. 2026-11-10：LKM Hook Engine transit 入口与模块卸载竞态审计
+
+### 本轮确认
+
+- `lkm/hook/hook_engine.c` 直接包含 `kernel/base/hook.c`，因此 `_transit4()` 等 transit C 函数位于 LKM 模块映像中，而不是位于独立保留的 chain payload 中。
+- chain stub 将 chain 指针放入 x16，再经 x17 绝对跳转；transit 函数读取 x16。
+- `_transit4()` 进入 LKM 函数后才增加 `active_readers`；callback owner pin 更晚才发生。
+- `kp_sucompat_hook_exit()` 只在 `hook_unwrap_remove()` 返回 `-EBUSY` 时重试；观察到读者数为零后就可继续卸载。
+- KPM owner registry 只对 KPM image 中的 callback 地址建立 owner ref；它不能自动 pin 当前 LKM 自身的 transit text。
+- LKM `hook_mem_retire()` 仅移除链内存登记元数据，不释放 executable region；KPIMG arena 也不复用 retired slot。这能保护 chain payload 指针，但不能保护 LKM 中的 `_transit4()` 代码。
+
+### 高优先级未关闭风险
+
+存在一个尚未通过运行时复现、但从源码时序上成立的竞态窗口：CPU 可能已经从被 hook 的内核函数跳入 chain stub / LKM transit 路径，却尚未执行 `hook_chain_reader_enter()`。卸载线程此时可能看到 `active_readers == 0`，撤销 hook 并返回；如果随后 Linux module loader 释放 LKM 映像，前一个 CPU 仍可能继续执行已释放的 transit 代码。
+
+当前 reader counter、KPM callback owner pin、保留 chain allocation 均不能单独证明关闭了这个 pre-reader 窗口。尚未证明为真实崩溃，但必须按高优先级生命周期风险处理。
+
+### 需要满足的修复条件
+
+- 生命周期屏障必须从 chain stub 第一条指令开始覆盖，直到 LKM transit 最终返回，包含 reader counter 尚未增加的区间。
+- 必须证明屏障能抵御 CPU 抢占/中断，并在 Linux module loader 释放 LKM 映像前完成。
+- 不能仅凭 `stop_machine()`、callback owner refs、`active_readers` 或保留 trampoline 内存就宣称安全。
+- 需要确定性并发回归测试及目标内核验证。
+
+### ABI / 构建检查
+
+- `lkm/Kbuild` 为 `hook_engine.o` 关闭 CFI、LTO、stack protector，并在目标启用 SCS 时关闭 shadow-call-stack；源码契约现已检查这些保护选项。
+- 新增源码契约也检查 x16/x17 stub 指令角色及 reader/pin/unpin 顺序。
+- 本地 Clang AArch64 结构化探针观察到类似 transit 函数先保存常规寄存器，再捕获 x16；这不是 Y73s vendor KDIR 对象的实际反汇编，不能代替目标编译验证。
+
+### 本轮结论
+
+没有修改生产逻辑。**LKM 卸载安全尚未通过审计**，必须先解决 pre-reader transit lifetime window。仍缺 Y73s vendor KDIR、真实模块配置/对象反汇编和真机运行证据。
