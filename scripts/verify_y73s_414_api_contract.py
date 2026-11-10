@@ -259,4 +259,11 @@ require("strnlen(profile.scontext, sizeof(profile.scontext))" in default_sctx an
         "memcpy(sctx, profile.scontext, sctx_len + 1)" in default_sctx,
         "default SELinux context copy is bounded by the stored fixed-size profile")
 
+
+su_list = su_source.split("long kp_su_allow_uid_list_sc(", 1)[1].split("long kp_su_allow_uid_profile_sc(", 1)[0]
+require("if (max < 0)" in su_list and "if (max && !uids)" in su_list and
+        "uid_t list[128] = { 0 };" in su_list and
+        "if (n && copy_to_user(" in su_list,
+        "SU allowlist copy rejects negative lengths, validates the pointer and initializes the bounded output array")
+
 print("[PASS] Y73S 4.14.141 source compatibility contract")
