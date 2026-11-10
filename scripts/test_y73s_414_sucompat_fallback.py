@@ -43,6 +43,9 @@ def main():
 #include <errno.h>
 typedef unsigned int uid_t;
 #define KP_SH_PATH "/system/bin/sh"
+#define KP_BPRM_HOOK_NONE 0
+#define KP_BPRM_HOOK_SU_REDIRECT 1
+#define KP_BPRM_HOOK_SU_CHAIN 2
 #define SH_PATH "/system/bin/sh"
 #define SUPERCMD "/system/bin/truncate"
 #define LEGACY_SU_PATH "/system/bin/su"
