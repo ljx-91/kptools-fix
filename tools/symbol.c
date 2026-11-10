@@ -397,19 +397,46 @@ static int32_t resolve_kernel_init_from_rest_init(kallsym_t *kallsym, char *img_
         call_target = (int64_t)pc + aarch64_get_branch_offset(call_insn);
         if (call_target != kernel_thread_offset || pc < 8) continue;
 
-        adrp_insn = (uint32_t)uint_unpack(img_buf + pc - 8, 4, target_is_be);
-        add_insn = (uint32_t)uint_unpack(img_buf + pc - 4, 4, target_is_be);
-        if (!aarch64_insn_is_adrp(adrp_insn) ||
-            aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, adrp_insn) != AARCH64_INSN_REG_0 ||
-            !aarch64_insn_is_add_imm(add_insn) ||
-            !(add_insn & 0x80000000U) ||
-            aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, add_insn) != AARCH64_INSN_REG_0 ||
-            aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, add_insn) != AARCH64_INSN_REG_0) {
-            continue;
-        }
+        /*
+         * The Y73S compiler places two unrelated argument setup instructions
+         * (ORR w2, MOV x1) between ADRP/ADD x0 and BL kernel_thread. Search a
+         * short bounded window for ADD x0,x0,#imm, and accept only known
+         * x0-preserving instructions between that ADD and the call.
+         */
+        int found_x0_pair = 0;
+        for (int32_t add_pc = pc - 4; add_pc >= pc - 16 && add_pc >= rest_init_offset + 4;
+             add_pc -= 4) {
+            int preserves_x0 = 1;
+            for (int32_t mid_pc = add_pc + 4; mid_pc < pc; mid_pc += 4) {
+                uint32_t mid_insn = (uint32_t)uint_unpack(img_buf + mid_pc, 4, target_is_be);
+                if ((!aarch64_insn_is_orr_imm(mid_insn) && !aarch64_insn_is_orr(mid_insn)) ||
+                    aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, mid_insn) == AARCH64_INSN_REG_0) {
+                    preserves_x0 = 0;
+                    break;
+                }
+            }
+            if (!preserves_x0) continue;
 
-        page = ((int64_t)(pc - 8)) & ~((int64_t)0xfff);
-        page += aarch64_insn_adrp_get_offset(adrp_insn);
+            add_insn = (uint32_t)uint_unpack(img_buf + add_pc, 4, target_is_be);
+            if (!aarch64_insn_is_add_imm(add_insn) || !(add_insn & 0x80000000U) ||
+                aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, add_insn) != AARCH64_INSN_REG_0 ||
+                aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RN, add_insn) != AARCH64_INSN_REG_0) {
+                continue;
+            }
+
+            int32_t adrp_pc = add_pc - 4;
+            adrp_insn = (uint32_t)uint_unpack(img_buf + adrp_pc, 4, target_is_be);
+            if (!aarch64_insn_is_adrp(adrp_insn) ||
+                aarch64_insn_decode_register(AARCH64_INSN_REGTYPE_RD, adrp_insn) != AARCH64_INSN_REG_0) {
+                continue;
+            }
+
+            page = ((int64_t)adrp_pc) & ~((int64_t)0xfff);
+            page += aarch64_insn_adrp_get_offset(adrp_insn);
+            found_x0_pair = 1;
+            break;
+        }
+        if (!found_x0_pair) continue;
         add_imm = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_12, add_insn);
         if ((add_insn >> 22) & 1) add_imm <<= 12;
         stub_offset = page + (int64_t)add_imm;
