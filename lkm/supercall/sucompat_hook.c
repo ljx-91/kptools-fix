@@ -129,8 +129,8 @@ static void kp_before_prepare_binprm(hook_fargs1_t *args, void *udata)
 	/*
 	 * binfmt_script may call prepare_binprm() again for the interpreter.
 	 * filename remains our unique static marker across bprm_change_interp().
-	 * Do not re-run SU/SELinux setup; only mark the later callback so it can
-	 * restore the effective IDs reset by bprm_fill_uid().
+	 * Do not re-run SU/SELinux setup; mark the later callback so it can
+	 * fail closed after the kernel reprocesses interpreter credentials.
 	 */
 	if (bprm->filename == KP_SH_PATH) {
 		args->local.data0 = KP_BPRM_HOOK_SU_CHAIN;
@@ -199,7 +199,7 @@ static void kp_after_prepare_binprm(hook_fargs1_t *args, void *udata)
 		 * would produce a partially privileged exec. Until the complete
 		 * chain credential transaction is implemented, abort this SU exec.
 		 */
-		logkw("sucompat: interpreter chain is unsupported; aborting SU exec\\n");
+		logkw("sucompat: interpreter chain is unsupported; aborting SU exec\n");
 		args->ret = (unsigned long)(long)-EOPNOTSUPP;
 		return;
 	}
