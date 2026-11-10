@@ -123,10 +123,15 @@ static long kp_redirect_to_sh(const struct pt_regs *regs, const char *what, uid_
 	bool use_apd = false;
 	uintptr_t sp;
 	char __user *new_filename;
+	int rc;
 
 	logki("execve %s by uid %u: granting root (sctx=%s)\n", what, uid,
 	      sctx ? sctx : "(kernel)");
-	kp_commit_su(0, sctx);
+	rc = kp_commit_su(0, sctx);
+	if (rc) {
+		logke("execve %s: credential preparation failed: %d\n", what, rc);
+		return rc;
+	}
 
 	/* Keep manager launches on the direct shell path. */
 	if (su_exec && !manager_exec) {
