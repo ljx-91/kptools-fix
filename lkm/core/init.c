@@ -7,6 +7,7 @@
  */
 #include <linux/module.h>
 #include <linux/version.h>
+#include <linux/bug.h>
 
 #include "../include/kp_lkm.h"
 #include "../infra/patch_memory.h"
@@ -160,8 +161,9 @@ err_unwind:
 		kp_sucompat_hook_exit();
 	if (kpm_initialized)
 		kp_kpm_exit();
-	if (cfi_bypass_installed)
-		kp_bypass_kcfi_exit();
+	/* Never return an init error while a CFI branch may still target this
+	 * module: module loader will free the image after this function returns. */
+	BUG_ON(kp_bypass_kcfi_exit());
 	logke("KernelPatch LKM init failed; installed hooks rolled back: %d\n", rc);
 	return rc;
 }
