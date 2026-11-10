@@ -227,11 +227,11 @@ def main():
     require(r"is_bad_address\(\(void \*\)origin\)", unwrap_fn,
             "hook_unwrap_remove() must reject failed entry resolution")
 
-    unhook_fn = function_body(hook_c, "void unhook(")
+    unhook_fn = function_body(hook_c, "int unhook_checked(void *func)")
     require(r"is_bad_address\(func\)", unhook_fn,
-            "unhook() must reject a null or invalid original function")
+            "checked unhook must reject a null or invalid original function")
     require(r"is_bad_address\(\(void \*\)origin\)", unhook_fn,
-            "unhook() must reject failed entry resolution")
+            "checked unhook must reject failed entry resolution")
     require(r"patch_rc\s*=\s*hook_install\(hook\)", wrap_fn,
             "hook_wrap() must inspect the underlying patch operation status")
     require(r"patch_rc == -EUCLEAN", wrap_fn,
