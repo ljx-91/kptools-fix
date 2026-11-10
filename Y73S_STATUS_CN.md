@@ -1810,3 +1810,19 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 下一步先验证 Y73s 当前 KPIMG 是否存在已经可从 LKM 到达的稳定注册接口；若没有，则必须设计并审计新的跨组件 ABI（例如经过独立生命周期证明的 resident KPM shim），在此之前不写 Gate 汇编，不改生产 hook 路径。
 
 状态：方案 B 仍是用户选择；Gate 生产实现未开始，普通卸载安全未建立。无 vendor KDIR/Module.symvers，未进行 Y73s LKM 目标编译或真机验证。
+
+## 60. 2026-11-11：KPIMG/LKM syscall 45 双 supercall 路径审计
+
+本轮沿 KPIMG 启动路径继续追踪，发现 KPIMG 与 LKM 各自有一套 syscall 45（truncate）supercall 实现：
+
+- KPIMG kernel/patch/common/supercall.c 的 supercall() 已包含 SUPERCALL_KPM_LOAD/UNLOAD/CONTROL/NUMS/LIST/INFO，KPM load 最终进入 KPIMG 自己的 load_module_path()/load_module()。
+- KPIMG 通过 hook_syscalln_override(__NR_supercall, 6, before, 0, 0) 安装入口；授权命令由 before() 设置 skip_origin 并返回 KPIMG 命令结果。
+- KPIMG kernel/patch/common/syscall.c 只有在 syscall-wrapper 和 handler-granularity dispatcher 条件满足时才走全局分发，否则回退到 syscall-table 或单 syscall inline hook。
+- LKM lkm/supercall/supercall.c 也独立 hook syscall 45；其 SUPERCALL_KPM_* 命令调用 kp_kpm_*_sc()，进入的是 lkm/kpm/module.c 的 LKM 自己的 KPM loader，而不是 KPIMG loader。
+- Y73s 的 LKM 初始化注释确认 KALLSYMS_ALL=n 时 syscall-table 数据符号不可用，随后走 SyS_truncate.cfi inline hook。目标是 Linux 4.14.141，不能假设存在现代 syscall-wrapper/global-dispatch 路径。
+
+**结论：** 已找到 KPIMG 自身 KPM loader 的用户态 supercall 控制入口，但这不是 LKM 可直接调用的 KPIMG 注册 ABI。两边使用不同 Hook Engine 副本、不同 KPM registry，却占用同一 syscall 号，存在 Hook 安装顺序和 handler 短路冲突风险。现有源码不足以确定 Y73s 上实际由哪一边接收授权的 SUPERCALL_KPM_LOAD，也不能证明两套 inline patch 可安全叠加。
+
+下一步必须先核对 Y73s syscall 45 name-table 的最终符号地址、KPIMG/LKM 两个 Hook 安装路径是否作用于同一入口，以及两个 handler 同时存在时的实际分发顺序。确认前不写 Gate 汇编、不改生产 Hook、不把 KPIMG supercall 当作隐式 Gate 桥接。
+
+状态：本轮仅追加审计文档；Gate 未实现，普通 LKM 卸载安全仍未建立。无 vendor KDIR/Module.symvers，未完成 Y73s .ko 目标编译或真机验证。
