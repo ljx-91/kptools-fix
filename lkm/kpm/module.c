@@ -789,6 +789,19 @@ static int setup_load_info(struct kp_load_info *info)
 	info->info.description = get_modinfo(info, "description");
 
 	for (int i = 1; i < info->hdr->e_shnum; i++) {
+		Elf_Shdr *relsec = &info->sechdrs[i];
+
+		/* layout_sections() repurposes sh_entsize as an image offset.
+		 * Validate the original ELF RELA metadata before that rewrite. */
+		if (relsec->sh_type == SHT_RELA &&
+		    (relsec->sh_entsize != sizeof(Elf64_Rela) ||
+		     relsec->sh_size % sizeof(Elf64_Rela))) {
+			set_load_error(info, "invalid ELF RELA section metadata");
+			return -ENOEXEC;
+		}
+	}
+
+	for (int i = 1; i < info->hdr->e_shnum; i++) {
 		Elf_Shdr *symsec = &info->sechdrs[i];
 		Elf_Shdr *strsec;
 
