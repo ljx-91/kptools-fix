@@ -193,13 +193,14 @@ static void kp_after_prepare_binprm(hook_fargs1_t *args, void *udata)
 
 	if (args->local.data0 == KP_BPRM_HOOK_SU_CHAIN) {
 		/*
-		 * prepare_binprm() calls bprm_fill_uid() on every interpreter
-		 * hop. It resets only euid/egid to the caller's IDs; uid/gid and
-		 * the already prepared capabilities/SELinux SID remain in the
-		 * pending cred. Restore the effective IDs from our root IDs.
+		 * prepare_binprm() re-runs bprm_fill_uid() and all bprm_set_creds
+		 * hooks for interpreter chains. In particular commoncap may
+		 * recompute/downgrade capability sets, so restoring only euid/egid
+		 * would produce a partially privileged exec. Until the complete
+		 * chain credential transaction is implemented, abort this SU exec.
 		 */
-		bprm->cred->euid = bprm->cred->uid;
-		bprm->cred->egid = bprm->cred->gid;
+		logkw("sucompat: interpreter chain is unsupported; aborting SU exec\\n");
+		args->ret = (unsigned long)(long)-EOPNOTSUPP;
 		return;
 	}
 	if (args->local.data0 != KP_BPRM_HOOK_SU_REDIRECT)
