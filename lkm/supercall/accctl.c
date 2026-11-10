@@ -18,16 +18,25 @@
 #include <linux/sched/task.h>
 #include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/version.h>
 #include <scdefs.h>
 
 #include "../include/kp_lkm.h"
 #include "../infra/symbol_resolver.h"
 
-/* security_secctx_to_secid is EXPORT_SYMBOL on 5.15 — link it directly. */
+/*
+ * security_secctx_to_secid is not exported by the 4.14 vendor baseline.
+ * Resolve it through kallsyms there; 5.15+ exposes the GPL export.
+ */
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 extern int security_secctx_to_secid(const char *secdata, u32 seclen, u32 *secid);
+#define kp_security_secctx_to_secid security_secctx_to_secid
+#else
+typedef int (*kp_secctx_to_secid_fn_t)(const char *secdata, u32 seclen, u32 *secid);
+static kp_secctx_to_secid_fn_t kp_security_secctx_to_secid;
+#endif
 
-/* selinux_blob_sizes is a global; resolve via kallsyms. cred->security is a
- * pointer to the LSM cred blob; the selinux part lives at +lbs_cred. */
+/* selinux_blob_sizes is hidden data with CONFIG_KALLSYMS_ALL=n. */
 struct kp_lsm_blob_sizes {
 	int lbs_cred;
 	int lbs_file;
@@ -39,9 +48,9 @@ struct kp_lsm_blob_sizes {
 };
 
 static struct kp_lsm_blob_sizes *kp_selinux_blob_sizes;
+static int kp_selinux_cred_offset = -1;
 
-/* task_security_struct { osid, sid, ... } — RANDSTRUCT is off, so sid is the
- * second u32 (offset 4). */
+/* struct cred_security_struct { osid, sid, ... }; */
 struct kp_task_sec {
 	u32 osid;
 	u32 sid;
@@ -49,12 +58,32 @@ struct kp_task_sec {
 
 int kp_accctl_init(void)
 {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
+	kp_security_secctx_to_secid =
+		(kp_secctx_to_secid_fn_t)kp_resolve_symbol("security_secctx_to_secid");
+#endif
 	kp_selinux_blob_sizes = (struct kp_lsm_blob_sizes *)kp_resolve_symbol("selinux_blob_sizes");
-	if (!kp_selinux_blob_sizes) {
-		logke("failed to resolve selinux_blob_sizes; selinux translabel disabled\n");
+	if (kp_selinux_blob_sizes) {
+		kp_selinux_cred_offset = kp_selinux_blob_sizes->lbs_cred;
+	} else {
+#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 0, 0) && defined(CONFIG_SECURITY_SELINUX)
+		/*
+		 * Android 4.14 uses the legacy single-SELinux cred blob. The
+		 * target config has SELinux enabled and all other optional LSMs
+		 * disabled, so its cred_security_struct starts at cred->security.
+		 */
+		kp_selinux_cred_offset = 0;
+		logkw("selinux_blob_sizes hidden; using verified 4.14 cred offset 0\n");
+#endif
+	}
+
+	if (kp_selinux_cred_offset < 0 || !kp_security_secctx_to_secid) {
+		logkw("SELinux translabel unavailable (offset=%d resolver=%px)\n",
+		      kp_selinux_cred_offset, kp_security_secctx_to_secid);
 		return 0;
 	}
-	logki("selinux blob sizes: lbs_cred=%d\n", kp_selinux_blob_sizes->lbs_cred);
+	logki("SELinux cred offset: %d; secctx resolver: %px\n",
+	      kp_selinux_cred_offset, kp_security_secctx_to_secid);
 	return 0;
 }
 
@@ -67,16 +96,17 @@ static int kp_selinux_set_cred_context(struct cred *new, const char *sctx)
 	u32 sid;
 	int rc;
 
-	if (!kp_selinux_blob_sizes || !sctx || !sctx[0])
+	if (kp_selinux_cred_offset < 0 || !kp_security_secctx_to_secid ||
+	    !sctx || !sctx[0])
 		return -EINVAL;
 
-	rc = security_secctx_to_secid(sctx, strlen(sctx), &sid);
+	rc = kp_security_secctx_to_secid(sctx, strlen(sctx), &sid);
 	if (rc || !sid) {
 		logkw("secctx_to_secid(%s) failed: %d sid=%u\n", sctx, rc, sid);
 		return rc ? rc : -EINVAL;
 	}
 
-	tsec = (struct kp_task_sec *)((char *)new->security + kp_selinux_blob_sizes->lbs_cred);
+	tsec = (struct kp_task_sec *)((char *)new->security + kp_selinux_cred_offset);
 	tsec->sid = sid;
 	return 0;
 }
@@ -105,77 +135,54 @@ static void su_cred(struct cred *new, uid_t uid)
 	new->sgid = new->gid;
 }
 
-/* no_sanitize("cfi") keeps indirect calls in this function from tripping
- * __cfi_check on traditional-CFI 5.15 kernels. */
-__attribute__((no_sanitize("cfi")))
-static int commit_common_su(uid_t to_uid, const char *sctx)
+/*
+ * Apply a root identity and SELinux domain to a not-yet-installed cred.
+ * This is used by the 4.14 prepare_binprm fallback, where the exec cred is
+ * separate from current_cred() and must be changed before exec installs it.
+ */
+int kp_apply_su_cred(struct cred **cred, uid_t to_uid, const char *sctx)
 {
-	struct cred *new = prepare_creds();
-	if (!new)
-		return -ENOMEM;
+	struct cred *new;
+	struct cred *kernel;
+	const char *target_sctx = sctx && sctx[0] ? sctx : ALL_ALLOW_SCONTEXT_MAGISK;
+	int rc;
 
+	if (!cred || !*cred)
+		return -EINVAL;
+	new = *cred;
 	su_cred(new, to_uid);
+	rc = kp_selinux_set_cred_context(new, target_sctx);
+	if (!rc)
+		return 0;
 
-	/* Translabel to sctx (e.g. u:r:magisk:s0 / u:r:kp:s0). Without this the
-	 * granted process keeps its untrusted_app SELinux domain while running as
-	 * uid 0 with all caps — Android blocks it and the app fails to open. If
-	 * translabel fails, abort the creds so the caller falls back to another
-	 * domain instead of committing an untranslabelled root. */
-	if (sctx && sctx[0]) {
-		int rc = kp_selinux_set_cred_context(new, sctx);
-		if (rc) {
-			logkw("selinux set context(%s) failed: %d\n", sctx, rc);
-			abort_creds(new);
-			return rc;
-		}
-	}
-
-	commit_creds(new);
+	logkw("SELinux translabel failed (%d), falling back to kernel cred\n", rc);
+	kernel = prepare_kernel_cred(NULL);
+	if (!kernel)
+		return -ENOMEM;
+	put_cred(new);
+	*cred = kernel;
 	return 0;
 }
 
+/* no_sanitize("cfi") keeps credential helpers outside legacy CFI checks. */
 __attribute__((no_sanitize("cfi")))
 int kp_commit_su(uid_t to_uid, const char *sctx)
 {
+	struct cred *new;
 	int rc;
 
 	/* Disable seccomp on the caller, matching KP's commit_common_su. */
 	current_thread_info()->flags &= ~_TIF_SECCOMP;
-
-	/* Empty sctx: default to the magisk domain (KP initializes all_allow_sctx
-	 * to ALL_ALLOW_SCONTEXT_MAGISK). The u:r:kernel:s0 domain cannot connect
-	 * sockets or run ART (seen: libsu RootServer ClassNotFoundException after
-	 * Natives.su(0,null) granted kernel cred). Use the fully-qualified
-	 * u:r:magisk:s0, resolved via security_secctx_to_secid. Fall back to
-	 * kernel cred only if the domain is unavailable. */
-	if (!sctx || !sctx[0]) {
-		if (kp_selinux_blob_sizes) {
-			rc = commit_common_su(to_uid, ALL_ALLOW_SCONTEXT_MAGISK);
-			if (!rc) {
-				logki("commit_su: to_uid=%u magisk domain\n", to_uid);
-				return 0;
-			}
-			logkw("magisk domain translabel failed (%d), kernel cred fallback\n", rc);
-		}
-		struct cred *new = prepare_kernel_cred(NULL);
-		if (!new)
-			return -ENOMEM;
-		commit_creds(new);
-		logki("commit_su: to_uid=%u kernel cred (u:r:kernel:s0)\n", to_uid);
-		return 0;
-	}
-
-	/* Explicit sctx: try the translabel, fall back to kernel cred if it fails
-	 * so the caller still gets root. */
-	rc = commit_common_su(to_uid, sctx);
+	new = prepare_creds();
+	if (!new)
+		return -ENOMEM;
+	rc = kp_apply_su_cred(&new, to_uid, sctx);
 	if (rc) {
-		logkw("commit_common_su failed (%d), falling back to kernel cred\n", rc);
-		struct cred *new = prepare_kernel_cred(NULL);
-		if (!new)
-			return -ENOMEM;
-		commit_creds(new);
-		return 0;
+		abort_creds(new);
+		return rc;
 	}
+	commit_creds(new);
+	logki("commit_su: to_uid=%u\n", to_uid);
 	return 0;
 }
 
