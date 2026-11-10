@@ -1629,3 +1629,38 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 ### 边界
 
 该修复针对上游 Linux v4.14.141 的文件访问计数语义。Y73s vendor kernel 是否修改 `open_exec()` / `do_open_execat()` 仍需目标 KDIR 或厂商源码核对；当前没有 vendor KDIR，尚未完成 LKM 编译/modpost、Clang CFI/LTO 链接或真机验证。
+
+## 51. 2026-11-10：prepare_binprm 的 filename/interp 所有权与重复调用审计
+
+### 上游 4.14.141 源码核对
+
+依据：
+- `fs/exec.c`：`do_execveat_common()` 初始令 `bprm->interp = bprm->filename`；`free_bprm()` 仅在两者不相等时 `kfree(bprm->interp)`。
+- `bprm_change_interp()` 同样只在旧 `interp` 与 `filename` 不相等时释放旧指针，然后为新解释器路径分配 `kstrdup()`。
+- `fs/binfmt_script.c`：shebang 处理先释放旧 `bprm->file` 的 deny-write 引用和文件引用，再打开解释器、替换 `bprm->file`，并再次调用 `prepare_binprm()`。
+- `do_open_execat()` 通过 `deny_write_access(file)` 建立可执行文件写入限制；`free_bprm()` 对最终文件执行 `allow_write_access()` + `fput()`。
+
+上游源码：
+- https://github.com/gregkh/linux/blob/v4.14.141/fs/exec.c
+- https://github.com/gregkh/linux/blob/v4.14.141/fs/binfmt_script.c
+
+### 对当前实现的结论
+
+- 当前回调将 `bprm->filename` 和 `bprm->interp` 同时设为静态常量 `KP_SH_PATH`，两者保持指针相等。因此上游 `free_bprm()` 不会对静态常量执行 `kfree()`。
+- 若后续 shebang 处理调用 `bprm_change_interp()`，上游逻辑看到旧 `interp == filename`，不会释放静态常量；随后将新解释器路径复制到堆上，最终由 `free_bprm()` 正常释放。
+- `filename->name` / execveat 相对路径生成的 `pathbuf` 仍由 `do_execveat_common()` 外层分别通过 `putname(filename)` / `kfree(pathbuf)` 管理；本回调改写 bprm 字段不会转移这些外层对象的所有权。
+- 已修复的旧文件 deny-write 平衡与脚本 binfmt 的释放顺序相容：当前 `bprm->file` 指向新 shell 文件；若它进入 shebang handler，handler 负责释放该文件，之后由解释器文件接管；普通 ELF 路径则由 `free_bprm()` 释放最终文件。
+- `execveat` 使用相对 dirfd 或 `AT_EMPTY_PATH` 时，内核可能把 `bprm->filename` 规范成 `/dev/fd/<fd>/...` 或 `/dev/fd/<fd>`。当前基于路径字符串的 SU 匹配不会覆盖所有 fd-based execveat 形式；这是兼容性覆盖范围限制，不会把任意 fd 执行自动识别为 SU。
+
+### 尚未关闭的条件性风险
+
+- `prepare_binprm()` 并非在所有执行路径只调用一次：`binfmt_script` 在打开 shebang 解释器后会再次调用它。
+- 当前回调的 before/after 局部标记只属于单次 hook invocation。若 `/system/bin/sh` 本身是 shebang 脚本，第二次 `prepare_binprm()` 会重新运行 `bprm_fill_uid()`，而当前实现不会把第一次调用的 SU 状态自动传递到第二次调用；pending euid/egid 可能被重置，导致预期的 SU exec 凭据不再可靠。
+- Android 常见 shell 通常是 ELF/mksh，但本项目没有 Y73s 的 system 分区镜像或厂商源码可供本轮确认，不能把这一点当作已验证事实。必须从目标设备只读提取 `/system/bin/sh` 的文件类型/链接目标，或取得对应 system image 后确认它是 ELF，才能关闭该条件。
+- 不建议在没有 per-`linux_binprm` 安全标记设计的情况下，简单地在第二次回调中按 `bprm->filename == KP_SH_PATH` 重新授予 root；这会把普通用户直接执行 shell 的路径混淆为先前的 SU 重定向。
+
+### 本轮结论与验证边界
+
+- 本轮没有发现 `filename/interp` 静态指针释放错误；没有修改生产代码。
+- Windows workflow `42837667598` 的 Ubuntu KPIMG job 和 Windows kptools.exe job 均已 **success**。
+- 仍需验证目标 `/system/bin/sh` 确为 ELF；仍缺 Y73s vendor KDIR、厂商 exec/LSM backport 源码、Clang CFI/LTO 链接和真机验证。没有执行刷写或设备操作。
