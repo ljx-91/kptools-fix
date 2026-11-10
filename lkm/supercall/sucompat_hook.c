@@ -27,11 +27,18 @@
 #include "../manager/manager.h"
 #include <hook.h>
 
-#define KP_SH_PATH SH_PATH       /* /system/bin/sh */
+static const char kp_sh_path[] = SH_PATH; /* unique bprm provenance marker */
+#define KP_SH_PATH kp_sh_path
 
 enum kp_sucompat_backend {
 	KP_SUCOMPAT_BACKEND_NONE,
 	KP_SUCOMPAT_BACKEND_BINPRM,
+};
+
+enum kp_bprm_hook_state {
+	KP_BPRM_HOOK_NONE,
+	KP_BPRM_HOOK_SU_REDIRECT,
+	KP_BPRM_HOOK_SU_CHAIN,
 };
 static enum kp_sucompat_backend kp_sucompat_backend;
 /* Resolved hook targets are retained for exact teardown. */
@@ -119,6 +126,17 @@ static void kp_before_prepare_binprm(hook_fargs1_t *args, void *udata)
 	if (!bprm || !bprm->filename || !bprm->file)
 		return;
 
+	/*
+	 * binfmt_script may call prepare_binprm() again for the interpreter.
+	 * filename remains our unique static marker across bprm_change_interp().
+	 * Do not re-run SU/SELinux setup; only mark the later callback so it can
+	 * restore the effective IDs reset by bprm_fill_uid().
+	 */
+	if (bprm->filename == KP_SH_PATH) {
+		args->local.data0 = KP_BPRM_HOOK_SU_CHAIN;
+		return;
+	}
+
 	uid = from_kuid(current_user_ns(), current_uid());
 	if (!kp_is_su_allow_uid(uid) && !kp_is_manager_uid(uid))
 		return;
@@ -152,7 +170,7 @@ static void kp_before_prepare_binprm(hook_fargs1_t *args, void *udata)
 	allow_write_access(old_file);
 	fput(old_file);
 
-	args->local.data0 = 1;
+	args->local.data0 = KP_BPRM_HOOK_SU_REDIRECT;
 	args->local.data1 = uid;
 	args->local.data2 = supercmd;
 }
@@ -166,11 +184,25 @@ static void kp_after_prepare_binprm(hook_fargs1_t *args, void *udata)
 	uid_t uid;
 	int rc;
 
-	if (!args->local.data0 || (long)args->ret < 0)
+	if ((long)args->ret < 0)
 		return;
 
 	bprm = (struct linux_binprm *)args->arg0;
 	if (!bprm || !bprm->cred)
+		return;
+
+	if (args->local.data0 == KP_BPRM_HOOK_SU_CHAIN) {
+		/*
+		 * prepare_binprm() calls bprm_fill_uid() on every interpreter
+		 * hop. It resets only euid/egid to the caller's IDs; uid/gid and
+		 * the already prepared capabilities/SELinux SID remain in the
+		 * pending cred. Restore the effective IDs from our root IDs.
+		 */
+		bprm->cred->euid = bprm->cred->uid;
+		bprm->cred->egid = bprm->cred->gid;
+		return;
+	}
+	if (args->local.data0 != KP_BPRM_HOOK_SU_REDIRECT)
 		return;
 
 	uid = (uid_t)args->local.data1;
