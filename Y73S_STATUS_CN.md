@@ -407,3 +407,30 @@
 ### 该轮结论
 
 当前 HEAD 已完成：Host/Linux、GCC 14.2 KPIMG、Windows 三条 CI；原始 Boot Kallsyms 全量离线解析；当前 KPIMG 对原始 Boot 副本的离线注入、repack、二次 unpack 和 Kallsyms 再解析。仍未完成目标 4.14.141 KDIR 的真实 `.ko` 编译/modpost、KPM 动态 load/unload、Hook 并发压力测试和设备端启动/APatch 初始化。
+
+
+## 19. 2026-11-10：重新检索匹配的 MT6853 / PD2031 KDIR
+
+### 找到的源码候选
+
+1. `realme-kernel-opensource/realmeV5_AndroidQ-kernel-source`
+   - Makefile：Linux `4.14.141`。
+   - `k6853v1_64_6360_defconfig` 明确设置 `CONFIG_MACH_MT6853=y`、`CONFIG_MTK_PLATFORM="mt6853"`、`CONFIG_ARCH_MTK_PROJECT="k6853v1_64_6360"`、`CONFIG_LTO_CLANG=y`、`CONFIG_CFI_CLANG=y`，DTB overlay 名也为 `mediatek/k6853v1_64_6360`。
+   - 仓库唯一提交时间为 2020-09-27；而原始 Y73s Boot banner 显示内核构建时间为 2022-02-15。公开 defconfig 也没有证明与 Boot 内嵌完整 .config 完全相同（例如 Boot 有 `CONFIG_CFI_CLANG_SHADOW=y`、`CONFIG_MODVERSIONS=y`，且 overlay 名带 `_PD2031`）。这是很接近的 4.14.141/MT6853 平台参考，但不能认定为精确 KDIR。
+   - 链接：https://github.com/realme-kernel-opensource/realmeV5_AndroidQ-kernel-source
+
+2. `vivo-source-mirror/Y53s`
+   - 含 `k6853v1_64_6360_defconfig_PD2031`，配置的 MT6853 / project 名与 Y73s 对应，具有较高平台参考价值。
+   - 但该仓库 Makefile 是 Linux `4.14.186`，比 Boot 的 `4.14.141+` 新 45 个 patchlevel；不能用它的生成头文件或 Module.symvers 声称兼容当前 Boot。
+   - 链接：https://github.com/vivo-source-mirror/Y53s
+
+3. `R0rt1z2/android_kernel_huawei_franklin`
+   - Makefile 是 Linux `4.14.141`，且有完整的 MT6853 config 样本。
+   - 但配置启用了 `CONFIG_HUAWEI_KERNEL`、`CONFIG_KALLSYMS_ALL=y`，项目名为 `k6853v1_64`，不是目标 Boot 的 `k6853v1_64_6360` / `KALLSYMS_ALL=n`；不是精确 KDIR。
+   - 链接：https://github.com/R0rt1z2/android_kernel_huawei_franklin
+
+### 当前判断
+
+- 已找到同版本、同 SoC、同板级命名的 4.14.141 源码参考，但尚未找到可证明对应 2022-02-15 Y73s 原厂构建的源码提交、生成头文件和 `Module.symvers`。
+- 不会拿 4.14.186 或 Huawei/Realme 不完全匹配的源码生成 `.ko` 并声称可加载；也不会把近似 defconfig 当成原始完整配置。
+- 下一步优先比对 Realme V5 4.14.141 候选与 Y73s Boot 的驱动目录、关键结构体/函数、Kbuild 和完整配置差异；在确认源码基线前继续只做静态审计和 Host/KPIMG 离线测试。
