@@ -176,6 +176,28 @@ require("allow_write_access(old_file)" in before_prepare_binprm and
         before_prepare_binprm.index("allow_write_access(old_file)") <
         before_prepare_binprm.index("fput(old_file)"),
         "replacing bprm->file balances the old executable deny-write reference")
+hook_engine_source = read("kernel/base/hook.c")
+hook_public_header = read("kernel/include/hook.h")
+transit4 = hook_engine_source.split("_transit4(uint64_t arg0", 1)[1].split(
+    "#ifndef KP_HOOK_EXTERNAL_CHAIN_PREPARE", 1
+)[0]
+chain_prepare = hook_engine_source.split("static hook_err_t hook_chain_prepare(", 1)[1].split(
+    "#else", 1
+)[0]
+wrap1 = hook_public_header.split("static inline hook_err_t hook_wrap1(", 1)[1].split(
+    "}", 1
+)[0]
+fargs1 = hook_public_header.split("typedef struct", 1)[1]
+require("typedef hook_fargs4_t hook_fargs1_t;" in hook_public_header and
+        "uint64_t ret;" in hook_public_header and
+        "hook_wrap(func, 1, before, after, udata)" in wrap1 and
+        "else if (argno <= 4)" in chain_prepare and
+        "transit_start = (uint64_t)_transit4" in chain_prepare,
+        "one-argument hook_wrap1 uses the hook_fargs4 ABI and selects the four-argument transit wrapper")
+require("hook_chain4_callback func = hook_chain->afters[i]" in transit4 and
+        "hook_invoke_callback(func, &fargs, hook_chain->udata[i], after_allowed[i])" in transit4 and
+        "return fargs.ret;" in transit4,
+        "ARM64 inline-hook transit returns the after-callback-modified fargs.ret in the function return register")
 require("static const char kp_sh_path[] = SH_PATH" in sucompat_hook and
         "bprm->filename == KP_SH_PATH" in sucompat_hook and
         "KP_BPRM_HOOK_SU_CHAIN" in sucompat_hook and
