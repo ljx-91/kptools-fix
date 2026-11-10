@@ -107,21 +107,18 @@ static int check(const char *name, int expected, int rewrite)
     if (!rc && rewrite)
         rc = rewrite_section_headers(&info);
     if ((rc == 0) != (expected == 0)) {
-        fprintf(stderr, "%s: expected %d, got %d (%s)
-",
+        fprintf(stderr, "%s: expected %d, got %d (%s)\\n",
                 name, expected, rc, info.info.error_msg);
         return 1;
     }
     if (!rc && rewrite) {
         if (!info.secstrings ||
             info.sechdrs[2].sh_addr != (unsigned long)image + 320) {
-            fprintf(stderr, "%s: rewritten section metadata mismatch
-", name);
+            fprintf(stderr, "%s: rewritten section metadata mismatch\\n", name);
             return 1;
         }
     }
-    printf("[PASS] %s
-", name);
+    printf("[PASS] %s\\n", name);
     return 0;
 }
 
@@ -194,7 +191,7 @@ int main(void)
         binary = Path(tmp) / "kpm_elf_header_test"
         cfile.write_text(code, encoding="utf-8")
         subprocess.run(
-            [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
+            [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-type-limits",
              str(cfile), "-o", str(binary)],
             check=True,
         )
