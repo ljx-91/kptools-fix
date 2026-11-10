@@ -61,6 +61,8 @@ jobs:
           python3 scripts/test_kpm_simplify_symbols.py
           python3 scripts/test_kpm_layout_copy.py
           python3 scripts/test_kpimg_kpm_loader.py
+          python3 scripts/test_y73s_414_phys_fallback.py
+          python3 scripts/test_y73s_414_supercall_abi.py
           cd kernel
           make clean
           make -j"$(nproc)" hdr kpimg
