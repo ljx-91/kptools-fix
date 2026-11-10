@@ -23,6 +23,7 @@ def main():
     prefix = r"""
 #include <errno.h>
 #include <stdio.h>
+#include <stdbool.h>
 #define PAGE_SIZE 4096UL
 #define PAGE_SHIFT 12
 static void *kp_kpm_init_mm;
