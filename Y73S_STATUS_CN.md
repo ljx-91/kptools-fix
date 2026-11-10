@@ -1151,3 +1151,32 @@ Host harness 使用 ELF64 的 `Elf64_Shdr`、`Elf64_Sym`、`Elf64_Rela` 构造�
 ### 验证边界
 
 本轮修复解决了 KPIMG 标准 RELA 在布局后被错误拒绝的问题，并补齐 parser 元数据校验；测试仍是合成 ELF Host fixture，不是实际第三方 KPM 的全链路加载。精确 Y73s Linux 4.14.141 KDIR 编译和真机加载仍未验证。
+
+
+## 35. LKM 真正 modinfo 字符串解析与必需字段校验（2026-11-10）
+
+### 新增覆盖
+
+之前的 LKM `setup_load_info()` Host fixture 对 `get_modinfo()` 使用固定返回值 stub，因此并未执行生产 metadata 字符串解析器。本轮已移除该 stub，改为直接提取并执行生产：
+- `next_string()`
+- `get_next_modinfo()`
+- `get_modinfo()`
+
+fixture 的 `.kpm.info` 改为真实的 NUL 分隔 `name=fixture\0version=1.0\0` 内容，原有合法 KPM parser 用例现在真实经过 metadata 查找逻辑。
+
+### 发现与修复
+
+LKM 与 KPIMG 都会把 name/version 视为必需字段，但此前只检查查找结果是否为 NULL；`name=` 或 `version=` 会返回非 NULL 的空字符串指针并被接受。现已在两套 loader 中统一拒绝空 name/version。
+
+新增 Host 用例分别验证空 module name 和空 module version 被真实 parser 拒绝。KPIMG fixture 同时覆盖这些输入。
+
+### CI
+
+- LKM 生产修复：`12d9f098dfdf7395c1583c2895f837819fb13204`
+- LKM parser fixture 移除 stub 并接入真实 modinfo：`0836a340ac509d92d23741a23c344e691f7961f0`
+- Host run `42796907050` 的 `Audit LKM KPM ELF loader source` job 成功；日志明确输出合法 metadata、真实 modinfo parser、空 name 和空 version 用例通过。该 run 的 `build-kptools` 当时已进入编译步骤，待最终确认。
+- KPIMG GCC 构建 run `42796648024` 成功；Windows kptools run `42796647963` 两个构建/上传任务成功完成。
+
+### 验证边界
+
+这一步实际执行了 LKM metadata 字符串解析器，但仍使用合成 ELF fixture。没有替代真实第三方 KPM 端到端加载、精确 Y73s Linux 4.14.141 KDIR 编译或真机验证。
