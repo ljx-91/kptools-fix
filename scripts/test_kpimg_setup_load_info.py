@@ -183,8 +183,14 @@ static int run_case(const char *name, int expected)
     struct load_info info;
     int rc;
     reset_fixture(&info);
+    fprintf(stderr, "[TRACE] %s: before elf_header_check\\n", name);
     rc = elf_header_check(&info);
-    if (!rc) rc = setup_load_info(&info);
+    fprintf(stderr, "[TRACE] %s: elf_header_check rc=%d\\n", name, rc);
+    if (!rc) {
+        fprintf(stderr, "[TRACE] %s: before setup_load_info\\n", name);
+        rc = setup_load_info(&info);
+        fprintf(stderr, "[TRACE] %s: setup_load_info rc=%d\\n", name, rc);
+    }
     if ((rc == 0) != (expected == 0)) {
         fprintf(stderr, "%s: expected %d-class result, got %d (%s)\n",
                 name, expected, rc, info.info.error_msg);
@@ -308,6 +314,7 @@ int main(void)
         binary = Path(tmp) / "setup_load_info"
         cfile.write_text(code, encoding="utf-8")
         subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror",
+                        "-fsanitize=address", "-fno-omit-frame-pointer",
                         "-Wno-unused-parameter", "-Wno-unused-function", "-Wno-type-limits",
                         str(cfile), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
