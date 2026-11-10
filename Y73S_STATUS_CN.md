@@ -921,3 +921,14 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 本 fixture 执行的是当前 LKM KPM loader 中真实的 ELF header / section-table 检查函数体；它尚未执行完整 `setup_load_info()`、符号表解析、RELA 表遍历、`apply_relocations()` 或模块内存写入/失败回滚。尚未覆盖 KPIMG loader 对应解析器，也不是目标 Linux 4.14.141 KDIR 编译或真机加载测试。后续应继续扩展到符号/字符串表与 RELA 记录，并用真实 relocation table 驱动完整的验证路径。
 
 安全边界不变：只修改仓库源码、脚本和文档；不连接设备，不使用 Fastboot，不刷写或写入设备分区。
+
+
+### 29 节 CI 结果补记（HEAD `dbe199cc6922cefc0878e217d6b16a1d23cafae7`）
+
+- Host harness 首轮因 Python 源文件中嵌入实际 NUL 字节而无法解析；修正为 C fixture 字符串转义后，第二轮暴露两项测试生成问题：C 字符串换行转义，以及原“越界”section fixture 的长度仍在输入镜像范围内。均已修正；这两轮失败均发生在测试 harness 生成/fixture 预期，不是 loader 源码执行失败。
+- 最终 Linux offline audit Run `42791588659`：**success**。Job `Audit LKM KPM ELF loader source` 与 `build-kptools` 均成功。
+- 最终 harness 日志确认 9 项 ELF header / section-table fixture 全部通过：有效 ELF64 AArch64 ET_REL、非 ELF64、section-header table 非对齐/越界、section string table 截断、section 数据越界、非法对齐、文件 section 偏移不对齐、section 名称越界，以及 NOBITS 不依赖文件内容范围。
+- 同一 audit job 中，既有 LKM 与 KPIMG relocation instruction/data 共 18 项测试继续通过；所有既有 source-contract verifier 继续通过。
+- 该 Host run 的 Linux kptools 构建和 artifact 打包也成功。
+
+当前这一步可标记为：**真实 loader 的 ELF header / section table 检查函数体已由 Host C fixture 执行通过**。仍未覆盖完整 `setup_load_info()`、SYMTAB/STRTAB 全路径、真实 RELA section 遍历和多条 relocation 的整体事务回滚；不能将本结果扩大解释为完整 KPM ELF 加载测试。
