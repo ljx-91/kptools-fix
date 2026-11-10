@@ -59,7 +59,6 @@ __attribute__((naked)) int __init kernelpatch_init_early(void)
 int __init kernelpatch_init(void)
 {
 	int rc;
-	bool cfi_bypass_installed = false;
 	bool kpm_initialized = false;
 	bool supercall_installed = false;
 	bool sucompat_installed = false;
@@ -103,8 +102,6 @@ int __init kernelpatch_init(void)
 	rc = kp_bypass_kcfi();
 	if (rc)
 		logkw("CFI bypass failed: %d\n", rc);
-	else
-		cfi_bypass_installed = true;
 
 #ifdef CONFIG_CFI_CLANG
 	/* KPM images are not registered through the kernel module loader and do
@@ -175,7 +172,9 @@ static void __exit kernelpatch_exit(void)
 	kp_supercall_uninstall();
 	/* Unhook the CFI bypass last so it shields the other teardown from
 	 * spurious CFI failures on LKM/KPM text. */
-	kp_bypass_kcfi_exit();
+	/* module_exit() cannot veto unload: stop rather than free module text if
+	 * any CFI branch could still point into this image. */
+	BUG_ON(kp_bypass_kcfi_exit());
 	logki("KernelPatch LKM unloaded\n");
 }
 
