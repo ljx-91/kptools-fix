@@ -117,3 +117,37 @@ A direct closed-path tail branch to `chain->hook.relo_addr` is preferable to cal
 ## Safety status
 
 **The KPIMG-resident Gate is the selected architecture, but it is not implemented and unload safety is not yet established.** Until the complete Gate contract is implemented and validated, the LKM must still be treated as unsafe for ordinary unload while hooks are active. No self-pin or production behavior change is made by this audit document.
+
+
+## Follow-up audit: KPIMG-to-LKM discovery path (2026-11-11)
+
+### Confirmed negative result
+
+A second pass checked the actual LKM symbol resolution and KPM loader, not only `kernel/base/symbol.c`:
+
+- `kernel/base/symbol.c` exports `symbol_lookup_name`, `kp_symbol_count`, and `kp_symbol_list` through KPIMG's private `.kp.symbol` table. These are not Linux kallsyms exports.
+- `lkm/infra/symbol_resolver.c` resolves names only with Linux `kallsyms_lookup_name()` and optional Linux `kallsyms_on_each_symbol()` variants.
+- `lkm/kpm/symbols.c`'s compatibility table does not contain `symbol_lookup_name`, `kp_symbol_count`, or `kp_symbol_list`.
+- `lkm/kpm/module.c:simplify_symbols()` resolves undefined KPM symbols first from that LKM compatibility table and then from Linux `kallsyms_lookup_name()`. It does not consult KPIMG's private symbol table.
+- The reviewed `kernel/base/start.c` exports the KPIMG symbol resolver for KPIMG/KPM consumers, but no LKM-visible global handoff or registration callback is established by the current LKM startup path.
+
+Therefore the previously noted handoff issue is now a confirmed architectural blocker: **adding `KP_EXPORT_SYMBOL(kp_hook_gate_register)` to KPIMG alone will not make it callable from this LKM.** Likewise, adding the symbol name to the LKM's KPM compatibility table would only publish an LKM-side address; it would not reveal the KPIMG resolver.
+
+### Implications for candidate bridges
+
+Do not implement any of these unproven shortcuts:
+
+- Calling `symbol_lookup_name` through `kallsyms_lookup_name` (wrong symbol namespace).
+- Guessing/scanning the KPIMG base or its private `.kp.symbol` bounds from a kernel address.
+- Assuming the LKM KPM loader is the KPIMG's original KPM loader; the reviewed code is an LKM-side loader with a different undefined-symbol resolution path.
+- Passing a KPIMG function pointer through an arbitrary kernel global or a guessed spare field.
+
+A valid bridge must be explicitly created on both sides and have a stable lifetime. Candidate designs to evaluate separately are:
+
+1. A KPIMG-owned registration endpoint reachable through an already-established, documented kernel-visible ABI. First prove such an endpoint exists on this exact KPIMG build; current source review has not found one.
+2. A deliberately registered resident KPM shim whose relocation path is explicitly extended to resolve KPIMG-private exports, then uses a bounded callback ABI to register/unregister the LKM. This needs a separate lifecycle proof for the shim and must not be assumed to work with the current LKM KPM resolver.
+3. Reconsider a non-KPIMG resident trampoline allocation only if the user explicitly changes the architectural requirement. It could be independent of LKM text, but it is not the selected KPIMG-resident design.
+
+### Next safe action
+
+Before writing Gate assembly, map every KPIMG entry/registration interface that is already reachable from the LKM on Y73S and identify a real, stable handoff. If none exists, stop and report that the selected architecture needs a deliberate cross-component ABI change. No production code should call an unresolved KPIMG address.
