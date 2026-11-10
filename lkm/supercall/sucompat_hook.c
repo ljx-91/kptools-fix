@@ -231,13 +231,12 @@ static void kp_before_prepare_binprm(hook_fargs1_t *args, void *udata)
 	bprm->file = shell_file;
 	bprm->filename = KP_SH_PATH;
 	bprm->interp = KP_SH_PATH;
-	if (supercmd)
-		bprm->argc = 0; /* SUPERCMD is a root-shell request, not shell argv. */
+	if (supercmd && bprm->argc > 1)
+		bprm->argc = 1; /* Keep argv[0], discard the SUPERCMD key/options. */
 	fput(old_file);
 
 	args->local.data0 = 1;
 	args->local.data1 = uid;
-	args->local.data2 = supercmd;
 }
 
 static void kp_after_prepare_binprm(hook_fargs1_t *args, void *udata)
