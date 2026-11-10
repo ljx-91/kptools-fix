@@ -148,6 +148,8 @@ static void kp_before_prepare_binprm(hook_fargs1_t *args, void *udata)
 	bprm->interp = KP_SH_PATH;
 	if (supercmd && bprm->argc > 1)
 		bprm->argc = 1; /* Keep argv[0], discard the SUPERCMD key/options. */
+	/* open_exec() and do_open_execat() both hold deny_write_access(). */
+	allow_write_access(old_file);
 	fput(old_file);
 
 	args->local.data0 = 1;
