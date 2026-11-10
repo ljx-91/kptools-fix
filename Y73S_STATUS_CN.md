@@ -1600,7 +1600,7 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 
 - 过程中发现并修复了两项过时测试契约：supercall input verifier 仍要求旧 kp_execve_handler()，4.14 API verifier 仍要求 syscall backend 使用的 current_user_stack_pointer() / strscpy()。这些是后端删除后的测试预期未同步，不是生产构建错误。
 - GCC 14.2 Y73S KPIMG run 42830791161，HEAD 7acaa0ce78b853c07b5f263b5c96afccd787583c：**success**；KPIMG 构建、Host fixture、Y73S 4.14 API contract 与 source contracts 全部通过，artifact 上传成功。
-- Windows workflow run 42830790621：Ubuntu KPIMG/source-contract job 已 success；Windows kptools.exe job 当时仍在运行，最终结果待确认。
+- Windows workflow run 42830790621：**success**；Ubuntu KPIMG/source-contract job 与 Windows kptools.exe 构建均成功。
 - 早期提交 e90594f3、8329f703 的 CI 失败分别由旧 source contract / 旧 API contract 引起；不能用这些中间提交的失败结果代替最终 HEAD 验证。
 
 ### 验证边界
