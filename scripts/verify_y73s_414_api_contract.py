@@ -46,6 +46,8 @@ require(re.search(r'__attribute__\(\(no_sanitize\("cfi"\)\)\)\s+static void kp_f
 require("flush_icache_range((start), (end))" in old_cache and
         "__flush_icache_range" not in old_cache,
         "4.14 I-cache path uses exported flush_icache_range")
+require(not re.search(r"(?<![A-Za-z0-9_])__flush_dcache_area\s*\(", old_cache),
+        "4.14 LKM has no direct relocation against non-exported __flush_dcache_area")
 require("return kallsyms_lookup_name(name);" in resolver,
         "symbol resolver bootstrap is kallsyms_lookup_name (verified GPL export on 4.14.141)")
 require("MODULE_LICENSE(\"GPL\")" in init,
