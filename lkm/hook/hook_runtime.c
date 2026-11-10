@@ -64,7 +64,6 @@ static void (*kp_hook_execmem_free)(void *ptr);
 #endif
 static void *(*kp_hook_module_alloc)(unsigned long size);
 static void (*kp_hook_module_memfree)(void *region);
-static void (*kp_hook_flush_icache_all)(void);
 static int (*kp_hook_set_memory_x)(unsigned long addr, int numpages);
 static int (*kp_hook_set_memory_nx)(unsigned long addr, int numpages);
 
@@ -106,16 +105,33 @@ static int kp_hook_update_exec(void *region, unsigned long size, bool executable
 	unsigned long base = (unsigned long)region;
 	unsigned long end, addr;
 
-	if (!kp_hook_init_mm || !region || !size ||
-	    (base & (PAGE_SIZE - 1)) || (size & (PAGE_SIZE - 1)) ||
-	    size > ULONG_MAX - base)
+	if (!region || !size || (base & (PAGE_SIZE - 1)) ||
+	    (size & (PAGE_SIZE - 1)) || size > ULONG_MAX - base)
 		return -EINVAL;
+
+	/*
+	 * Linux 4.14 ARM64 has no PTE_GP/BTI descriptor. Its module_alloc()
+	 * contract maps module text with PAGE_KERNEL_EXEC, and module_memfree()
+	 * removes that mapping. With CONFIG_KALLSYMS_ALL=n, init_mm is absent
+	 * from kallsyms; do not invent its address or walk a user page table.
+	 */
+	if (!kp_hook_init_mm) {
+#if !defined(PTE_GP)
+		if (kp_hook_alloc_backend == KP_HOOK_ALLOC_MODULE)
+			return 0;
+#endif
+		return -ENOSYS;
+	}
+
 	end = base + size;
 	if (executable && kp_hook_set_memory_x &&
 	    kp_hook_set_memory_x(base, size >> PAGE_SHIFT))
 		return -EACCES;
-	if (!executable && kp_hook_set_memory_nx)
-		kp_hook_set_memory_nx(base, size >> PAGE_SHIFT);
+	if (!executable && kp_hook_set_memory_nx) {
+		int rc = kp_hook_set_memory_nx(base, size >> PAGE_SHIFT);
+		if (rc)
+			return -EACCES;
+	}
 
 	for (addr = base; addr < end; addr += PAGE_SIZE) {
 		pgd_t *pgd = pgd_offset(kp_hook_init_mm, addr);
@@ -125,7 +141,8 @@ static int kp_hook_update_exec(void *region, unsigned long size, bool executable
 		pte_t *pte;
 		spinlock_t *ptl;
 		pteval_t v;
-		unsigned long mask = KP_HOOK_PTE_PXN | KP_HOOK_PTE_UXN | KP_HOOK_PTE_GP;
+		unsigned long exec_deny_mask = KP_HOOK_PTE_PXN | KP_HOOK_PTE_GP;
+		unsigned long nx_mask = exec_deny_mask | KP_HOOK_PTE_UXN;
 
 		if (pgd_none(*pgd) || pgd_bad(*pgd))
 			return -EFAULT;
@@ -146,12 +163,18 @@ static int kp_hook_update_exec(void *region, unsigned long size, bool executable
 			return -EFAULT;
 		}
 		v = pte_val(*pte);
-		if (executable)
-			v &= ~mask;
-		else
-			v |= mask;
+		if (executable) {
+			/* Kernel text must remain UXN while privileged execution is allowed. */
+			v &= ~exec_deny_mask;
+			v |= KP_HOOK_PTE_UXN;
+		} else {
+			v |= nx_mask;
+		}
 		set_pte_at(kp_hook_init_mm, addr, pte, __pte(v));
-		if (executable ? (pte_val(*pte) & mask) : ((pte_val(*pte) & mask) != mask)) {
+		if (executable ?
+		    ((pte_val(*pte) & exec_deny_mask) ||
+		     !(pte_val(*pte) & KP_HOOK_PTE_UXN)) :
+		    ((pte_val(*pte) & nx_mask) != nx_mask)) {
 			spin_unlock(ptl);
 			return -EACCES;
 		}
@@ -230,41 +253,44 @@ static void kp_hook_exec_free(void *region, unsigned long size)
 	}
 }
 
-__attribute__((no_sanitize("cfi")))
-static void kp_hook_flush_all(void)
-{
-	if (kp_hook_flush_icache_all)
-		kp_hook_flush_icache_all();
-}
-
 int kp_hook_runtime_init(void)
 {
 	kp_hook_module_alloc = (void *)kp_resolve_symbol("module_alloc");
 	kp_hook_module_memfree = (void *)kp_resolve_symbol("module_memfree");
 	kp_hook_execmem_alloc = (void *)kp_resolve_symbol("execmem_alloc");
 	kp_hook_execmem_free = (void *)kp_resolve_symbol("execmem_free");
-	kp_hook_flush_icache_all = (void *)kp_resolve_symbol("flush_icache_all");
 	kp_hook_set_memory_x = (int (*)(unsigned long, int))kp_resolve_symbol("set_memory_x");
 	kp_hook_set_memory_nx = (int (*)(unsigned long, int))kp_resolve_symbol("set_memory_nx");
 	kp_hook_init_mm = (struct mm_struct *)kp_resolve_symbol("init_mm");
-	if (!kp_hook_init_mm) {
-		logke("init_mm unavailable; cannot verify executable Hook memory permissions\n");
-		return -ENOSYS;
-	}
-	if (!kp_hook_flush_icache_all) {
-		logke("flush_icache_all unavailable; cannot publish executable Hook trampolines\n");
-		return -ENOSYS;
-	}
-	/* Select a matched allocator/free pair. Never pass memory from one
-	 * executable allocator to another backend's free routine. */
-	if (kp_hook_module_alloc && kp_hook_module_memfree && kp_hook_set_memory_x)
+
+	/* module_alloc() is the kernel's executable-module allocator (4.14
+	 * ARM64 uses PAGE_KERNEL_EXEC); its paired module_memfree() removes the
+	 * mapping. Do not require set_memory_x or hidden init_mm to use it. */
+	if (kp_hook_module_alloc && kp_hook_module_memfree)
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_MODULE;
 	else if (kp_hook_execmem_alloc && kp_hook_execmem_free)
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_EXECMEM;
-	else
+	else if (kp_hook_set_memory_x && kp_hook_set_memory_nx)
 		kp_hook_alloc_backend = KP_HOOK_ALLOC_VMALLOC;
-	logki("KPM hook runtime ready backend=%d module_alloc=%px execmem_alloc=%px set_memory_x=%px\\n",
-	      kp_hook_alloc_backend, kp_hook_module_alloc, kp_hook_execmem_alloc, kp_hook_set_memory_x);
+	else {
+		logke("no matched executable Hook allocator/free backend\\n");
+		return -ENOSYS;
+	}
+
+#if defined(PTE_GP)
+	if (!kp_hook_init_mm) {
+		logke("init_mm unavailable; cannot verify BTI guarded Hook memory\\n");
+		return -ENOSYS;
+	}
+#else
+	if (!kp_hook_init_mm && kp_hook_alloc_backend != KP_HOOK_ALLOC_MODULE) {
+		logke("init_mm unavailable and no PAGE_KERNEL_EXEC module allocator\\n");
+		return -ENOSYS;
+	}
+#endif
+	logki("Hook runtime ready backend=%d module_alloc=%px execmem_alloc=%px init_mm=%px\\n",
+	      kp_hook_alloc_backend, kp_hook_module_alloc, kp_hook_execmem_alloc,
+	      kp_hook_init_mm);
 	return 0;
 }
 
@@ -461,7 +487,3 @@ int hotpatch_cmpxchg64(void *addr, uint64_t expected, uint64_t desired)
 	return kp_patch_cmpxchg64(addr, expected, desired);
 }
 
-void flush_icache_all(void)
-{
-	kp_hook_flush_all();
-}
