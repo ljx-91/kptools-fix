@@ -13,6 +13,7 @@ runtime = read("lkm/hook/hook_runtime.c")
 hmem = read("kernel/base/hmem.c")
 hmem_h = read("kernel/base/hmem.h")
 hook = read("kernel/base/hook.c")
+hook_engine = read("lkm/hook/hook_engine.c")
 fphook = read("kernel/base/fphook.c")
 patch_memory = read("lkm/infra/patch_memory.c")
 
@@ -51,12 +52,12 @@ checks = {
     "Linux 4.14 without PTE_GP uses a zero BTI guard mask":
         "#ifdef PTE_GP" in runtime and "#define KP_HOOK_PTE_GP 0UL" in runtime and
         "#ifdef PTE_GP" in read("lkm/kpm/module.c") and "#define KP_LKM_PTE_GP 0UL" in read("lkm/kpm/module.c"),
-    "LKM hook executable pages clear BTI guard and verify permissions":
+    "LKM hook executable pages clear PXN/BTI guard while preserving UXN":
         "kp_hook_init_mm" in runtime and
         "pte_lockptr(kp_hook_init_mm, pmd)" in hook_update_exec and
         "set_pte_at(kp_hook_init_mm, addr, pte" in hook_update_exec and
-        "KP_HOOK_PTE_PXN" in hook_update_exec and
-        "KP_HOOK_PTE_UXN" in hook_update_exec and
+        "v &= ~exec_deny_mask" in hook_update_exec and
+        "v |= KP_HOOK_PTE_UXN" in hook_update_exec and
         "KP_HOOK_PTE_GP" in hook_update_exec,
     "LKM hook allocator fails closed when executable page setup fails":
         "kp_hook_make_exec(p, alloc_size)" in hook_exec_alloc and
@@ -65,16 +66,16 @@ checks = {
         "return -ENOSYS;" in hook_runtime_init,
     "LKM hook pages are restored to NX/BTI before allocator reuse":
         "kp_hook_set_memory_nx" in runtime and
-        "v |= mask;" in hook_update_exec and
+        "v |= nx_mask;" in hook_update_exec and
         "kp_hook_make_nx(region, size)" in hook_exec_free and
         "permission restore failed; leaking" in hook_exec_free and
         "mem->region_size = PAGE_ALIGN(size)" in runtime and
         "kp_hook_exec_free(mem->region, mem->region_size)" in runtime,
-    "LKM trampoline publication flushes instruction cache before patch":
-        "kp_hook_flush_icache_all" in hook_runtime_init and
-        "return -ENOSYS;" in hook_runtime_init and
-        "flush_icache_all();" in hook_install and
-        hook_install.index("flush_icache_all();") < hook_install.index("return hotpatch("),
+    "LKM trampoline publication broadcasts I-cache invalidation before patch":
+        "kp_hook_module_alloc && kp_hook_module_memfree" in hook_runtime_init and
+        "KP_HOOK_FLUSH_ICACHE_RANGE" in hook_install and
+        "__flush_icache_all();" in hook_engine and
+        hook_install.index("KP_HOOK_FLUSH_ICACHE_RANGE") < hook_install.index("return hotpatch("),
     "LKM backend defines hook_mem_retire": "void hook_mem_retire(void *payload)" in runtime,
     "retire unlinks metadata without freeing executable region":
         "list_del(&mem->list);" in runtime and
