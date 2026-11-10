@@ -2,10 +2,8 @@
 /*
  * Copyright (C) 2023 bmax121. All Rights Reserved.
  *
- * Intercept execve of the su binary (/system/bin/kp). When a su-allowed or
- * manager uid execs it, grant root inline (kp_commit_su) and redirect the exec
- * to the shell (/system/bin/sh). Ported from KP's handle_before_execve, minus
- * the apd daemon branch (framework).
+ * Intercept su execs at prepare_binprm and prepare only bprm->cred.
+ * Credentials are committed by the kernel only after exec passes validation.
  */
 #include "sucompat_hook.h"
 #include "accctl.h"
@@ -20,29 +18,22 @@
 #include <linux/ptrace.h>
 #include <linux/sched.h>
 #include <linux/string.h>
-#include <linux/syscalls.h>
-#include <linux/thread_info.h>
 #include <linux/uaccess.h>
 #include <scdefs.h>
 
 #include "../include/kp_lkm.h"
-#include "../infra/syscall_table.h"
 #include "../infra/symbol_resolver.h"
 #include "../manager/manager.h"
 #include <hook.h>
 
-#define KP_EXECVE_NR __NR_execve /* 221 on arm64 */
 #define KP_SH_PATH SH_PATH       /* /system/bin/sh */
 
-static kp_syscall_fn_t kp_orig_execve;
 enum kp_sucompat_backend {
 	KP_SUCOMPAT_BACKEND_NONE,
-	KP_SUCOMPAT_BACKEND_SYSCALL,
 	KP_SUCOMPAT_BACKEND_BINPRM,
 };
 static enum kp_sucompat_backend kp_sucompat_backend;
 /* Resolved hook targets are retained for exact teardown. */
-static unsigned long kp_getname_flags_addr;
 static unsigned long kp_prepare_binprm_addr;
 typedef struct file *(*kp_open_exec_fn_t)(const char *name);
 static kp_open_exec_fn_t kp_open_exec;
@@ -106,93 +97,6 @@ static const char *kp_get_supercmd_sctx(const struct pt_regs *regs,
 		}
 	}
 	return NULL;
-}
-/* Grant root and repoint the execve to apd (su only, if installed) or sh.
- * @su_exec: true when the intercepted binary is an actual su invocation (so a
- * -c/-u command must be preserved for apd's root_shell); false for SUPERCMD
- * (truncate <key> -Z <sctx>), which is a plain root shell request that sh
- * should get with no args. Overwrites the caller's user-space filename buffer
- * and argv in place.
- * @sctx: SELinux context to switch to. */
-static long kp_redirect_to_sh(const struct pt_regs *regs, const char *what, uid_t uid,
-			      bool su_exec, bool manager_exec, const char *sctx)
-{
-	char __user **uargv = (char __user **)regs->regs[1];
-	const char *target = KP_SH_PATH;
-	struct file *fp;
-	bool use_apd = false;
-	uintptr_t sp;
-	char __user *new_filename;
-	int rc;
-
-	logki("execve %s by uid %u: granting root (sctx=%s)\n", what, uid,
-	      sctx ? sctx : "(kernel)");
-	rc = kp_commit_su(0, sctx);
-	if (rc) {
-		logke("execve %s: credential preparation failed: %d\n", what, rc);
-		return rc;
-	}
-
-	/* Keep manager launches on the direct shell path. */
-	if (su_exec && !manager_exec) {
-		fp = filp_open(APD_PATH, O_RDONLY | O_NOFOLLOW, 0);
-		if (!IS_ERR(fp)) {
-			filp_close(fp, NULL);
-			target = APD_PATH;
-			use_apd = true;
-		}
-	}
-	logki("redirect to %s\n", target);
-
-	/*
-	 * Never overwrite the caller's original filename buffer: it may only
-	 * contain a short string such as "su". Place the replacement string in
-	 * fresh user stack space and redirect syscall argument x0 instead.
-	 */
-	sp = current_user_stack_pointer();
-	if (sp < strlen(target) + 1 + 8)
-		goto passthrough;
-	sp -= strlen(target) + 1;
-	sp &= ~(uintptr_t)7;
-	new_filename = (char __user *)sp;
-	if (copy_to_user(new_filename, target, strlen(target) + 1)) {
-		logkw("failed to write replacement filename\n");
-		goto passthrough;
-	}
-
-	if (use_apd) {
-		char __user *arg0;
-
-		if (!uargv || sp < strlen(LEGACY_SU_PATH) + 1 + 8)
-			goto passthrough;
-		sp -= strlen(LEGACY_SU_PATH) + 1;
-		sp &= ~(uintptr_t)7;
-		arg0 = (char __user *)sp;
-		if (copy_to_user(arg0, LEGACY_SU_PATH, strlen(LEGACY_SU_PATH) + 1)) {
-			logkw("failed to write su argv[0]\n");
-			goto passthrough;
-		}
-		if (copy_to_user(&uargv[0], &arg0, sizeof(arg0))) {
-			logkw("failed to rewrite argv[0]\n");
-			goto passthrough;
-		}
-	} else if (!su_exec && uargv) {
-		/* Manager and SUPERCMD root shells take no arguments. */
-		char __user *nullp = NULL;
-
-		if (copy_to_user(&uargv[1], &nullp, sizeof(nullp))) {
-			logkw("failed to rewrite argv[1]\n");
-			goto passthrough;
-		}
-	}
-
-	((struct pt_regs *)regs)->regs[0] = (unsigned long)new_filename;
-	return kp_orig_execve(regs);
-
-passthrough:
-	if (kp_orig_execve)
-		return kp_orig_execve(regs);
-	return -ENOSYS;
 }
 /*
  * Linux 4.14 vendor kernels may hide sys_call_table with CONFIG_KALLSYMS_ALL=n.
@@ -345,70 +249,6 @@ static int kp_unwrap_wait(void *func, void *before, void *after)
 	return rc;
 }
 
-/* ---- getname_flags path-probe redirect -------------------------------- */
-
-static void kp_after_getname_flags(hook_fargs4_t *args, void *udata)
-{
-	struct filename *fn = (struct filename *)args->ret;
-	const char *sh_path = SH_PATH;
-	const char *su_path;
-	size_t sh_len, su_len;
-
-	if (IS_ERR_OR_NULL(fn))
-		return;
-
-	{
-		uid_t uid = from_kuid(current_user_ns(), current_uid());
-		if (!kp_is_su_allow_uid(uid) && !kp_is_manager_uid(uid))
-			return;
-	}
-
-	su_path = kp_su_get_path();
-	if (!fn->name || strcmp(fn->name, su_path))
-		return;
-
-	sh_len = strlen(sh_path);
-	su_len = strlen(su_path);
-
-	if (sh_len <= su_len) {
-		/* New name fits in existing buffer. */
-		strscpy((char *)fn->name, sh_path, su_len + 1);
-		return;
-	}
-
-	/* sh_path is longer: allocate a fresh filename object. */
-	{
-		typeof(&getname_kernel) kp_getname;
-		typeof(&putname) kp_putname;
-
-		kp_getname = (typeof(kp_getname))kallsyms_lookup_name("getname_kernel");
-		kp_putname = (typeof(kp_putname))kallsyms_lookup_name("putname");
-		if (kp_getname && kp_putname) {
-			struct filename *nf = kp_getname(sh_path);
-			if (!IS_ERR_OR_NULL(nf)) {
-				kp_putname(fn);
-				args->ret = (unsigned long)nf;
-			}
-		}
-	}
-}
-
-static int kp_hook_getname_flags(void)
-{
-	unsigned long addr;
-
-	addr = kallsyms_lookup_name("__original_getname_flags");
-	if (!addr)
-		addr = kallsyms_lookup_name("getname_flags");
-	if (!addr) {
-		logki("sucompat: getname_flags not found, path-probe unavailable\n");
-		return -ENOENT;
-	}
-	logki("sucompat: getname_flags at %px\n", (void *)addr);
-	kp_getname_flags_addr = addr;
-	return hook_wrap3((void *)addr, 0, kp_after_getname_flags, 0);
-}
-
 /* Default SELinux context */
 static const char *kp_default_sctx(uid_t uid, char *sctx, size_t sctx_size)
 {
@@ -427,76 +267,16 @@ static const char *kp_default_sctx(uid_t uid, char *sctx, size_t sctx_size)
 	}
 	return ALL_ALLOW_SCONTEXT_MAGISK;
 }
-static long kp_execve_handler(const struct pt_regs *regs)
-{
-	uid_t uid = from_kuid(current_user_ns(), current_uid());
-	char __user *ufilename = (char __user *)regs->regs[0];
-	char filename[SU_PATH_MAX_LEN];
-	char sctx_buf[SUPERCALL_SCONTEXT_LEN];
-	long flen;
-	bool su_ok, mgr_ok;
-
-	/* Only su-allowed / manager uids trigger the interception. */
-	mgr_ok = kp_is_manager_uid(uid);
-	su_ok = kp_is_su_allow_uid(uid);
-	if (!su_ok && !mgr_ok)
-		goto passthrough;
-
-	if (!ufilename)
-		goto passthrough;
-	flen = kp_copy_user_string(filename, sizeof(filename), ufilename);
-	if (flen <= 0)
-		goto passthrough;
-	logki("execve uid=%u path=%s (su_path=%s)\n", uid, filename, kp_su_get_path());
-
-	/* su binary: match any path an app may exec, not just the configured one. */
-	{
-		const char *su_path = kp_su_get_path();
-		bool is_su_bin = strcmp(filename, su_path) == 0 ||
-				 strcmp(filename, LEGACY_SU_PATH) == 0 ||
-				 strcmp(filename, SU_PATH) == 0;
-		if (!is_su_bin && (strcmp(filename, "su") == 0 || strcmp(filename, "kp") == 0))
-			is_su_bin = true;
-		if (is_su_bin)
-			return kp_redirect_to_sh(regs, filename, uid, true, mgr_ok,
-						 kp_default_sctx(uid, sctx_buf, sizeof(sctx_buf)));
-	}
-
-	/* SUPERCMD (/system/bin/truncate) is a plain root-shell request. */
-	if (strcmp(filename, SUPERCMD) == 0) {
-		const char *sctx = kp_get_supercmd_sctx(regs, sctx_buf, sizeof(sctx_buf));
-		if (!sctx)
-			sctx = kp_default_sctx(uid, sctx_buf, sizeof(sctx_buf));
-		return kp_redirect_to_sh(regs, filename, uid, false, mgr_ok, sctx);
-	}
-
-passthrough:
-	if (kp_orig_execve)
-		return kp_orig_execve(regs);
-	return -ENOSYS;
-}
 int kp_sucompat_hook_init(void)
 {
-	int rc;
-
-	/* The syscall table is hidden on Y73s (CONFIG_KALLSYMS_ALL=n). */
-	rc = kp_syscall_table_init();
-	if (!rc)
-		rc = kp_syscall_hook(KP_EXECVE_NR, kp_execve_handler, &kp_orig_execve);
-	if (!rc) {
-		kp_sucompat_backend = KP_SUCOMPAT_BACKEND_SYSCALL;
-		logki("sucompat: execve syscall hook installed (su path %s -> %s)\n",
-		      kp_su_get_path(), KP_SH_PATH);
-		rc = kp_hook_getname_flags();
-		if (rc)
-			logkfd("sucompat: getname_flags hook failed: %d\n", rc);
-		else
-			logki("sucompat: getname_flags hook installed\n");
-		return 0;
-	}
-
-	logkw("sucompat: syscall-table execve hook unavailable (%d); using prepare_binprm fallback\n",
-	      rc);
+	/*
+	 * Do not use the syscall-table backend: it commits current credentials
+	 * before user-stack rewriting and before the original execve can fail.
+	 * prepare_binprm lets us modify only bprm->cred; install_exec_creds()
+	 * publishes it after the kernel has accepted the new executable.
+	 * If this kernel does not expose a usable prepare_binprm entry, fail
+	 * closed instead of falling back to an early credential commit.
+	 */
 	return kp_hook_prepare_binprm();
 }
 
@@ -505,36 +285,19 @@ int kp_sucompat_hook_exit(void)
 	int rc = 0;
 	int unhook_rc;
 
-	if (kp_sucompat_backend == KP_SUCOMPAT_BACKEND_SYSCALL) {
-		kp_syscall_unhook(KP_EXECVE_NR, kp_orig_execve);
-		kp_orig_execve = NULL;
-		kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
-	} else if (kp_sucompat_backend == KP_SUCOMPAT_BACKEND_BINPRM &&
-		   kp_prepare_binprm_addr) {
+	if (kp_sucompat_backend == KP_SUCOMPAT_BACKEND_BINPRM &&
+	    kp_prepare_binprm_addr) {
 		unhook_rc = kp_unwrap_wait((void *)kp_prepare_binprm_addr,
-					       kp_before_prepare_binprm,
-					       kp_after_prepare_binprm);
+					   kp_before_prepare_binprm,
+					   kp_after_prepare_binprm);
 		if (!unhook_rc || unhook_rc == -ENOENT) {
 			kp_prepare_binprm_addr = 0;
 			kp_open_exec = NULL;
 			kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
 		} else {
-			logke("sucompat: prepare_binprm hook is still live: %d\n",
+			logke("sucompat: prepare_binprm hook is still live: %d\\n",
 			      unhook_rc);
 			rc = unhook_rc;
-		}
-	}
-
-	if (kp_getname_flags_addr) {
-		unhook_rc = kp_unwrap_wait((void *)kp_getname_flags_addr,
-					       0, kp_after_getname_flags);
-		if (!unhook_rc || unhook_rc == -ENOENT)
-			kp_getname_flags_addr = 0;
-		else {
-			logke("sucompat: getname_flags hook is still live: %d\n",
-			      unhook_rc);
-			if (!rc)
-				rc = unhook_rc;
 		}
 	}
 
