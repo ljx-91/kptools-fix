@@ -657,6 +657,10 @@ static int rewrite_section_headers(struct kp_load_info *info)
 		if (shdr->sh_addralign > 1 &&
 		    (shdr->sh_addralign & (shdr->sh_addralign - 1)))
 			return -ENOEXEC;
+		/* File-backed sections must honor their declared alignment. */
+		if (shdr->sh_type != SHT_NOBITS && shdr->sh_addralign > 1 &&
+		    (shdr->sh_offset & (shdr->sh_addralign - 1)))
+			return -ENOEXEC;
 		if (!kp_elf_string_valid(info->secstrings, shstr->sh_size, shdr->sh_name))
 			return -ENOEXEC;
 
@@ -890,7 +894,8 @@ static int elf_header_check(struct kp_load_info *info)
 		return -ENOEXEC;
 	}
 	shdr_bytes = (unsigned long)ehdr->e_shnum * sizeof(Elf_Shdr);
-	if (!kp_elf_range_valid(info->len, ehdr->e_shoff, shdr_bytes)) {
+	if ((ehdr->e_shoff & (__alignof__(Elf_Shdr) - 1)) ||
+	    !kp_elf_range_valid(info->len, ehdr->e_shoff, shdr_bytes)) {
 		set_load_error(info, "ELF section headers are outside the input image");
 		return -ENOEXEC;
 	}
