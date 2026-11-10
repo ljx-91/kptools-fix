@@ -152,7 +152,7 @@ int main(void)
 
     make_valid(&info);
     if (elf_header_check(&info)) return 1;
-    info.sechdrs[2].sh_size = 32;
+    info.sechdrs[2].sh_size = 256;
     if (rewrite_section_headers(&info) == 0) return 1;
     puts("[PASS] section data range overflow rejected");
 
