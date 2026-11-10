@@ -7,6 +7,6 @@
 int kp_bypass_kcfi(void);
 
 /* Remove the CFI bypass hooks (call last on module exit). */
-void kp_bypass_kcfi_exit(void);
+int kp_bypass_kcfi_exit(void);
 
 #endif
