@@ -248,6 +248,8 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "permission verification failure must prevent KPM init")
     need(r"kp_update_bti_gp\(base,\s*size,\s*false\)", restore_perm,
          "KPM release must restore NX/BTI PTE bits")
+    need(r"!kp_kpm_init_mm\\s*&&\\s*rc", restore_perm,
+         "without init_mm, failed or missing set_memory_nx must prevent executable page release")
     need(r"kp_set_memory_nx", restore_perm,
          "KPM release must invoke set_memory_nx when available")
     need(r"kp_restore_nx_gp\(\(unsigned long\)region,\s*size\)", exec_free,
