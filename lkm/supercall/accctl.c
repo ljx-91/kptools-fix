@@ -25,8 +25,8 @@
 #include "../infra/symbol_resolver.h"
 
 /*
- * security_secctx_to_secid is not exported by the 4.14 vendor baseline.
- * Resolve it through kallsyms there; 5.15+ exposes the GPL export.
+ * Do not rely on a vendor KMI export/CRC entry for security_secctx_to_secid.
+ * Resolve it through kallsyms before 5.15; 5.15+ uses the GPL export.
  */
 typedef int (*kp_secctx_to_secid_fn_t)(const char *secdata, u32 seclen, u32 *secid);
 static kp_secctx_to_secid_fn_t kp_security_secctx_to_secid_fn;
