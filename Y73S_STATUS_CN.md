@@ -1023,3 +1023,42 @@ Host harness 使用 ELF64 的 `Elf64_Shdr`、`Elf64_Sym`、`Elf64_Rela` 构造�
 ### 验证边界
 
 这一步执行了真实 `setup_load_info()` 解析路径（`get_modinfo()` 除外），但仍是构造的 ELF fixture，不是实际第三方 KPM 文件，也未执行后续完整布局、符号简化、真实 ELF 到可执行映像的全链路。尚未覆盖 KPIMG 对应解析器、精确 Y73s Linux 4.14.141 KDIR 构建或真机加载。
+
+
+## 32. LKM / KPIMG 符号地址转换边界一致性（2026-11-10）
+
+### 审计发现与修复
+
+对照两套生产 `simplify_symbols()` 后发现，LKM 版本已有 ET_REL 符号节内范围、符号 extent 和运行时地址加法溢出检查，而 KPIMG 版本此前直接执行 `secbase + st_value`，缺少相同保护。
+
+已在 `kernel/patch/module/module.c` 补齐 KPIMG 检查：
+- 拒绝超出 ELF section table 的普通符号节索引，避免直接越界访问；
+- 拒绝 `st_value` 超过所属节大小；
+- 拒绝 `st_size` 超出所属节剩余范围；
+- 拒绝 `secbase + st_value` 的 unsigned long 加法溢出。
+
+同时在 LKM 版本增加同等的函数入口 section-index 防御检查，使两个实现都不依赖调用者永远先执行 parser 校验。
+
+### 新增 Host 测试
+
+新增 `scripts/test_kpm_simplify_symbols.py`，直接提取并编译执行两套生产函数，而不是复制重写其逻辑。覆盖用例共 11 类，并分别对 LKM、KPIMG 执行：
+1. 普通定义符号 offset 转换为运行时地址；
+2. 零长度符号恰好位于节末尾；
+3. 符号起始 offset 超出节范围；
+4. 符号 extent 跨越节末尾；
+5. 运行时地址加法溢出；
+6. SHN_ABS 保持绝对值；
+7. LKM 兼容符号表 / KPIMG 符号表解析；
+8. LKM kallsyms fallback / KPIMG 符号解析；
+9. 未定义符号找不到时拒绝；
+10. SHN_COMMON 拒绝；
+11. 无效 section index 拒绝。
+
+### CI 状态
+
+- KPIMG 生产修复提交：`c454dea92023a7781aef3f9a7608fdd4ccbc0fc1`
+- LKM 入口防御提交：`ac5d68b34815ed4e69c5fc3fe65a8775163d5d21`
+- Host 测试提交：`645a3472fff12ec0642a54323ec57aa096015110`
+- workflow 接入提交：`a87a0eb677d16a5ac253c495f8bf36e7d262d980`
+
+本节记录时 Host CI 尚待执行；测试通过数量、构建结果和最终验证边界将在 CI 完成后补记。此项不是 Y73s 真机验证，也不替代精确 Linux 4.14.141 KDIR 编译。
