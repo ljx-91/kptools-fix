@@ -2022,3 +2022,65 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 | sucompat prepare_binprm | kp_before/after_prepare_binprm | 1 |
 
 当前这些入口均不超过 8 个参数；Gate 仍需保留 9-12 参数栈参数路径，以免破坏通用 Hook API。直接 hook() 目前没有显式 argno，因此集成 Gate 前必须增加带 argno 的 API，并更新所有直接调用点；不能根据函数指针猜参数数量。
+
+
+## 67. 2026-11-11：Hook Gate 描述符与现有 Hook ABI 布局冲突审计
+
+本轮直接读取当前分支的 `kernel/include/hook.h`、`kernel/base/hook.c` 和 LKM Hook backend，核对 Gate 原型的描述符偏移能否套用到现有对象。
+
+### 现有结构的源代码布局（AArch64，指针 8 字节）
+
+`hook_t` 当前字段偏移：
+
+| 字段 | 偏移 | 大小 |
+|---|---:|---:|
+| func_addr | 0 | 8 |
+| origin_addr | 8 | 8 |
+| replace_addr | 16 | 8 |
+| relo_addr | 24 | 8 |
+| tramp_insts_num | 32 | 4 |
+| relo_insts_num | 36 | 4 |
+| origin_insts[6] | 40 | 24 |
+| tramp_insts[6] | 64 | 24 |
+| relo_insts[52] | 88 | 208 |
+| **sizeof(hook_t)** | **—** | **296** |
+
+`hook_chain_t` 的首成员是 `hook_t hook`，随后字段偏移为：
+
+| 字段 | 偏移 |
+|---|---:|
+| hook | 0–295 |
+| chain_items_max | 296 |
+| active_readers | 300 |
+| states[16] | 304–319 |
+| udata[16] | 320 |
+| befores[16] | 448 |
+| afters[16] | 576 |
+| before_owners[16] | 704 |
+| after_owners[16] | 832 |
+| transit[112] | 960 |
+| **sizeof(hook_chain_t)** | **1408** |
+
+因此，先前本地 Gate 汇编原型所假定的 `state=296` 等偏移，**不能把 `hook_t *` 或 `hook_chain_t *` 直接当作该独立描述符**：对 `hook_chain_t *` 而言，偏移 296 已经是 `chain_items_max`，偏移 300 是 `active_readers`。若将 Gate 状态或 module 指针写入这些位置，会破坏现有 Hook chain 元数据。原型的 296/304/... 只能在它确实接收一个按该布局定义的独立描述符时才可能成立；当前生产代码没有这样的描述符定义或静态断言。
+
+### wait_queue_head_t 不能硬编码布局
+
+仓库不包含 Y73s 对应的 Linux 4.14.141 vendor KDIR。Linux 4.14 的 wait queue 至少包含 spinlock 与 list_head；启用 CONFIG_LOCKDEP 时还可能包含 lockdep_map。其大小和后续字段偏移受目标配置与头文件影响。因此 Gate 汇编不能仅凭通用 ARM64 假定 waitqueue 固定为 24 字节，也不能未经目标编译就把 waitqueue 的偏移写死。
+
+正确约束应是：描述符 C 结构使用目标 KDIR 的 `wait_queue_head_t`，由 `init_waitqueue_head()` 初始化；汇编所用每个字段偏移由共享头文件宏提供，并在 C 编译单元通过 `static_assert/BUILD_BUG_ON(offsetof(...))` 校验。缺少匹配 KDIR 时不得声称这些偏移已验证。
+
+### 布局修正决策
+
+- 不直接在现有 `hook_t` 的偏移 296 处塞入 Gate 状态；这会改变 `hook_chain_t` 后续字段布局，并使旧原型与实际对象混淆。
+- 优先采用 **独立 Gate sidecar 描述符**：保留现有 `hook_t` / `hook_chain_t` 的共享布局；每个 Hook 的入口 stub 以 literal 携带 sidecar 指针，跳到一份独立保留的 Gate 页。
+- LKM 的 `kp_hook_mem` 管理记录可在发布前保存 sidecar 指针，供关闭 Gate、撤销入口和等待 token 归零使用；sidecar 本身必须位于退役后仍保留的独立可执行 payload 区域，不能随 registry 元数据一起释放。
+- `hook()` 直接替换路径也必须使用 Gate stub；不能只修改 `hook_wrap()` 的 `transit`。直接 Hook 还需显式 argno API，禁止猜测函数参数数量。
+- sidecar 需要明确区分 direct replacement 与 chain transit callback，并保存 original trampoline、module 引用函数和关闭/计数状态。Gate 关闭后只读 retained sidecar 的关闭状态与 original trampoline，不访问 LKM callback 或静态 registry。
+- waitqueue 的字段偏移、sidecar 的全部汇编偏移、stub 指令和调用 ABI，必须在精确 Y73s KDIR/Clang 9.0.3 下编译并做反汇编与静态断言后才能进入生产实现。
+
+### 本轮结论与验证边界
+
+- 已完成：从仓库头文件逐字段推导 `hook_t=296`、`hook_chain_t=1408) bytes 及 chain 元数据偏移；定位出旧 Gate 原型直接复用 hook 对象偏移的布局风险；确定采用独立 sidecar 而非覆盖 chain 字段的修正方向。
+- 未完成：没有目标 KDIR，因此未验证 vendor waitqueue 布局、sidecar 的目标编译偏移或 Clang 9.0.3 汇编链接；未修改生产 Hook ABI 或 Gate 代码，也没有把本地 440-byte 原型标记为可用。
+- LKM 卸载竞态仍未修复；此前 511 状态/12 终态只是抽象协议模型，不替代生产 Gate。
+- 不使用 Fastboot，不刷写、不修改分区，不执行真机启动测试。
