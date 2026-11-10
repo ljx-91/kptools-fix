@@ -2226,12 +2226,14 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 - 先读取当前表项：已是原 handler 时按幂等成功处理；不是本 LKM 的 handler 时返回 -EBUSY；只有仍是本 LKM handler 时才通过 kp_patch_cmpxchg64() compare-restore，消除 read/restore 之间的覆盖竞态。
 - kp_supercall_uninstall() 改为返回状态；撤销失败时保留 backend、target 和 original callback 状态，不再假装清理成功。
 - kernelpatch_exit() 先撤销外部可达的 supercall 入口，并对错误 fail-stop；再执行 sucompat、manager 与 CFI bypass teardown。
-- syscall-table 安装若返回 -EUCLEAN（批量写入回滚本身不确定），不再尝试另一 Hook backend 后正常返回，而是 fail-stop，避免模块加载器释放仍可能被表项引用的代码。
+- syscall-table 安装也改为 compare-exchange：只有表项仍等于刚读取的 original handler 才能发布本 LKM handler；遇到并发修改则失败并按既有策略尝试 inline backend，不覆盖竞争者。
 - 更新 verify_lkm_hook_runtime_contract.py 与 verify_lkm_kpm_contract.py，检查 compare-restore、错误传播、状态保留和 init/exit 回滚顺序。
 
 ### 提交
 
 - e0b03469046587d00aa5d06a8a1686ce83bc7455：syscall table compare-restore
+- 743b3d10635060c22858b4dfe9a71cbbe2d3e431：syscall table compare-install
+- c00b611c80609a8232b8dbe3f0e6dae2e4017743：安装路径源码契约
 - b6dee036eb947f2a53f4f35ec6cdb695f19b4aff：checked syscall restore API
 - 94308278e09117535b3fcb2d82eb5d6e837b50ff：supercall teardown 错误传播
 - efe52ab662129cff41f23aa6162021e13c028b0c：supercall API 返回状态
@@ -2241,9 +2243,9 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 
 ### CI
 
-- Host/offline audit run 42876406153，HEAD 11a3019：success；两个 job（LKM/KPM ELF loader source audit、host kptools build）均通过。
-- Y73S GCC 14.2 KPIMG run 42876406161，HEAD 11a3019：success。
-- Windows workflow run 42876405923，HEAD 11a3019：当时 Ubuntu KPIMG job success，Windows job 尚在执行；最终状态待下一轮核对。
+- Host/offline audit run 42876898310，HEAD c00b611：success；两个 job（LKM/KPM ELF loader source audit、host kptools build）均通过。日志确认 compare-install、compare-restore、错误传播和退出顺序四项契约均 PASS。
+- Y73S GCC 14.2 KPIMG run 42876898289，HEAD c00b611：success。
+- Windows workflow run 42876405923，HEAD 11a3019：success；Windows job 与 Ubuntu KPIMG job 均完成。HEAD c00b611 的 Windows run 当时仍在执行，待最终状态核对。
 - 早先 HEAD a70fc24 的 Host audit 曾因 verify_lkm_kpm_contract.py 仍期待旧 void cleanup 形式而失败；更新契约后，HEAD 11a3019 的完整 Host audit 已通过。
 
 ### 新增 ABI / 生命周期阻塞发现
@@ -2255,8 +2257,13 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 
 ### 结论与验证边界
 
-本轮完成一个独立的生产 teardown 修复：syscall-table backend 现在只 compare-restore 自己安装的 handler，并将撤销失败传播到模块退出路径。Host/offline audit 和 GCC 14.2 KPIMG build 在 HEAD 11a3019 通过。
+本轮完成一个独立的生产 teardown 修复：syscall-table backend 现在只 compare-restore 自己安装的 handler，并将撤销失败传播到模块退出路径。Host/offline audit 和 GCC 14.2 KPIMG build 在代码 HEAD c00b611 通过。
 
 **Resident Gate 生产实现仍未完成，LKM 整体 rmmod 安全仍未证明。** 没有匹配 Y73s 4.14.141+ KDIR，因此目标 .ko、MODPOST、Module.symvers CRC、Clang 9.0.3 Gate 汇编和设备验证均未完成。Host CI 不替代这些验证。
 
 不执行 Fastboot、不刷写、不修改分区、不做真机启动测试。
+
+
+### compare-install 补充
+
+随后又将 syscall-table 安装从 stop_machine 下的无条件 8-byte 写入改为 kp_patch_cmpxchg64()：只在表项仍等于观察到的原 handler 时发布本 LKM handler，避免与并发第三方安装互相覆盖。若竞争者先修改表项，安装返回失败，不把该表项记作本 LKM 已安装。相关提交为 743b3d1，源码契约提交为 c00b611。旧的 -EUCLEAN rollback 分支已从 supercall install 路径移除，因为 compare-exchange helper 不执行多字写入回滚。
