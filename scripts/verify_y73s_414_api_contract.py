@@ -168,6 +168,14 @@ require("bprm->cred = new" in after_prepare_binprm and
         "current_thread_info()->flags &= ~_TIF_SECCOMP" not in after_prepare_binprm and
         "exec may" in after_prepare_binprm,
         "pending exec path preserves seccomp until install_exec_creds; prepare_binprm can still fail later")
+before_prepare_binprm = sucompat_hook.split("static void kp_before_prepare_binprm(", 1)[1].split(
+    "static void kp_after_prepare_binprm(", 1
+)[0]
+require("allow_write_access(old_file)" in before_prepare_binprm and
+        "fput(old_file)" in before_prepare_binprm and
+        before_prepare_binprm.index("allow_write_access(old_file)") <
+        before_prepare_binprm.index("fput(old_file)"),
+        "replacing bprm->file balances the old executable deny-write reference")
 require("bprm->file = shell_file" in sucompat_hook and
         "bprm->filename = KP_SH_PATH" in sucompat_hook and
         "bprm->interp = KP_SH_PATH" in sucompat_hook and
