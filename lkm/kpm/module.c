@@ -85,6 +85,16 @@ enum kp_exec_backend {
 };
 static enum kp_exec_backend kp_exec_backend;
 
+static bool kp_kpm_can_skip_init_mm(void)
+{
+#if defined(PTE_GP)
+	return false;
+#else
+	return kp_exec_backend == KP_EXEC_BACKEND_MODULE ||
+	       kp_exec_backend == KP_EXEC_BACKEND_EXECMEM;
+#endif
+}
+
 /* Kernel text must be executable at EL1 (PXN clear), remain non-executable
  * at EL0 (UXN set), and have the BTI Guarded-Page bit clear. */
 static int kp_update_bti_gp(unsigned long base, unsigned long size, bool executable)
@@ -94,11 +104,8 @@ static int kp_update_bti_gp(unsigned long base, unsigned long size, bool executa
 	if (!base || !size || size > ULONG_MAX - base)
 		return -EINVAL;
 	if (!kp_kpm_init_mm) {
-#if !defined(PTE_GP)
-		if (kp_exec_backend == KP_EXEC_BACKEND_MODULE ||
-		    kp_exec_backend == KP_EXEC_BACKEND_EXECMEM)
+		if (kp_kpm_can_skip_init_mm())
 			return 0;
-#endif
 		return -ENOSYS;
 	}
 	end = base + size;
@@ -1263,7 +1270,8 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		rc = -EINVAL;
 		goto out;
 	}
-	if (kp_exec_backend == KP_EXEC_BACKEND_NONE || !kp_kpm_init_mm) {
+	if (kp_exec_backend == KP_EXEC_BACKEND_NONE ||
+	    (!kp_kpm_init_mm && !kp_kpm_can_skip_init_mm())) {
 		set_load_error(info, "verified executable memory backend unavailable");
 		rc = -ENOSYS;
 		goto out;
@@ -1771,18 +1779,10 @@ int kp_kpm_init(void)
 		logke("no matched executable-memory allocator/free backend\n");
 		return -ENOSYS;
 	}
-#if defined(PTE_GP)
-	if (!kp_kpm_init_mm) {
-		logke("init_mm unavailable; cannot verify BTI guarded KPM pages\n");
+	if (!kp_kpm_init_mm && !kp_kpm_can_skip_init_mm()) {
+		logke("init_mm unavailable and selected allocator cannot guarantee executable pages\n");
 		return -ENOSYS;
 	}
-#else
-	if (!kp_kpm_init_mm && kp_exec_backend != KP_EXEC_BACKEND_MODULE &&
-	    kp_exec_backend != KP_EXEC_BACKEND_EXECMEM) {
-		logke("init_mm unavailable and no executable module allocator\n");
-		return -ENOSYS;
-	}
-#endif
 
 	/* One executable page holds per-call BTI-C trampolines. If its PTEs
 	 * cannot be verified, keep kallsyms callbacks disabled rather than
