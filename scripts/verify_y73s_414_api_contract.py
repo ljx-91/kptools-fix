@@ -39,6 +39,10 @@ require("kp_flush_dcache_area_fn" in old_cache and
 require("if (!kp_flush_dcache_area_fn)" in patch and
         "return -ENOSYS;" in patch,
         "4.14 dcache resolver failure is fail-closed before patch use")
+require(re.search(r'__attribute__\(\(no_sanitize\("cfi"\)\)\)\s+static void kp_flush_dcache_legacy',
+                  patch) is not None and
+        "kp_flush_dcache_area_fn((void *)start, len)" in patch,
+        "raw assembly dcache entry bypasses invalid indirect CFI type check")
 require("flush_icache_range((start), (end))" in old_cache and
         "__flush_icache_range" not in old_cache,
         "4.14 I-cache path uses exported flush_icache_range")
