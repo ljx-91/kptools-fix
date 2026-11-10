@@ -74,10 +74,6 @@ struct cred {
     kernel_cap_t cap_bset, cap_ambient;
     void *security;
 };
-static unsigned char kernel_security[64];
-static struct cred kernel_cred = { .security = kernel_security };
-static bool fail_kernel_alloc;
-static int put_count;
 static int secctx_calls;
 
 static int secctx_stub(const char *ctx, u32 len, u32 *sid)
@@ -96,12 +92,6 @@ static void *kp_resolve_symbol(const char *name)
         return NULL;
     return NULL;
 }
-static struct cred *prepare_kernel_cred(void *daemon)
-{
-    (void)daemon;
-    return fail_kernel_alloc ? NULL : &kernel_cred;
-}
-static void put_cred(struct cred *cred) { (void)cred; put_count++; }
 static int current_user_ns(void) { return 0; }
 #define logkw(...) ((void)0)
 #define logki(...) ((void)0)
@@ -172,28 +162,13 @@ int main(void)
         unsigned char bad_security[64] = {0};
         struct cred bad = { .security = bad_security };
         struct cred *bad_ptr = &bad;
-        int before_puts = put_count;
         rc = kp_apply_su_cred(&bad_ptr, 0, "u:r:missing:s0");
-        if (rc || bad_ptr != &kernel_cred || put_count != before_puts + 1) {
-            fprintf(stderr, "invalid SELinux context did not fail over safely\n");
+        if (rc != -EINVAL || bad_ptr != &bad) {
+            fprintf(stderr, "invalid SELinux context did not fail closed\\n");
             return 1;
         }
     }
-    puts("[PASS] invalid SELinux context falls back to kernel cred without leaking old cred");
-
-    {
-        unsigned char bad_security[64] = {0};
-        struct cred bad = { .security = bad_security };
-        struct cred *bad_ptr = &bad;
-        int before_puts = put_count;
-        fail_kernel_alloc = true;
-        rc = kp_apply_su_cred(&bad_ptr, 0, "u:r:missing:s0");
-        if (rc != -ENOMEM || bad_ptr != &bad || put_count != before_puts) {
-            fprintf(stderr, "kernel-cred allocation failure was not fail-closed\n");
-            return 1;
-        }
-    }
-    puts("[PASS] kernel-cred allocation failure leaves pending cred owned by caller");
+    puts("[PASS] invalid SELinux context refuses SU commit and preserves caller ownership");
     return 0;
 }
 """
