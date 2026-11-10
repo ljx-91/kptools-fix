@@ -30,6 +30,8 @@ def main():
         raise SystemExit("no host C compiler")
     source = (ROOT / "lkm/supercall/sucompat_hook.c").read_text(encoding="utf-8")
     callbacks = "\n\n".join([
+        extract_function(source, "static long kp_copy_user_string("),
+        extract_function(source, "static const char *kp_get_supercmd_sctx("),
         extract_function(source, "static void kp_before_prepare_binprm("),
         extract_function(source, "static void kp_after_prepare_binprm("),
     ])
@@ -53,6 +55,7 @@ typedef unsigned int uid_t;
 #define _TIF_SECCOMP 0x10UL
 #define __NR_execve 221
 #define current ((void *)1)
+#define __user
 
 struct pt_regs { unsigned long regs[31]; int syscallno; };
 static struct pt_regs test_regs;
@@ -106,12 +109,21 @@ static struct file *(*kp_open_exec)(const char *name) = open_exec_stub;
 static void fput(struct file *file) { (void)file; fput_calls++; }
 static struct thread_info *current_thread_info(void) { return &ti; }
 static struct pt_regs *task_pt_regs(void *task) { (void)task; return &test_regs; }
-static const char *kp_get_supercmd_sctx(const struct pt_regs *regs,
-                                        char *buf, size_t size)
+static long copy_from_user(void *to, const void *from, size_t n)
 {
-    if (regs->syscallno != __NR_execve) return NULL;
-    if (size) snprintf(buf, size, "%s", "u:r:custom:s0");
-    return buf;
+    if (!to || !from) return (long)n;
+    memcpy(to, from, n);
+    return 0;
+}
+static long strncpy_from_user(char *to, const char *from, long n)
+{
+    long i;
+    if (!to || !from || n <= 0) return -EFAULT;
+    for (i = 0; i < n; i++) {
+        to[i] = from[i];
+        if (!from[i]) return i;
+    }
+    return n;
 }
 static int kp_apply_su_cred(struct cred **cred, uid_t uid, const char *sctx)
 {
@@ -159,8 +171,12 @@ int main(void)
             .filename = SUPERCMD, .interp = SUPERCMD, .file = &old,
             .argc = 4, .cred = &c
         };
+        char arg0[] = "truncate", key[] = "key", z[] = "-Z";
+        char ctx[] = "u:r:custom:s0";
+        char *argv[] = { arg0, key, z, ctx, NULL };
         hook_fargs1_t a = { .arg0 = (uint64_t)(uintptr_t)&b };
         test_regs.syscallno = __NR_execve;
+        test_regs.regs[1] = (unsigned long)(uintptr_t)argv;
         kp_before_prepare_binprm(&a, NULL);
         if (!a.local.data0 || b.file != &shell_file || b.argc != 1) {
             fprintf(stderr, "SUPERCMD argument stripping failed\n");
