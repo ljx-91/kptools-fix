@@ -201,8 +201,8 @@ int kp_apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int 
 	if (!sechdrs || !symindex || !relsec)
 		return -EINVAL;
 	rsec = &sechdrs[relsec];
-	if (rsec->sh_type != SHT_RELA || rsec->sh_entsize != sizeof(Elf64_Rela) ||
-	    rsec->sh_size % sizeof(Elf64_Rela))
+	/* sh_entsize was validated before layout_sections() repurposed it. */
+	if (rsec->sh_type != SHT_RELA || rsec->sh_size % sizeof(Elf64_Rela))
 		return -ENOEXEC;
 	if (rsec->sh_info == 0 || rsec->sh_link != symindex)
 		return -ENOEXEC;
