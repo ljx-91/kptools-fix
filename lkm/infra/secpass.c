@@ -138,14 +138,14 @@ int kp_bypass_kcfi(void)
 		hook_rc = hook((void *)addr, (void *)__replace_find_check_fn,
 			       (void **)&__backup_find_check_fn);
 		if (hook_rc) {
-			logkw("hook find_check_fn error: %d\\n", hook_rc);
+			logkw("hook find_check_fn error: %d\n", hook_rc);
 			if (!rc)
 				rc = hook_rc;
 		} else {
 			kp_find_check_fn_addr = addr;
 		}
 	} else {
-		logkw("find_check_fn not found; KPM kallsyms CFI check unshielded\\n");
+		logkw("find_check_fn not found; KPM kallsyms CFI check unshielded\n");
 	}
 
 	addr = kallsyms_lookup_name("report_cfi_failure");
@@ -153,7 +153,7 @@ int kp_bypass_kcfi(void)
 		hook_rc = hook((void *)addr, (void *)__replace_report_cfi_failure,
 			       (void **)&__backup_report_cfi_failure);
 		if (hook_rc) {
-			logkw("hook report_cfi_failure error: %d\\n", hook_rc);
+			logkw("hook report_cfi_failure error: %d\n", hook_rc);
 			if (!rc)
 				rc = hook_rc;
 		} else {
@@ -169,7 +169,7 @@ int kp_bypass_kcfi(void)
 		hook_rc = hook((void *)addr, (void *)__replace_cfi_slowpath,
 			       (void **)&__backup_cfi_slowpath);
 		if (hook_rc) {
-			logkw("hook CFI slowpath error: %d\\n", hook_rc);
+			logkw("hook CFI slowpath error: %d\n", hook_rc);
 			if (!rc)
 				rc = hook_rc;
 		} else {
@@ -193,7 +193,7 @@ int kp_bypass_kcfi(void)
 		return rc;
 	}
 
-	logki("CFI bypass ready\\n");
+	logki("CFI bypass ready\n");
 	return 0;
 }
 
