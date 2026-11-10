@@ -146,7 +146,7 @@ int main(void)
         };
         hook_fargs1_t a = { .arg0 = (uint64_t)(uintptr_t)&b };
         kp_before_prepare_binprm(&a, NULL);
-        if (!a.local.data0 || b.file != &shell_file || b.argc != 0) {
+        if (!a.local.data0 || b.file != &shell_file || b.argc != 1) {
             fprintf(stderr, "SUPERCMD argument stripping failed\n");
             return 1;
         }
@@ -157,7 +157,7 @@ int main(void)
             return 1;
         }
     }
-    puts("[PASS] SUPERCMD becomes an argument-free root shell");
+    puts("[PASS] SUPERCMD keeps argv[0] and strips the key/options");
 
     {
         struct file old = { .id = 4 };
