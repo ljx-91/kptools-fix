@@ -295,6 +295,24 @@ static int kp_hook_prepare_binprm(void)
 			  kp_after_prepare_binprm, 0);
 }
 
+/*
+ * hook_unwrap_remove() retires the callback immediately but reports -EBUSY
+ * while a transit invocation still holds a reader reference. The API
+ * explicitly requires retry; module teardown must wait rather than panic on
+ * an ordinary in-flight exec, and must not return until the callback is gone.
+ */
+static int kp_unwrap_wait(void *func, void *before, void *after)
+{
+	int rc;
+
+	do {
+		rc = hook_unwrap_remove(func, before, after, 1);
+		if (rc == -EBUSY)
+			cond_resched();
+	} while (rc == -EBUSY);
+	return rc;
+}
+
 /* ---- getname_flags path-probe redirect -------------------------------- */
 
 static void kp_after_getname_flags(hook_fargs4_t *args, void *udata)
@@ -455,7 +473,7 @@ int kp_sucompat_hook_exit(void)
 		kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
 	} else if (kp_sucompat_backend == KP_SUCOMPAT_BACKEND_BINPRM &&
 		   kp_prepare_binprm_addr) {
-		unhook_rc = hook_unwrap_remove((void *)kp_prepare_binprm_addr,
+		unhook_rc = kp_unwrap_wait((void *)kp_prepare_binprm_addr,
 					       kp_before_prepare_binprm,
 					       kp_after_prepare_binprm, 1);
 		if (!unhook_rc || unhook_rc == -ENOENT) {
@@ -469,7 +487,7 @@ int kp_sucompat_hook_exit(void)
 	}
 
 	if (kp_getname_flags_addr) {
-		unhook_rc = hook_unwrap_remove((void *)kp_getname_flags_addr,
+		unhook_rc = kp_unwrap_wait((void *)kp_getname_flags_addr,
 					       0, kp_after_getname_flags, 1);
 		if (!unhook_rc || unhook_rc == -ENOENT)
 			kp_getname_flags_addr = 0;
