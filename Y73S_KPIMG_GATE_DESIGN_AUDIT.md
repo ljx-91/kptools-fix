@@ -730,3 +730,77 @@ Therefore a KPM loaded by the LKM can retain relocations and hook callbacks into
 This parent reference also makes the proposed per-call `__symbol_get()` CFI-provider lookup safe against the LKM image disappearing during an individual provider call. The provider still needs its own ABI and KPM active-owner pairing.
 
 Severity: **critical lifecycle blocker** for any configuration that enables the LKM KPM loader. Current Y73s CFI initialization gating prevents the LKM KPM loader from being exposed when its second CFI hook fails, but the teardown defect must be fixed before a future bridge enables that loader. No production code changed in this audit.
+
+
+### Parent-LKM reference state machine and deferred-release requirement (2026-11-11)
+
+A direct `module_put(THIS_MODULE)` at the end of an LKM KPM load/unload function is **not** a safe implementation of the per-child parent reference.
+
+#### 1. Why the final put cannot execute in LKM text
+
+Linux module unload waits for the module reference count to reach zero, transitions the module to GOING, executes `module_exit()`, and frees the image. A final `module_put()` from an LKM function can wake the waiting `delete_module()` path while the caller is still executing the LKM function epilogue or returning through another LKM frame.
+
+Therefore:
+- Do not drop the last parent reference in `kp_load_module()`, `kp_unload_module()`, `kp_kpm_exit()`, or any LKM workqueue/RCU callback.
+- A work item whose callback itself resides in LKM text does not solve the problem: the callback still has to return after dropping the final reference.
+- A parent reference protects the KPM's relocations into LKM code only while held; it does not by itself protect the LKM call frame that releases it.
+
+The final put must be performed by code that remains resident outside the LKM image, after the LKM call stack has completely returned. Under the selected architecture B, this is a responsibility of the KPIMG-resident Gate return path. The Gate must have a verified way to invoke the kernel's `module_put(struct module *)` (including symbol availability, ABI/CFI compatibility, and exact reference accounting); this is not implemented yet.
+
+#### 2. Required load-side ordering
+
+For each KPM image that will be published in the LKM registry:
+
+1. The KPIMG-resident Gate first obtains a temporary Linux module reference before entering any LKM transit or dispatcher text. If the LKM is already GOING, do not enter it; use the documented safe fallback.
+2. LKM validates and lays out the ELF, allocates executable memory, applies relocations, verifies executable permissions, and flushes the instruction cache.
+3. Immediately before inserting the KPM as `KP_MODULE_LOADING` and calling its init callback, LKM obtains one persistent parent dependency reference with `try_module_get(THIS_MODULE)`. If this fails, do not publish the KPM; unwind the image while the Gate's temporary reference still protects LKM.
+4. The persistent reference is attached to the KPM registry object and remains held through `LOADING`, `LIVE`, `UNLOADING`, and `EXITING`.
+5. A successful init keeps the reference for the full published KPM lifetime.
+
+Acquiring the persistent reference immediately before registry publication avoids holding it during ELF parsing and memory allocation. It does not close the entry-before-first-instruction race; only the resident Gate's pre-entry temporary reference can do that.
+
+#### 3. Required failure and unload accounting
+
+- ELF/header/layout/relocation/permission failures before persistent-reference acquisition: no parent reference exists; ordinary local cleanup applies.
+- Duplicate-name failure after acquiring the reference but before list publication: queue one deferred parent-reference release; do not call `module_put` from LKM text.
+- KPM init succeeds: retain the reference.
+- KPM init fails and cleanup fully drains active calls/hooks, runs exit cleanup, removes the registry entry, and retires/frees the image: queue one deferred release.
+- KPM init fails but existing `active_calls`, `hook_refs`, or an exit callback returning `-EBUSY` leaves the image registered: retain the parent reference. The current `kp_load_module()` has such retained-image branches; they must never be mistaken for full cleanup.
+- `kp_unload_module()` returning `-EBUSY` because of active calls or hook refs: retain the reference and image.
+- Successful KPM unload: only after exit callback completion, zero `active_calls`, zero `hook_refs`, registry removal, and executable image retirement may one deferred release be queued.
+- Every persistent reference has exactly one terminal release. Overflow/underflow must be detected; a failed cleanup must prefer retaining a reference and leaking safely over releasing it early.
+
+#### 4. Deferred release protocol owned by the resident Gate
+
+LKM code may publish a “release one parent reference” request into Gate-owned resident state while it still holds its temporary entry reference. The Gate must:
+- accept requests only from a live, authenticated LKM call context;
+- count each queued persistent reference exactly once;
+- defer the actual `module_put` until the LKM transit/dispatcher frame has returned to resident Gate text;
+- release the per-call temporary reference only after all LKM code and data are no longer accessed;
+- never dereference the Linux module pointer after the final put;
+- keep the Gate state and release routine resident across ordinary LKM unload;
+- serialize close/unregister with in-flight Gate tokens and pending reference releases.
+
+If multiple KPM references are released during one LKM operation, the Gate must drain the exact count, not collapse it into a boolean. A persistent reference may be released only once its corresponding KPM image has been completely retired.
+
+#### 5. Concurrency scenarios that must be proven
+
+| Race | Required result |
+|---|---|
+| `rmmod` races with first supercall entry | Gate's temporary ref wins before LKM entry, or module is GOING and Gate does not enter |
+| `rmmod` races with KPM publication | temporary ref protects LKM; persistent ref is acquired before registry publication |
+| KPM init returns error but leaves Hook refs | image and parent ref remain registered |
+| KPM unload races with active callback | `active_calls`/`hook_refs` prevent image retirement and parent-ref release |
+| Last KPM unload races with `rmmod` | persistent ref remains until Gate return path drains release request |
+| Gate close races with pending release | close waits for tokens and pending puts; no LKM text is entered after close |
+| Reference count overflow or accounting mismatch | fail closed; retain the module rather than underflow or free live code |
+
+#### 6. Consequence for the selected architecture
+
+The parent-reference scheme and the Gate are mutually dependent:
+- Parent references prevent Linux from freeing LKM while KPM relocations/callbacks depend on it.
+- The resident Gate prevents entry into LKM after GOING and safely performs the final parent-reference drops after LKM return.
+- KPM `active_calls`/`hook_refs` protect the child image; they do not replace either parent references or the Gate.
+- A direct self-pin, a final `module_put` inside LKM, or a delayed-work callback in LKM text is not an acceptable substitute.
+
+This is a source-derived design contract only. No production implementation or assembly has been added. Before implementation, verify the target vendor's `try_module_get`/`module_put` availability and symbol CRC/export details with its KDIR/Module.symvers, which is not currently available. Also verify the exact KPIMG Gate-to-LKM handoff and return ABI before writing Gate assembly.
