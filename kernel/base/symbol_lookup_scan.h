@@ -76,6 +76,8 @@ static inline int kp_symbol_scan_parse_info(char *buf, unsigned long *offset, un
     return kp_symbol_scan_parse_hex(slash, size);
 }
 
+#define KP_SYMBOL_SCAN_MAX_STEPS 8192
+
 static inline unsigned long kp_resolve_symbol_by_lookup_anchor(unsigned long kernel_va, unsigned long image_size,
                                                                unsigned long sprintf_offset,
                                                                unsigned long anchor_offset, const char *name)
@@ -87,31 +89,48 @@ static inline unsigned long kp_resolve_symbol_by_lookup_anchor(unsigned long ker
     unsigned long offset;
     unsigned long size;
     unsigned long anchor_addr;
+    unsigned long sprintf_addr;
+    unsigned long kernel_end;
     kp_symbol_scan_sprintf_t kernel_sprintf;
 
-    if (!anchor_offset || !sprintf_offset || !image_size) return 0;
+    if (!anchor_offset || !sprintf_offset || !image_size ||
+        anchor_offset >= image_size || sprintf_offset >= image_size) return 0;
+
+    kernel_end = kernel_va + image_size;
+    if (kernel_end < kernel_va) return 0;
 
     anchor_addr = kernel_va + anchor_offset;
-    if (anchor_addr < kernel_va || anchor_addr >= kernel_va + image_size) return 0;
+    sprintf_addr = kernel_va + sprintf_offset;
+    if (anchor_addr < kernel_va || anchor_addr >= kernel_end ||
+        sprintf_addr < kernel_va || sprintf_addr >= kernel_end) return 0;
 
-    kernel_sprintf = (kp_symbol_scan_sprintf_t)(kernel_va + sprintf_offset);
+    kernel_sprintf = (kp_symbol_scan_sprintf_t)sprintf_addr;
     addr = anchor_addr;
 
-    for (int i = 0; i < 4096 && addr >= kernel_va && addr < kernel_va + image_size; i++) {
+    /*
+     * Linux kallsyms reports a symbol's size up to the next distinct address.
+     * Query the exact end address to visit the next symbol. Adding another
+     * instruction skips 4-byte symbols, which are common in the Y73s vendor
+     * kernel's kallsyms table (including entries immediately before
+     * kallsyms_lookup_name).
+     */
+    for (int i = 0; i < KP_SYMBOL_SCAN_MAX_STEPS && addr >= anchor_addr && addr < kernel_end; i++) {
         kernel_sprintf(buf, "%pSb", (void *)addr);
         if (!kp_symbol_scan_parse_info(buf, &offset, &size) || !size || offset > addr - kernel_va) break;
 
         func_start = addr - offset;
+        if (func_start < kernel_va || func_start >= kernel_end ||
+            size > kernel_end - func_start) break;
+
         if (!kp_symbol_scan_strcmp(buf, name)) {
             return func_start - kernel_va;
         }
 
         func_end = func_start + size;
-        if (func_end <= addr || func_end < func_start) break;
-        addr = func_end + 4;
+        if (func_end <= addr || func_end <= func_start) break;
+        addr = func_end;
     }
 
     return 0;
 }
-
 #endif
