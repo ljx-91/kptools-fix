@@ -58,6 +58,7 @@ jobs:
           python3 scripts/test_kpm_elf_headers.py
           python3 scripts/test_kpm_rela_transaction.py
           python3 scripts/test_kpm_setup_load_info.py
+          python3 scripts/test_kpimg_setup_load_info.py
           python3 scripts/test_kpm_simplify_symbols.py
           python3 scripts/test_kpm_layout_copy.py
           python3 scripts/test_kpimg_kpm_loader.py
