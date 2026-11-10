@@ -188,8 +188,13 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("bmax121");
 MODULE_DESCRIPTION("KernelPatch LKM");
 MODULE_VERSION(KP_LKM_VERSION_STRING);
+/* Module namespaces were added after the Y73S 4.14 target. Keep the
+ * import on kernels that define the API, while retaining the string-form
+ * transition used by newer kernels. */
+#ifdef MODULE_IMPORT_NS
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 13, 0)
 MODULE_IMPORT_NS("VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver");
 #else
 MODULE_IMPORT_NS(VFS_internal_I_am_really_a_filesystem_and_am_NOT_a_driver);
+#endif
 #endif
