@@ -48,6 +48,7 @@
 	({                                                                               \
 		unsigned long __start = (start);                                         \
 		caches_clean_inval_pou(__start, (end));                                  \
+		__flush_icache_all();                                                     \
 	})
 #else
 /*
@@ -67,7 +68,10 @@ static void kp_flush_dcache_legacy(unsigned long start, size_t len)
 		kp_flush_dcache_area_fn((void *)start, len);
 }
 #define kp_flush_dcache(start, sz) kp_flush_dcache_legacy((start), (sz))
-#define kp_flush_icache(start, end) flush_icache_range((start), (end))
+#define kp_flush_icache(start, end) do { \
+	flush_icache_range((start), (end)); \
+	__flush_icache_all(); \
+} while (0)
 #endif
 
 struct cpumask;
