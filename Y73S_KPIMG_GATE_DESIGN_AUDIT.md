@@ -403,3 +403,16 @@ This makes the Linux module loader's own exported-symbol lifetime protocol the G
 5. Only after the command ownership table, authentication contract, CFI prototype, and per-call pin/unpin error paths are specified should production code change.
 
 Status: a target-kernel-native callback lifetime primitive is identified and backed by exact 4.14.141 source plus original Y73s boot KALLSYMS. The cross-component dispatch contract and production implementation remain open. No vendor-KDIR build, runtime race test, or device test is claimed.
+
+
+#### KPIMG boot ordering and the syscall-45 single-owner route
+
+The current boot sequence supports resolving the module-symbol helpers before syscall interception is installed:
+
+- `kernel/base/start.c` resolves and stores the kernel `kallsyms_lookup_name` pointer during KPIMG startup.
+- `kernel/patch/patch.c::before_rest_init()` calls `syscall_dispatch_init()` before `supercall_install()`.
+- On this Y73s 4.14.141 target, the already-audited absence of `CONFIG_ARCH_HAS_SYSCALL_WRAPPER` means the global wrapper dispatcher is not installed by `syscall_dispatch_init()`; the per-syscall override path falls back to KPIMG's inline syscall hook.
+- The current KPIMG syscall-name table maps syscall 45 to `sys_truncate`, which the original Y73s boot proves is a four-byte CFI jump-table alias at `0x019305cc`. That remains unsafe because the KPIMG absolute branch overwrites four adjacent alias entries.
+- A single-owner KPIMG route should resolve the actual `SyS_truncate.cfi` implementation body (present in the original Y73s KALLSYMS) rather than the `sys_truncate` alias, and the LKM must stop installing its own syscall-45 hook. The LKM then exposes only the versioned command backend export, acquired per call with `__symbol_get()`.
+
+This is a candidate migration sequence, not an implemented change. Before modifying the name table, the resolver must be tested against the exact Y73s symbol spellings and its generated target address must be asserted as `0x003cd6b8` (the `SyS_truncate.cfi` body), never `0x019305cc` (the unsafe alias). The LKM hook removal and KPIMG backend forwarding must land atomically or in an order that never leaves syscall 45 unhandled or double-hooked.
