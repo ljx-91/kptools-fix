@@ -351,3 +351,55 @@ This narrows the implementation requirement. A real bridge needs both:
 - an owner-lifetime protocol that pins the Linux LKM before entering its text and drains in-flight calls before its image can be freed.
 
 The existing KPIMG syscall callback table is a promising internal owner for syscall 45, but it cannot safely host an LKM callback without those two additions. The existing KPIMG private symbol namespace and callback table do not, by themselves, satisfy the selected resident-Gate design.
+
+
+### Y73s / Linux 4.14.141: per-call Linux module symbol pin is a viable LKM callback-lifetime primitive (2026-11-11)
+
+This pass found a better bridge-lifetime mechanism than storing `struct module *` in KPIMG and calling `try_module_get()` directly.
+
+#### Exact 4.14.141 kernel behavior
+
+Against `gregkh/linux:v4.14.141`:
+
+- `kernel/module.c::__symbol_get()` is exported with `EXPORT_SYMBOL_GPL`.
+- It disables preemption, calls `find_symbol(symbol, &owner, NULL, true, true)`, then calls `strong_try_module_get(owner)` before returning `sym->value`. If the symbol is not exported or its owner cannot be pinned, it returns NULL.
+- `strong_try_module_get()` rejects `MODULE_STATE_COMING`, then delegates to `try_module_get()`; `try_module_get()` checks that the module is not `MODULE_STATE_GOING` and atomically increments a nonzero reference count.
+- `__symbol_put()` resolves the same exported symbol name and calls `module_put(owner)`. It must only be called after a successful `__symbol_get()` for the exact same still-exported symbol.
+- `try_stop_module()` first drops the loader's base reference. If any extra reference remains, it returns `-EWOULDBLOCK` without setting `MODULE_STATE_GOING`. The Y73s config evidence already recorded for this branch has `CONFIG_MODULE_UNLOAD=y` and `CONFIG_MODULE_FORCE_UNLOAD` disabled, so ordinary unload cannot force past this reference.
+
+This gives the resident caller an atomic lookup-plus-owner-pin operation. It avoids the unsafe sequence “load a saved module pointer, then try_module_get()” and avoids retaining a permanent reference that would prevent ordinary unload.
+
+#### Direct evidence in the original Y73s boot KALLSYMS
+
+The original boot's extracted KALLSYMS log contains both canonical plain-name entries and CFI implementation entries:
+
+| Symbol | CFI body Image offset | Plain-name entry Image offset |
+|---|---:|---:|
+| `__symbol_get` | `0x00235140` | `0x01913380` |
+| `__symbol_put` | `0x00235034` | `0x01942dd8` |
+| `try_module_get` | `0x002342bc` | `0x01913714` |
+| `module_put` | `0x00234708` | `0x0193e844` |
+| `kallsyms_lookup_name` | `0x0023dfa0` | `0x01922680` |
+
+The plain-name entries are present despite the previously established `CONFIG_KALLSYMS_ALL=n`; these are exported kernel interfaces, not evidence that arbitrary non-exported symbols are visible. KPIMG's `kernel/base/start.c` already resolves and stores the kernel `kallsyms_lookup_name` pointer. The Y73s boot therefore has the ingredients for KPIMG to resolve `__symbol_get` and `__symbol_put` by name. The actual vendor ABI and indirect-call CFI type still need compile-time and runtime verification.
+
+#### Candidate bridge shape
+
+- Keep syscall 45 owned by the resident KPIMG dispatcher. Do not install a second LKM syscall-45 hook.
+- Add one narrowly scoped LKM bridge function with a fixed, versioned request structure and export it through Linux `EXPORT_SYMBOL_GPL` (not KPIMG's private `KP_EXPORT_SYMBOL`).
+- KPIMG resolves `__symbol_get` and `__symbol_put` through its already-initialized kernel kallsyms resolver.
+- For each routed request, KPIMG calls `__symbol_get("kp_lkm_supercall_dispatch")`. If it returns NULL, the LKM backend is unavailable and KPIMG must follow an explicit command-ownership fallback policy.
+- If it returns a function pointer, KPIMG calls it using one shared, exact prototype/header, then calls `__symbol_put("kp_lkm_supercall_dispatch")` on every return path.
+- Do not cache the returned LKM function pointer beyond the pinned call. Do not cache an LKM module pointer. Do not call `__symbol_put` after a failed `__symbol_get`.
+
+This makes the Linux module loader's own exported-symbol lifetime protocol the Gate: the module reference is acquired before control enters LKM text, and ordinary unload is blocked until the callback releases it. The resident KPIMG dispatcher itself remains resident, so a CPU delayed before entering it does not depend on LKM text or data.
+
+#### Still-open requirements — not yet a production fix
+
+1. Verify that the vendor Clang/CFI toolchain emits the exported bridge symbol as the callable canonical CFI entry and that KPIMG's indirect function-pointer call uses an identical prototype/type hash. The plain-name kernel symbols in the boot support this approach but do not prove the LKM export's generated address.
+2. Check the exact vendor `Module.symvers`, `CONFIG_MODVERSIONS`, export policy, and Kbuild/modpost behavior when a Y73s KDIR becomes available. The runtime name lookup avoids a direct link-time import, but the LKM still must successfully publish its export.
+3. Define a versioned request/reply ABI with explicit `handled` versus command-result status. A plain `-ENOSYS` cannot safely distinguish “LKM does not own this command” from “LKM owns it but the operation failed.”
+4. Resolve the existing overlapping command IDs and auth/policy ownership. KPIMG and LKM currently maintain distinct SU authorization/policy paths and distinct KPM loaders; a safe symbol bridge does not make those semantics equivalent.
+5. Only after the command ownership table, authentication contract, CFI prototype, and per-call pin/unpin error paths are specified should production code change.
+
+Status: a target-kernel-native callback lifetime primitive is identified and backed by exact 4.14.141 source plus original Y73s boot KALLSYMS. The cross-component dispatch contract and production implementation remain open. No vendor-KDIR build, runtime race test, or device test is claimed.
