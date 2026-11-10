@@ -27,9 +27,9 @@ def main():
 #define PAGE_SHIFT 12
 static void *kp_kpm_init_mm;
 static int nx_result, nx_calls, update_result, update_calls;
-static unsigned long last_base, last_size;
+static unsigned long last_base, last_size, last_pages;
 static int set_nx(unsigned long base, int pages) {
-    nx_calls++; last_base = base; last_size = (unsigned long)pages; return nx_result;
+    nx_calls++; last_base = base; last_pages = (unsigned long)pages; return nx_result;
 }
 static int (*kp_set_memory_nx)(unsigned long, int);
 static int kp_update_bti_gp(unsigned long base, unsigned long size, int executable) {
@@ -57,7 +57,7 @@ int main(void) {
     kp_kpm_init_mm = NULL; kp_set_memory_nx = set_nx; nx_result = 0; nx_calls = update_calls = 0;
     rc = kp_restore_nx_gp(0x30000, 4097);
     failed |= check("[PASS] successful set_memory_nx authorizes no-init_mm retirement", rc, 0);
-    if (nx_calls != 1 || last_base != 0x30000 || last_size != 2 || update_calls != 1) return 1;
+    if (nx_calls != 1 || last_base != 0x30000 || last_pages != 2 || update_calls != 1) return 1;
 
     kp_kpm_init_mm = (void *)1; kp_set_memory_nx = NULL; update_result = -EACCES; update_calls = 0;
     rc = kp_restore_nx_gp(0x40000, 4096);
