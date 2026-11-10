@@ -140,7 +140,7 @@ require('kp_resolve_symbol("security_secctx_to_secid")' in accctl and
         "!defined(CONFIG_SECURITY_APPARMOR)" in accctl and
         "!defined(CONFIG_SECURITY_SMACK)" in accctl and
         "!defined(CONFIG_SECURITY_TOMOYO)" in accctl and
-        "kp_selinux_blob_sizes hidden" in accctl,
+        "selinux_blob_sizes hidden" in accctl,
         "4.14 SELinux translabel resolves secctx dynamically and uses the verified single-LSM cred offset")
 require("kp_apply_su_cred" in accctl and
         "prepare_kernel_cred(NULL)" in accctl and
