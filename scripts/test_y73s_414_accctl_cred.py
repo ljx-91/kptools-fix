@@ -172,8 +172,9 @@ int main(void)
         unsigned char bad_security[64] = {0};
         struct cred bad = { .security = bad_security };
         struct cred *bad_ptr = &bad;
+        int before_puts = put_count;
         rc = kp_apply_su_cred(&bad_ptr, 0, "u:r:missing:s0");
-        if (rc || bad_ptr != &kernel_cred || put_count != 1) {
+        if (rc || bad_ptr != &kernel_cred || put_count != before_puts + 1) {
             fprintf(stderr, "invalid SELinux context did not fail over safely\n");
             return 1;
         }
@@ -184,9 +185,10 @@ int main(void)
         unsigned char bad_security[64] = {0};
         struct cred bad = { .security = bad_security };
         struct cred *bad_ptr = &bad;
+        int before_puts = put_count;
         fail_kernel_alloc = true;
         rc = kp_apply_su_cred(&bad_ptr, 0, "u:r:missing:s0");
-        if (rc != -ENOMEM || bad_ptr != &bad || put_count != 1) {
+        if (rc != -ENOMEM || bad_ptr != &bad || put_count != before_puts) {
             fprintf(stderr, "kernel-cred allocation failure was not fail-closed\n");
             return 1;
         }
