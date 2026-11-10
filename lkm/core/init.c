@@ -58,6 +58,9 @@ __attribute__((naked)) int __init kernelpatch_init_early(void)
 int __init kernelpatch_init(void)
 {
 	int rc;
+	bool cfi_bypass_installed = false;
+	bool supercall_installed = false;
+	bool sucompat_installed = false;
 
 	logki("KernelPatch LKM loading (version %x, kernel %x)\n", kpver, (unsigned)LINUX_VERSION_CODE);
 
@@ -98,6 +101,8 @@ int __init kernelpatch_init(void)
 	rc = kp_bypass_kcfi();
 	if (rc)
 		logkw("CFI bypass failed: %d\n", rc);
+	else
+		cfi_bypass_installed = true;
 
 #ifdef CONFIG_CFI_CLANG
 	/* KPM images are not registered through the kernel module loader and do
@@ -118,11 +123,13 @@ int __init kernelpatch_init(void)
 
 	rc = kp_supercall_install();
 	if (rc)
-		return rc;
+		goto err_unwind;
+	supercall_installed = true;
 
 	rc = kp_sucompat_hook_init();
 	if (rc)
-		return rc;
+		goto err_unwind;
+	sucompat_installed = true;
 
 	/* Synchronous manager scan; runs in the caller's (root) context so SELinux
 	 * allows reading /data. The appid may still be invalid if the manager is
@@ -135,6 +142,18 @@ int __init kernelpatch_init(void)
 
 	logki("KernelPatch LKM ready\n");
 	return 0;
+
+err_unwind:
+	/* module_init() failure does not invoke module_exit(). Undo every hook
+	 * installed by this init attempt before the loader frees this module. */
+	if (sucompat_installed)
+		kp_sucompat_hook_exit();
+	if (supercall_installed)
+		kp_supercall_uninstall();
+	if (cfi_bypass_installed)
+		kp_bypass_kcfi_exit();
+	logke("KernelPatch LKM init failed; installed hooks rolled back: %d\n", rc);
+	return rc;
 }
 
 static void __exit kernelpatch_exit(void)
