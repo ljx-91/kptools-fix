@@ -83,7 +83,7 @@ static struct file shell_file = { .id = 2, .executable = true };
 static uid_t test_uid = 10001;
 static bool allow_uid = true, manager_uid;
 static bool fail_shell_open;
-static int fput_calls, apply_calls;
+static int fput_calls, allow_write_calls, apply_calls;
 static int apply_result;
 static char last_sctx[128];
 
@@ -106,6 +106,7 @@ static struct file *open_exec_stub(const char *path)
     return &shell_file;
 }
 static struct file *(*kp_open_exec)(const char *name) = open_exec_stub;
+static void allow_write_access(struct file *file) { (void)file; allow_write_calls++; }
 static void fput(struct file *file) { (void)file; fput_calls++; }
 static struct pt_regs *task_pt_regs(void *task) { (void)task; return &test_regs; }
 static long copy_from_user(void *to, const void *from, size_t n)
@@ -150,7 +151,7 @@ int main(void)
     kp_before_prepare_binprm(&args, NULL);
     if (!args.local.data0 || bprm.file != &shell_file || !bprm.file->executable ||
         strcmp(bprm.filename, KP_SH_PATH) || strcmp(bprm.interp, KP_SH_PATH) ||
-        bprm.argc != 3 || fput_calls != 1) {
+        bprm.argc != 3 || fput_calls != 1 || allow_write_calls != 1) {
         fprintf(stderr, "su exec redirect failed\n");
         return 1;
     }
