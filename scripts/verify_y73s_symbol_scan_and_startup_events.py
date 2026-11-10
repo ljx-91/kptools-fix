@@ -35,7 +35,7 @@ KTHREADD_ADD = 0x9127F000
 KTHREADD_BL = 0x979FAB73
 KTHREADD_STUB = 0x0193E9FC
 KTHREADD_STUB_BRANCH = 0x179F914F
-KTHREADD_BODY = 0x00122F38
+KTHREADD_CFI_TARGET = 0x00122F38
 
 
 def function_body(source, signature):
@@ -207,9 +207,9 @@ def verify_hidden_kernel_init():
         raise AssertionError("Y73S kthreadd kernel_thread call target mismatch")
     if adrp_add_target(KTHREADD_CALL - 16, KTHREADD_ADRP, KTHREADD_ADD) != KTHREADD_STUB:
         raise AssertionError("Y73S kthreadd CFI function pointer decode mismatch")
-    if branch_target(KTHREADD_STUB, KTHREADD_STUB_BRANCH) != KTHREADD_BODY:
+    if branch_target(KTHREADD_STUB, KTHREADD_STUB_BRANCH) != KTHREADD_CFI_TARGET:
         raise AssertionError("Y73S kthreadd CFI stub branch target mismatch")
-    if REST_INIT < KTHREADD_BODY < REST_INIT + REST_INIT_SIZE:
+    if REST_INIT < KTHREADD_CFI_TARGET < REST_INIT + REST_INIT_SIZE:
         raise AssertionError("kthreadd must not be misidentified as kernel_init")
 
 
