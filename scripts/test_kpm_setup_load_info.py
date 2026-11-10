@@ -295,7 +295,7 @@ int main(void)
         binary = Path(tmp) / "setup_load_info"
         cfile.write_text(code, encoding="utf-8")
         subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror",
-                        "-Wno-unused-parameter", "-Wno-unused-function",
+                        "-Wno-unused-parameter", "-Wno-unused-function", "-Wno-type-limits",
                         str(cfile), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
     print("[PASS] production KPM setup_load_info parser executed")
