@@ -33,6 +33,9 @@ def main():
         "static bool kp_elf_range_valid(",
         "static bool kp_elf_string_valid(",
         "static void set_load_error(",
+        "static char *next_string(",
+        "static char *get_next_modinfo(",
+        "static char *get_modinfo(",
         "static int elf_header_check(",
         "static int rewrite_section_headers(",
         "static int find_sec(",
@@ -67,13 +70,6 @@ struct kp_load_info {
 };
 #define logke(...) ((void)0)
 #define logkd(...) ((void)0)
-static const char *get_modinfo(const struct kp_load_info *info, const char *tag)
-{
-    (void)info;
-    if (!strcmp(tag, "name")) return "fixture";
-    if (!strcmp(tag, "version")) return "1.0";
-    return NULL;
-}
 """
     tests = r"""
 #define IMAGE_SIZE 2048
@@ -83,6 +79,7 @@ static unsigned char image[IMAGE_SIZE];
 static const char section_names[] =
     "\0.shstrtab\0.kpm.init\0.kpm.exit\0.kpm.info\0.strtab\0.symtab\0.rela.init\0";
 static const char symbol_names[] = "\0foo\0";
+static const char module_info[] = "name=fixture\0version=1.0\0";
 
 static unsigned int name_offset(const char *name)
 {
@@ -143,9 +140,9 @@ static void reset_fixture(struct kp_load_info *info)
     sh[4].sh_type = SHT_PROGBITS;
     sh[4].sh_flags = SHF_ALLOC;
     sh[4].sh_offset = 1248;
-    sh[4].sh_size = 16;
+    sh[4].sh_size = sizeof(module_info);
     sh[4].sh_addralign = 1;
-    memcpy(image + 1248, "fixture metadata", 15);
+    memcpy(image + 1248, module_info, sizeof(module_info));
 
     sh[5].sh_name = name_offset(".strtab");
     sh[5].sh_type = SHT_STRTAB;
@@ -211,6 +208,18 @@ int main(void)
     Elf_Sym *syms;
 
     failed |= run_case("[PASS] valid KPM metadata, SYMTAB/STRTAB and RELA accepted", 0);
+
+    reset_fixture(&info);
+    elf_header_check(&info);
+    memcpy(image + 1248, "name=\0version=1.0\0", sizeof("name=\0version=1.0\0"));
+    if (setup_load_info(&info) == 0) return 1;
+    puts("[PASS] empty module name rejected by real modinfo parser");
+
+    reset_fixture(&info);
+    elf_header_check(&info);
+    memcpy(image + 1248, "name=fixture\0version=\0", sizeof("name=fixture\0version=\0"));
+    if (setup_load_info(&info) == 0) return 1;
+    puts("[PASS] empty module version rejected by real modinfo parser");
 
     reset_fixture(&info);
     elf_header_check(&info);
