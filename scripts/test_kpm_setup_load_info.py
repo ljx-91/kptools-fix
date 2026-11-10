@@ -139,7 +139,7 @@ static void reset_fixture(struct kp_load_info *info)
     sh[4].sh_offset = 1248;
     sh[4].sh_size = 16;
     sh[4].sh_addralign = 1;
-    memcpy(image + 1248, "fixture metadata", 16);
+    memcpy(image + 1248, "fixture metadata", 15);
 
     sh[5].sh_name = name_offset(".strtab");
     sh[5].sh_type = SHT_STRTAB;
