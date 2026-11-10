@@ -617,6 +617,13 @@ static int start_init(uint64_t kimage_voff, uint64_t linear_voff)
         kallsyms_resolver = "backward_symbol_scan";
     }
 #endif
+    /* The preset offset was extracted from this exact kernel image by kptools.
+     * Prefer it over the runtime formatter scan; the scan remains a bounded
+     * fallback for kernels where the direct symbol offset is unavailable. */
+    kallsym_offset = start_preset.kallsyms_lookup_name_offset;
+    if (kernel_size <= 0 || kallsym_offset >= (unsigned long)kernel_size) {
+        kallsym_offset = 0;
+    }
     if (!kallsym_offset) {
         kallsym_offset = resolve_kallsyms_lookup_name_by_symbol_lookup_anchor();
         if (kallsym_offset) {
@@ -624,13 +631,14 @@ static int start_init(uint64_t kimage_voff, uint64_t linear_voff)
         }
     }
     if (!kallsym_offset) {
-        kallsym_offset = start_preset.kallsyms_lookup_name_offset;
-    }
-    if (!kallsym_offset) {
         log_kallsyms_lookup_name_unresolved();
         return -1;
     }
 
+    if (kallsym_offset >= (unsigned long)kernel_size || kallsym_offset > (~0ul - kernel_va)) {
+        log_kallsyms_lookup_name_unresolved();
+        return -1;
+    }
     start_preset.kallsyms_lookup_name_offset = kallsym_offset;
     kallsyms_lookup_name = (typeof(kallsyms_lookup_name))(kernel_va + kallsym_offset);
     if (!kallsyms_lookup_name) {
