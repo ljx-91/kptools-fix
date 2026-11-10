@@ -79,10 +79,6 @@ static long kp_handle_supercall(long cmd, unsigned long a2, unsigned long a3,
     dispatch_args[4] = a5;
     return 0x123456;
 }
-static long kp_call_original_truncate_args(long a0, long a1)
-{
-    return kp_orig_truncate_args ? kp_orig_truncate_args(a0, a1) : -ENOSYS;
-}
 """
     tests = r"""
 int main(void)
