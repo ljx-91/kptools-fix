@@ -239,6 +239,18 @@ int main(void)
 
     reset_fixture(&info);
     elf_header_check(&info);
+    ((Elf_Shdr *)(image + SHOFF))[6].sh_flags |= SHF_ALLOC;
+    if (setup_load_info(&info) == 0) return 1;
+    puts("[PASS] KPIMG allocatable SYMTAB rejected before layout");
+
+    reset_fixture(&info);
+    if (elf_header_check(&info)) return 1;
+    ((Elf_Shdr *)(image + SHOFF))[5].sh_flags |= SHF_ALLOC;
+    if (setup_load_info(&info) == 0) return 1;
+    puts("[PASS] KPIMG allocatable symbol STRTAB rejected before layout");
+
+    reset_fixture(&info);
+    if (elf_header_check(&info)) return 1;
     ((Elf_Shdr *)(image + SHOFF))[6].sh_entsize = 1;
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] incorrect SYMTAB entry size rejected");
