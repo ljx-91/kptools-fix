@@ -47,7 +47,8 @@ jobs:
             verify_userd_file_contract.py \
             verify_y73s_fphook_contract.py \
             verify_y73s_memblock_contract.py \
-            verify_y73s_runtime_contract.py \\\n            verify_y73s_syscall45_contract.py; do
+            verify_y73s_runtime_contract.py \
+            verify_y73s_syscall45_contract.py; do
             python3 "scripts/$verifier"
           done
 
