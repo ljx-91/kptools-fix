@@ -832,3 +832,22 @@ A valid design needs a distinct KPIMG-resident entry/return envelope and an LKM-
 6. On gate-closed or failed `try_module_get`, the resident path must use a safe original-function fallback without dereferencing LKM callbacks, owner tokens, or stale LKM data. This requires a valid per-signature original trampoline lifetime contract.
 
 This split is architectural, not implemented. In particular, the resident envelope must be audited for AArch64 ABI preservation, CFI behavior, exception/unwind assumptions, and all supported argument counts before assembly is written.
+
+
+#### 7. Existing chain-stub and retained-payload facts relevant to the Gate ABI
+
+The LKM chain stub emitted by `lkm/hook/hook_engine.c` is concrete:
+- `BTI JC`;
+- `LDR X16, #12`;
+- `B #16`;
+- `NOP`;
+- 64-bit `hook_chain_t *` literal;
+- absolute branch veneer to the selected LKM `_transitN`.
+
+Thus the resident Gate target can receive the chain pointer in `x16` without changing the original argument registers. The absolute branch veneer uses `x17`; it does not consume `x0-x7`.
+
+The ordinary chain transit classes are 0, 4, 8, and 12 64-bit arguments. The 8- and 12-argument cases include stack-passed arguments at the original entry SP. A resident wrapper must preserve/reconstruct those stack arguments exactly; it cannot treat all arguments as register-passed. It must preserve the original LR and maintain 16-byte SP alignment. `x18` is platform-reserved and must not be used as scratch. `x16` is the chain context and must be captured before any call can clobber it. The general hook path uses integer argument slots; FP/SIMD hook chains are a distinct path and require a separate ABI audit rather than being silently included.
+
+The original relocated trampoline is stored in `chain->hook.relo_addr`. LKM `hook_mem_retire()` removes the lookup metadata but intentionally does not release the executable region, so a resident closed-gate fallback can in principle read the retained chain payload and invoke the original relocated trampoline without calling LKM callbacks. This is only safe if the Gate's own retirement protocol guarantees that the payload and trampoline remain allocated and executable for every branch that could already have reached the Gate. The fallback must not consult the removed LKM hook-memory registry or dereference callback/owner fields.
+
+This gives a narrow fallback contract: after gate closure, use only resident Gate state plus the retained chain's original-trampoline fields; never enter LKM callback/owner logic. The retained-region behavior currently trades memory reclamation for safety and must be preserved until a proven grace-period reclamation mechanism exists.
