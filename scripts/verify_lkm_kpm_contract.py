@@ -185,6 +185,26 @@ def main():
     require(r"kp_exec_backend\s*==\s*KP_EXEC_BACKEND_NONE\s*\|\|\s*!kp_kpm_init_mm",
             load_gate, "KPM loading must fail closed without verified allocator and init_mm")
 
+    # A target with Clang CFI must never expose KPM entry points unless the
+    # slowpath bypass needed for unregistered KPM text was installed.
+    secpass = read("lkm/infra/secpass.c")
+    bypass = body(secpass, "int kp_bypass_kcfi(void)")
+    require(r"cfi_enforcement_hooked", bypass,
+            "CFI bypass must track successful enforcement-hook installation")
+    require(r"#ifdef CONFIG_CFI_CLANG[\s\S]*?!cfi_enforcement_hooked",
+            bypass, "Clang CFI builds must require an enforcing slowpath hook")
+    require(r"if\s*\(rc\)[\s\S]*?kp_bypass_kcfi_exit\(\)[\s\S]*?return rc",
+            bypass, "partial CFI hook installation must be rolled back on failure")
+    require(r"if\s*\(!rc\)[\s\S]*?rc = hook_rc",
+            bypass, "CFI hook failures must not be overwritten by later hook attempts")
+
+    core_init = read("lkm/core/init.c")
+    init_entry = body(core_init, "int __init kernelpatch_init(")
+    require(r"#ifdef CONFIG_CFI_CLANG[\s\S]*?KPM loader disabled: CFI bypass is unavailable",
+            init_entry, "Clang CFI builds must disable KPM when CFI bypass setup fails")
+    require(r"else\s*\{[\s\S]*?rc = kp_kpm_init\(\)",
+            init_entry, "Clang CFI builds may initialize KPM only after bypass success")
+
     unload_gate = body(module, "long kp_unload_module(")
     require(r"mod->active_calls\s*\|\|\s*mod->hook_refs[\s\S]*?return\s*-EBUSY",
             unload_gate, "KPM image must remain resident while callbacks or hooks reference it")
