@@ -295,7 +295,7 @@ int kp_sucompat_hook_exit(void)
 			kp_open_exec = NULL;
 			kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
 		} else {
-			logke("sucompat: prepare_binprm hook is still live: %d\\n",
+			logke("sucompat: prepare_binprm hook is still live: %d\n",
 			      unhook_rc);
 			rc = unhook_rc;
 		}
