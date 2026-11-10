@@ -1983,3 +1983,17 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 - 现有 511 状态/12 终态模型只验证协议假设，不验证上述 Gate 机器码实现。
 
 结论：原始内核提供 try_module_get/module_put，LKM 已有可独立保留的可执行 payload，这使“常驻 Gate + module ref + retained trampoline”具备实现基础；但 Gate 尚未实现，LKM 正常卸载仍未通过安全验证。
+
+
+### Gate 布局细化（第 66 节补充）
+
+为避免把完整 Gate 代码塞进每个 0x70-word transit 数组，优先采用“一份常驻 Gate 页 + 每个 Hook 一个小入口 stub”的布局：
+
+- LKM 初始化时分配一页独立 executable memory，复制一份位置无关 AArch64 Gate；该页在模块卸载时故意不释放。
+- 每个 hook_t payload 保存 gate_state、THIS_MODULE、try_module_get/module_put 指针、callback 指针、chain 指针、argno 和 original trampoline。
+- 每个 Hook 的 10-word stub 先把 hook_t 地址放入 x16，再用绝对分支进入常驻 Gate 页。hook_chain_t 的首成员就是 hook_t，因此 inline chain 与直接 hook 可以共用同一描述符入口。
+- Gate 通过描述符区分直接 replace callback 与 _transitN callback；只有 chain callback 才把 chain 指针恢复到 x16。Gate 对两类入口统一执行 token 获取、module_get、callback、module_put、token release。
+- 关闭后的 Gate 只读 gate_state 和 retained original trampoline，不读取 LKM callback、module 指针或静态 registry。每个退役 hook_t payload 与 Gate 页都保留，覆盖卸载前已取到旧分支但尚未执行 Gate 的 CPU。
+- hook() 直接替换、hook_wrap() 链式入口和 secpass/manager/sucompat 的所有 Hook 都必须迁移到此入口；只迁移 syscall 45 或只迁移 hook_wrap 都不构成完整修复。
+
+该布局仍是待实现设计；在精确 Y73s KDIR 下完成汇编、结构体偏移、Clang 9.0.3 编译与 AArch64 ABI 验证之前，不修改生产 Hook 入口。
