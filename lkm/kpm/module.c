@@ -776,7 +776,7 @@ static int setup_load_info(struct kp_load_info *info)
 	}
 
 	const char *name = get_modinfo(info, "name");
-	if (!name) {
+	if (!name || !*name) {
 		logke("module name not found\n");
 		set_load_error(info, "module name not found");
 		return -ENOEXEC;
@@ -786,7 +786,7 @@ static int setup_load_info(struct kp_load_info *info)
 	logkd("    name: %s\n", name);
 
 	const char *version = get_modinfo(info, "version");
-	if (!version) {
+	if (!version || !*version) {
 		logkd("module version not found\n");
 		set_load_error(info, "module version not found");
 		return -ENOEXEC;
