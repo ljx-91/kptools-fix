@@ -1339,3 +1339,16 @@ No production behavior was changed in this audit step. LKM unload safety remains
 ### Decision
 
 No production pin/unpin change was made. Keep the LKM transit unload status **unverified / unsupported** until either (a) a deliberate no-unload policy is approved and forced-unload is ruled out, or (b) transit is moved to independently resident code with a proven teardown barrier. The current boot has module unloading enabled, so this distinction is operationally relevant.
+
+
+### 14.1. 原始 Boot 已确认 force-unload 关闭；self-pin 的精确 init 时序
+
+- 从资料库提取的 Y73S config 文件 SHA-256 为 `f70215f43982b627eac9021aca8f9f1c47035c0c97890bee73adabdb2ec3cb8d`，其中明确为 `# CONFIG_MODULE_FORCE_UNLOAD is not set`。
+- Linux v4.14.141 `try_force_unload()` 在该配置下恒返回 0；`try_stop_module()` 检测到基础引用以外仍有引用时返回 `-EWOULDBLOCK`，不会转入 `MODULE_STATE_GOING`。
+- 同一版本 `do_init_module()` 在调用模块 init 时模块状态为 `MODULE_STATE_COMING`，随后 init 成功才切到 `MODULE_STATE_LIVE`，并释放 loader 持有的临时 init 引用。
+- `module_is_live()` 的精确定义是“状态不等于 GOING”，所以在 init 执行期间，`try_module_get(THIS_MODULE)` 可在模块引用计数非零时增加一份引用；init 成功后 loader 释放自己的临时引用，LKM 自己持有的引用仍在。
+- 当前 `lkm/core/init.c` 的所有 hook 安装和可能失败的初始化步骤都发生在 `kernelpatch_init()` 返回前；在所有 hook 安装成功后、成功返回前的最后位置获取 self-reference，理论上可让模块进入“常驻且普通 rmmod 返回 EWOULDBLOCK”的状态。必须确保 pin 成功后不再走 init error return。
+- 该策略的实际结果是模块无法正常卸载/更新，只能重启后替换；它是生命周期风险的 fail-safe containment，不是实现了安全 teardown。它也不能保护被强制卸载的配置，但已确认目标 Boot 未启用 force-unload。
+- 编译时需要精确 Y73S KDIR/Module.symvers 确认 `try_module_get` 的符号 CRC 与 vendor 导出；当前没有该 KDIR，因此尚未证明目标 .ko 能编译/加载。
+
+本轮仍未启用 self-pin。需要用户明确接受“LKM 成功加载后不可普通卸载，更新需重启”的行为，才应提交生产代码改动。
