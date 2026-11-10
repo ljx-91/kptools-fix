@@ -144,10 +144,12 @@ require('kp_resolve_symbol("security_secctx_to_secid")' in accctl and
         "!defined(CONFIG_SECURITY_TOMOYO)" in accctl and
         "selinux_blob_sizes hidden" in accctl,
         "4.14 SELinux translabel resolves secctx dynamically and uses the verified single-LSM cred offset")
+apply_su = accctl.split("int kp_apply_su_cred(", 1)[1].split("int kp_commit_su(", 1)[0]
 require("kp_apply_su_cred" in accctl and
-        "prepare_kernel_cred(NULL)" in accctl and
-        "put_cred(new)" in accctl,
-        "pending exec credentials can be relabeled with a fail-closed kernel-cred fallback")
+        "refusing SU credential commit" in apply_su and
+        "prepare_kernel_cred(NULL)" not in accctl and
+        "put_cred(new)" not in apply_su,
+        "SELinux translabel failure refuses SU commit without substituting init_cred")
 sucompat_init = sucompat_hook.split("int kp_sucompat_hook_init(void)", 1)[1].split(
     "int kp_sucompat_hook_exit(void)", 1
 )[0]
