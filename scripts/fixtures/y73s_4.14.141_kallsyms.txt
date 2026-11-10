@@ -15,4 +15,8 @@
 0x01922680 t kallsyms_lookup_name
 0x00005084 T __flush_dcache_area
 0x00004fb4 T flush_icache_range
+0x006881ec t security_secctx_to_secid.cfi
+0x01919c90 t security_secctx_to_secid
+0x003e044c t prepare_binprm.cfi
+0x01917bc8 t prepare_binprm
 0x019135b4 t stop_machine
