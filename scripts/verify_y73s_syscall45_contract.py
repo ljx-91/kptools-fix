@@ -43,7 +43,11 @@ def main():
     sysname_c = read("kernel/patch/common/sysname.c")
     kp_supercall = read("kernel/patch/common/supercall.c")
     lkm_supercall = read("lkm/supercall/supercall.c")
+    hook_c = read("kernel/base/hook.c")
+    lkm_init = read("lkm/core/init.c")
     resolver = function_body(syscall_c, "uintptr_t syscalln_name_addr(")
+    branch_abs = function_body(hook_c, "int32_t branch_absolute(")
+    relo_ldr = function_body(hook_c, "static __noinline hook_err_t relo_ldr(")
 
     checks = {
         "Y73S-only syscall-45 inline path is gated to native no-wrapper kernels":
@@ -66,6 +70,16 @@ def main():
         "Y73S profile define is wired into the KPIMG build":
             "ifdef Y73S_TARGET" in read("kernel/Makefile") and
             "-DKP_TARGET_Y73S=1" in read("kernel/Makefile"),
+        "KPIMG inline branch uses a literal-backed four-word absolute stub":
+            "buf[0] = 0x58000051; // LDR X17, #8" in branch_abs and
+            "buf[1] = 0xd61f0220; // BR X17" in branch_abs and
+            "buf[2] = addr & 0xFFFFFFFF;" in branch_abs,
+        "LKM relocation rejects a literal that points into the overwritten prologue":
+            "is_in_tramp(hook, addr) && type != INST_PRFM_LIT" in relo_ldr and
+            "return -HOOK_BAD_RELO;" in relo_ldr,
+        "LKM aborts initialization when its inline supercall cannot be installed":
+            "rc = kp_supercall_install();" in lkm_init and
+            "if (rc)\n\t\tgoto err_unwind;" in lkm_init,
     }
 
     for label, ok in checks.items():
