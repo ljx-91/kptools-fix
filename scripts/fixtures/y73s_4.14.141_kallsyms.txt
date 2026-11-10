@@ -19,4 +19,6 @@
 0x01919c90 t security_secctx_to_secid
 0x003e044c t prepare_binprm.cfi
 0x01917bc8 t prepare_binprm
+0x003e06e8 t open_exec.cfi
+0x01914f00 t open_exec
 0x019135b4 t stop_machine
