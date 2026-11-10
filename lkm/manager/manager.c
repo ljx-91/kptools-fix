@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/version.h>
 #include <linux/vmalloc.h>
@@ -342,14 +343,33 @@ void hook_rename_lsm(void)
 	logkw("no symbol: security_path_rename/security_inode_rename\n");
 }
 
-void hook_rename_lsm_exit(void)
+int hook_rename_lsm_exit(void)
 {
-	if (kp_rename_hook_addr) {
-		/* Installed as hook_wrap5(addr, 0, cb, 0); pass the same (before,
-		 * after) pair to unwrap so the chain item matches. */
-		hook_unwrap((void *)kp_rename_hook_addr, 0, kp_rename_hook_cb);
-		kp_rename_hook_addr = 0;
-		kp_rename_hook_cb = NULL;
-		logki("rename LSM hook removed\n");
+	int rc;
+
+	if (!kp_rename_hook_addr)
+		return 0;
+
+	/*
+	 * A rename callback may already be executing on another CPU. Retire the
+	 * slot first, then wait until the chain reader exits before allowing the
+	 * module image to be released. hook_unwrap_remove() is idempotent after
+	 * the first call marks the slot RETIRED.
+	 */
+	do {
+		rc = hook_unwrap_remove((void *)kp_rename_hook_addr, 0,
+					kp_rename_hook_cb, 1);
+		if (rc == -EBUSY)
+			cond_resched();
+	} while (rc == -EBUSY);
+
+	if (rc && rc != -ENOENT) {
+		logke("rename LSM hook removal failed: %d\\n", rc);
+		return rc;
 	}
+
+	kp_rename_hook_addr = 0;
+	kp_rename_hook_cb = NULL;
+	logki("rename LSM hook removed\\n");
+	return 0;
 }
