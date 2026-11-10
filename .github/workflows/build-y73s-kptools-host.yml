@@ -40,6 +40,8 @@ jobs:
           python3 scripts/test_y73s_hook_gate_model.py
           python3 scripts/test_y73s_hook_gate_interleavings.py
           python3 scripts/verify_y73s_414_api_contract.py
+          python3 scripts/verify_y73s_414_kallsyms_profile.py
+          python3 scripts/verify_y73s_symbol_scan_and_startup_events.py
           for verifier in \
             verify_bootimg_io_contract.py \
             verify_kptools_patch_bounds.py \
