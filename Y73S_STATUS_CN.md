@@ -700,6 +700,7 @@ lkm/infra/secpass.c 原先在调用 unhook() 后无条件清零 Hook 地址和 b
 - 检查清理失败不会清空 Hook 地址/backup。
 - 检查 module_init 失败路径与 module_exit 均 fail-closed。
 - 新增 scripts/verify_lkm_kpm_contract.py 回归契约覆盖以上行为。
+- 重新读取六个相关源码/测试文件，执行 10 项独立结构检查，10/10 通过；这不是目标 KDIR 编译或故障注入测试。
 
 ### 变更提交
 
