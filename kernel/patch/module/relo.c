@@ -154,6 +154,8 @@ static int reloc_insn_imm(enum aarch64_reloc_op op, void *place, u64 val, int ls
 
     /* Calculate the relocation value. */
     sval = do_reloc(op, place, val);
+    /* Do not silently discard low bits for scaled or PC-relative fields. */
+    if (lsb && ((u64)sval & ((1ULL << lsb) - 1))) return -ENOEXEC;
     sval >>= lsb;
     /* Extract the value bits and shift them to bit 0. */
     imm_mask = (BIT(lsb + len) - 1) >> lsb;
