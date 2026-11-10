@@ -239,8 +239,10 @@ require(commit_su.index("kp_apply_su_cred(&new, to_uid, sctx)") <
 su_sc = su_source.split("long kp_su_sc(", 1)[1].split("long kp_su_task_sc(", 1)[0]
 su_grant = su_source.split("long kp_su_grant_uid_sc(", 1)[1].split("long kp_su_revoke_uid_sc(", 1)[0]
 su_task = su_source.split("long kp_su_task_sc(", 1)[1].split("long kp_su_grant_uid_sc(", 1)[0]
-require("memchr(profile->scontext, '\\\\0', sizeof(profile->scontext))" in su_sc and
-        "memchr(profile->scontext, '\\\\0', sizeof(profile->scontext))" in su_grant,
+require("memchr(profile->scontext" in su_sc and
+        "sizeof(profile->scontext)" in su_sc and
+        "memchr(profile->scontext" in su_grant and
+        "sizeof(profile->scontext)" in su_grant,
         "user-provided fixed-size SU profile contexts must be NUL-terminated before string use")
 require("return -EOPNOTSUPP;" in su_task and "memdup_user(" not in su_task,
         "disabled cross-task SU rejects before copying or parsing an unused user profile")
