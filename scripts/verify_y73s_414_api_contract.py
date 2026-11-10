@@ -163,7 +163,11 @@ require("bprm->file = shell_file" in sucompat_hook and
         "kp_apply_su_cred(&new, 0, sctx)" in sucompat_hook and
         "if (!args->local.data0 || (long)args->ret < 0)" in sucompat_hook and
         "if (supercmd && bprm->argc > 1)" in sucompat_hook and
-        "bprm->argc = 1" in sucompat_hook,
+        "bprm->argc = 1" in sucompat_hook and
+        "args->local.data2 = supercmd" in sucompat_hook and
+        "task_pt_regs(current)" in sucompat_hook and
+        "regs->syscallno == __NR_execve" in sucompat_hook and
+        "kp_get_supercmd_sctx(regs, sctx_buf, sizeof(sctx_buf))" in sucompat_hook,
         "prepare_binprm fallback redirects only execs and updates the pending cred after SELinux bprm hooks")
 require('kallsyms_lookup_name("module_alloc")' in kpm and
         'kallsyms_lookup_name("module_memfree")' in kpm,
