@@ -1697,3 +1697,29 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 - 该实现按 upstream v4.14.141 的 `bprm_fill_uid()`、script loader 与 commoncap 调用语义设计；Y73s vendor 是否 backport/修改这些路径仍需厂商源码或 KDIR 验证。
 - 尚未取得目标 system image，无法确认 `/system/bin/sh` 的真实 ELF/shebang 类型。
 - 仍未完成 vendor KDIR LKM 编译/modpost、Clang CFI/LTO 链接和真机执行验证。没有进行 Fastboot 或刷写操作。
+
+
+## 53. 2026-11-10：确认 prepare_binprm hook 的 after 回调可覆盖原函数返回值
+
+### Hook Engine 源码链路
+
+本轮在仓库内找到并核对了实际 Hook Engine 实现，不再依赖对外部汇编实现的猜测：
+
+- `kernel/include/hook.h` 将 `hook_fargs1_t` 定义为 `hook_fargs4_t` 的别名；该结构包含 `uint64_t ret` 字段。
+- `hook_wrap1()` 明确调用 `hook_wrap(func, 1, before, after, udata)`。
+- `kernel/base/hook.c:hook_chain_prepare()` 对 `argno <= 4` 选择 `_transit4`，并通过 transit stub 跳转到该 C 实现。
+- `_transit4()` 先调用原函数并将其返回值写入 `fargs.ret`，随后逆序执行 after callbacks，最后执行 `return fargs.ret;`。
+- 因而 `kp_after_prepare_binprm()` 对 `args->ret` 的修改会成为 `_transit4()` 的 C 返回值；按 AArch64 PCS，整数/指针标量返回值经 x0 交还给被 hook 的调用方。将负 errno 转成 `(unsigned long)(long)-EOPNOTSUPP` 也保留了 64 位负值表示，调用方按 int 返回值解释时低 32 位仍为负 errno。
+
+### 结论
+
+- **已从当前仓库实际源码确认：** `prepare_binprm` 的 `hook_wrap1` after callback 能覆盖原函数返回值；重复解释器链的 `-EOPNOTSUPP` 失败关闭路径并非只修改临时 callback 数据，而是会沿 Hook Engine 返回路径传回原调用者。
+- 该结论适用于当前分支内编译的 `kernel/base/hook.c` Hook Engine。仍须确保最终 KPIMG 使用的正是该分支构建产物；不能把这一源码结论扩大为已完成 Y73s 真机运行验证。
+- 已把上述链路加入 `scripts/verify_y73s_414_api_contract.py` 源码契约，防止后续误改 hook ABI、参数数量选择或 transit 返回语义。
+
+### CI 与边界
+
+- 最新分支 HEAD：`d7a350c2e9b48c91cf007b1cbef0dff229650139`。
+- Windows workflow run `42842659767`：Ubuntu KPIMG build/source-contract job **success**；Windows kptools.exe job **success**。
+- 本节新增的源码契约尚需在本次文档/测试提交后的新 CI run 中再次执行。
+- 仍未取得 Y73s vendor KDIR/完整内核源码；LKM vendor KDIR 编译与 modpost、Clang CFI/LTO 链接、目标设备运行验证均未完成。没有执行 Fastboot、刷写或其他设备写入操作。
