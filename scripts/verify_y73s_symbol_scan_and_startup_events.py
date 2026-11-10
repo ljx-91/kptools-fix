@@ -196,7 +196,7 @@ def verify_hidden_kernel_init():
     # Verify the actual original-image callsite, not just a source-level guess.
     if branch_target(KERNEL_INIT_CALL, KERNEL_INIT_BL) != KERNEL_THREAD_CFI:
         raise AssertionError("Y73S first kernel_thread call target mismatch")
-    if adrp_add_target(KERNEL_INIT_CALL - 8, KERNEL_INIT_ADRP, KERNEL_INIT_ADD) != KERNEL_INIT_STUB:
+    if adrp_add_target(KERNEL_INIT_CALL - 16, KERNEL_INIT_ADRP, KERNEL_INIT_ADD) != KERNEL_INIT_STUB:
         raise AssertionError("Y73S kernel_init CFI function pointer decode mismatch")
     if branch_target(KERNEL_INIT_STUB, KERNEL_INIT_STUB_BRANCH) != KERNEL_INIT_BODY:
         raise AssertionError("Y73S kernel_init CFI stub branch target mismatch")
@@ -205,7 +205,7 @@ def verify_hidden_kernel_init():
 
     if branch_target(KTHREADD_CALL, KTHREADD_BL) != KERNEL_THREAD_CFI:
         raise AssertionError("Y73S kthreadd kernel_thread call target mismatch")
-    if adrp_add_target(KTHREADD_CALL - 8, KTHREADD_ADRP, KTHREADD_ADD) != KTHREADD_STUB:
+    if adrp_add_target(KTHREADD_CALL - 16, KTHREADD_ADRP, KTHREADD_ADD) != KTHREADD_STUB:
         raise AssertionError("Y73S kthreadd CFI function pointer decode mismatch")
     if branch_target(KTHREADD_STUB, KTHREADD_STUB_BRANCH) != KTHREADD_BODY:
         raise AssertionError("Y73S kthreadd CFI stub branch target mismatch")
