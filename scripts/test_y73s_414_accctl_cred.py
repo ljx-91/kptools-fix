@@ -131,7 +131,7 @@ int main(void)
         int before_calls = secctx_calls;
         memset(unterminated, 'X', sizeof(unterminated));
         rc = kp_apply_su_cred(&bad_ptr, 0, unterminated);
-        if (rc || bad_ptr != &kernel_cred || secctx_calls != before_calls) {
+        if (rc != -EINVAL || bad_ptr != &bad || secctx_calls != before_calls) {
             fprintf(stderr, "unterminated fixed-size SELinux context was not rejected safely\\n");
             return 1;
         }
