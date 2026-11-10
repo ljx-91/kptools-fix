@@ -32,6 +32,7 @@ jobs:
           python3 scripts/test_kpm_rela_transaction.py
           python3 scripts/test_kpm_setup_load_info.py
           python3 scripts/test_kpm_simplify_symbols.py
+          python3 scripts/test_kpm_layout_copy.py
           for verifier in \
             verify_bootimg_io_contract.py \
             verify_kptools_patch_bounds.py \
