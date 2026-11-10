@@ -185,7 +185,7 @@ sucompat_install = sucompat.split("static int kp_hook_prepare_binprm(void)", 1)[
     "/* ---- getname_flags", 1
 )[0]
 require(sucompat_install.index("kp_prepare_binprm_addr = addr") <
-        sucompat_install.index("hook_wrap1(") and
+        sucompat_install.index("return hook_wrap1(") and
         "return hook_wrap1(" in sucompat_install,
         "prepare_binprm target is recorded before patching so uncertain installs remain cleanable")
 unwrap_wait = sucompat.split("static int kp_unwrap_wait(", 1)[1].split(
