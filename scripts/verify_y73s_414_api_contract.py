@@ -153,9 +153,12 @@ require("kp_apply_su_cred" in accctl and
 sucompat_init = sucompat_hook.split("int kp_sucompat_hook_init(void)", 1)[1].split(
     "int kp_sucompat_hook_exit(void)", 1
 )[0]
-require("kp_syscall_table_init()" in sucompat_init and
-        sucompat_init.index("kp_syscall_table_init()") < sucompat_init.index("kp_syscall_hook("),
-        "sucompat initializes the syscall table before attempting the syscall hook")
+require("return kp_hook_prepare_binprm();" in sucompat_init and
+        "kp_syscall_hook(" not in sucompat_hook and
+        "kp_commit_su(" not in sucompat_hook and
+        "kp_redirect_to_sh(" not in sucompat_hook and
+        "fail\\n" not in sucompat_init,
+        "sucompat uses transactional pending exec credentials only and fails closed without prepare_binprm")
 require("return kp_hook_prepare_binprm()" in sucompat_hook and
         "kp_resolve_symbol(\"prepare_binprm.cfi\")" in sucompat_hook and
         'kp_resolve_symbol("open_exec")' in sucompat_hook and
@@ -255,7 +258,7 @@ require("return -EOPNOTSUPP;" in su_task and "memdup_user(" not in su_task,
         "disabled cross-task SU rejects before copying or parsing an unused user profile")
 add_allow = sucompat_source.split("int kp_su_add_allow_uid(", 1)[1].split("int kp_su_remove_allow_uid(", 1)[0]
 profile_read = sucompat_source.split("int kp_su_allow_uid_profile(", 1)[1].split("/* APatch module exclude", 1)[0]
-default_sctx = sucompat_hook.split("static const char *kp_default_sctx(", 1)[1].split("static long kp_execve_handler(", 1)[0]
+default_sctx = sucompat_hook.split("static const char *kp_default_sctx(", 1)[1].split("int kp_sucompat_hook_init(", 1)[0]
 require("strnlen(scontext, sizeof(profile.scontext))" in add_allow and
         "sctx_len >= sizeof(profile.scontext)" in add_allow,
         "allowlist storage rejects oversized SELinux context strings instead of truncating")
@@ -275,14 +278,9 @@ require("if (max < 0)" in su_list and "if (max && !uids)" in su_list and
 
 
 reset_path = sucompat_source.split("int kp_su_reset_path(", 1)[1].split("int kp_sucompat_init(", 1)[0]
-redirect = sucompat_hook.split("static long kp_redirect_to_sh(", 1)[1].split("/*", 1)[0]
 require("strnlen(path, sizeof(current_su_path))" in reset_path and
         "return -ENAMETOOLONG;" in reset_path and
         "memcpy(current_su_path, path, len + 1)" in reset_path,
         "SU path updates reject overlong paths instead of silently truncating")
-require("rc = kp_commit_su(0, sctx);" in redirect and
-        "if (rc)" in redirect and
-        "return rc;" in redirect,
-        "legacy execve redirect stops if credential preparation fails")
 
 print("[PASS] Y73S 4.14.141 source compatibility contract")
