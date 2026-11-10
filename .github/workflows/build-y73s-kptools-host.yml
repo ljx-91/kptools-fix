@@ -9,6 +9,7 @@ on:
       - 'tools/**'
       - 'scripts/**'
       - 'lkm/**'
+      - 'kernel/patch/**'
       - '.github/workflows/build-y73s-kptools-host.yml'
       - y73s-cred-layout-guards-20261108
 
