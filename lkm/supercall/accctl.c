@@ -31,7 +31,10 @@ static kp_secctx_to_secid_fn_t kp_security_secctx_to_secid_fn;
 extern int security_secctx_to_secid(const char *secdata, u32 seclen, u32 *secid);
 #endif
 
-/* selinux_blob_sizes is hidden data with CONFIG_KALLSYMS_ALL=n. */
+/*
+ * Some vendor kernels backport the LSM blob-offset table. Upstream 4.14.141
+ * predates it and stores the single SELinux cred blob directly at cred->security.
+ */
 struct kp_lsm_blob_sizes {
 	int lbs_cred;
 	int lbs_file;
@@ -45,7 +48,7 @@ struct kp_lsm_blob_sizes {
 static struct kp_lsm_blob_sizes *kp_selinux_blob_sizes;
 static int kp_selinux_cred_offset = -1;
 
-/* struct cred_security_struct { osid, sid, ... }; */
+/* Prefix of upstream 4.14.141 struct task_security_struct: osid, sid. */
 struct kp_task_sec {
 	u32 osid;
 	u32 sid;
