@@ -47,8 +47,15 @@
 		caches_clean_inval_pou(__start, (end));                                  \
 	})
 #else
-#define kp_flush_dcache(start, sz) __flush_dcache_area((void *)(start), (sz))
-#define kp_flush_icache(start, end) __flush_icache_range((start), (end))
+/*
+ * Linux 4.14 declares __flush_dcache_area() but does not EXPORT_SYMBOL it.
+ * Resolve it at runtime so an out-of-tree LKM has no undefined modpost
+ * dependency. flush_icache_range() is the exported ARM64 API on 4.14 and
+ * remains available on the older cache-maintenance path.
+ */
+static void (*kp_flush_dcache_area_fn)(void *addr, size_t len);
+#define kp_flush_dcache(start, sz) kp_flush_dcache_area_fn((void *)(start), (sz))
+#define kp_flush_icache(start, end) flush_icache_range((start), (end))
 #endif
 
 struct cpumask;
@@ -153,6 +160,14 @@ int kp_patch_memory_init(void)
 {
 	kp_patch_init_mm = (struct mm_struct *)kp_resolve_symbol("init_mm");
 	kp_patch_stop_machine = (kp_stop_machine_fn_t)kp_resolve_symbol("stop_machine");
+#if !KP_NEW_DCACHE_FLUSH
+	kp_flush_dcache_area_fn =
+		(void (*)(void *, size_t))kp_resolve_symbol("__flush_dcache_area");
+	if (!kp_flush_dcache_area_fn) {
+		logke("__flush_dcache_area unavailable; refusing unsafe memory patching\\n");
+		return -ENOSYS;
+	}
+#endif
 	if (!kp_patch_init_mm)
 		logkw("failed to resolve init_mm; data (sys_call_table) patch disabled\\n");
 	if (!kp_patch_stop_machine)
