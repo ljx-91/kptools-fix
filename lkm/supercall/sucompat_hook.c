@@ -20,6 +20,7 @@
 #include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/syscalls.h>
+#include <linux/thread_info.h>
 #include <linux/uaccess.h>
 #include <scdefs.h>
 
@@ -42,6 +43,7 @@ static enum kp_sucompat_backend kp_sucompat_backend;
 /* Resolved hook targets are retained for exact teardown. */
 static unsigned long kp_getname_flags_addr;
 static unsigned long kp_prepare_binprm_addr;
+static const char *kp_default_sctx(uid_t uid, char *sctx, size_t sctx_size);
 
 /*
  * A full-size strncpy_from_user() result means no NUL was found in range.
