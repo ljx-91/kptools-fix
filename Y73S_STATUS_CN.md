@@ -2213,3 +2213,50 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 本轮新增了迟到入口的抽象回归模型，并纠正了 Gate 宿主选择：standalone LKM 不能依赖 KPIMG 私有 resident code，当前应评估独立保留的 LKM-owned Gate page。Host audit 和 GCC KPIMG 构建在代码/测试 HEAD `e93dc3e` 上成功；Windows job 的环境准备失败。**没有生产 Gate 修复，也不能宣称 LKM 卸载安全。**
 
 不执行 Fastboot、不刷写、不修改分区、不做真机启动测试。
+
+
+## 71. 2026-11-11：修复 syscall-table Hook 的 compare-restore 与 teardown 错误传播
+
+### 本轮修复
+
+复核 syscall-45 table backend 发现旧撤销路径存在两个问题：kp_syscall_unhook() 对表项执行无条件写回，可能覆盖后来安装的第三方 handler；其返回状态被丢弃，kernelpatch_exit() 仍可能清空回调状态并继续卸载。
+
+已修改：
+- kp_syscall_unhook(nr, expected, orig) 改为返回错误码。
+- 先读取当前表项：已是原 handler 时按幂等成功处理；不是本 LKM 的 handler 时返回 -EBUSY；只有仍是本 LKM handler 时才通过 kp_patch_cmpxchg64() compare-restore，消除 read/restore 之间的覆盖竞态。
+- kp_supercall_uninstall() 改为返回状态；撤销失败时保留 backend、target 和 original callback 状态，不再假装清理成功。
+- kernelpatch_exit() 先撤销外部可达的 supercall 入口，并对错误 fail-stop；再执行 sucompat、manager 与 CFI bypass teardown。
+- syscall-table 安装若返回 -EUCLEAN（批量写入回滚本身不确定），不再尝试另一 Hook backend 后正常返回，而是 fail-stop，避免模块加载器释放仍可能被表项引用的代码。
+- 更新 verify_lkm_hook_runtime_contract.py 与 verify_lkm_kpm_contract.py，检查 compare-restore、错误传播、状态保留和 init/exit 回滚顺序。
+
+### 提交
+
+- e0b03469046587d00aa5d06a8a1686ce83bc7455：syscall table compare-restore
+- b6dee036eb947f2a53f4f35ec6cdb695f19b4aff：checked syscall restore API
+- 94308278e09117535b3fcb2d82eb5d6e837b50ff：supercall teardown 错误传播
+- efe52ab662129cff41f23aa6162021e13c028b0c：supercall API 返回状态
+- 227b420d4a39dbc5b245a66aaba2359dbaf00d48：module exit 检查 supercall teardown
+- a70fc245c0257da6ae229575a0a556959fb449a6：新增 Hook runtime 源码契约
+- 11a301962cce2ac2085b92f18314d67469fa9bc2：修正 init rollback 契约匹配 checked API
+
+### CI
+
+- Host/offline audit run 42876406153，HEAD 11a3019：success；两个 job（LKM/KPM ELF loader source audit、host kptools build）均通过。
+- Y73S GCC 14.2 KPIMG run 42876406161，HEAD 11a3019：success。
+- Windows workflow run 42876405923，HEAD 11a3019：当时 Ubuntu KPIMG job success，Windows job 尚在执行；最终状态待下一轮核对。
+- 早先 HEAD a70fc24 的 Host audit 曾因 verify_lkm_kpm_contract.py 仍期待旧 void cleanup 形式而失败；更新契约后，HEAD 11a3019 的完整 Host audit 已通过。
+
+### 新增 ABI / 生命周期阻塞发现
+
+1. **Gate 还必须处理 SIMD 参数和返回值。** AArch64 PCS 不仅有 x0–x8 和栈参数：浮点/向量参数可通过 v0–v7 传递，HFA/HVA 等返回值也可能位于 v0–v3。此前 440-byte 原型记录只说明保存 x0–x8、x19、LR 和整数返回值；尚未证明它完整保存/恢复 q0–q7 与 SIMD 返回寄存器。该原型不能作为通用 inline Hook Gate 使用。
+2. **KPM 父 LKM 生命周期仍未关闭。** 正常 kernelpatch_exit() 不调用 kp_kpm_exit()；该函数当前只用于“尚未向外发布 KPM loader”的 init rollback。不能简单在 LKM 中最后一次 module_put(THIS_MODULE) 后继续执行清理代码，因为卸载可能与当前 LKM 栈帧并发。需要由真正的 resident return path 或等价的外部生命周期机制完成最后释放。
+3. **pre-reader window 仍未解决。** 本轮只加强 syscall-table backend 的所有权与撤销错误处理，不改变 direct inline Hook branch 目标，也不改变 chain transit。hook() 与 _transitN 仍会进入 LKM text。
+4. **FP Hook 仍是独立 backend。** 当前 LKM Kbuild 不编入 kernel/base/fphook.c，也没有 LKM fp_hook* 调用点；不能把 FP owner/refcount 当作 inline Gate 的保护。
+
+### 结论与验证边界
+
+本轮完成一个独立的生产 teardown 修复：syscall-table backend 现在只 compare-restore 自己安装的 handler，并将撤销失败传播到模块退出路径。Host/offline audit 和 GCC 14.2 KPIMG build 在 HEAD 11a3019 通过。
+
+**Resident Gate 生产实现仍未完成，LKM 整体 rmmod 安全仍未证明。** 没有匹配 Y73s 4.14.141+ KDIR，因此目标 .ko、MODPOST、Module.symvers CRC、Clang 9.0.3 Gate 汇编和设备验证均未完成。Host CI 不替代这些验证。
+
+不执行 Fastboot、不刷写、不修改分区、不做真机启动测试。
