@@ -640,3 +640,62 @@ Thus the Y73s vendor implementation consumes and forwards all three AArch64 argu
 This check also rules out treating the third argument as harmless padding on this target: it is forwarded to the resolved `__cfi_check` callback. Any future shared CFI Gate must preserve x2 exactly.
 
 The generic Clang documentation is useful background only; the original Y73s disassembly is the controlling ABI evidence for this device.
+
+
+### CFI range registry and lifetime audit: what a future KPIMG/LKM bridge must guarantee (2026-11-11)
+
+This pass traced the actual range predicates and LKM KPM registry locking, rather than treating a successful address predicate as a lifetime reference.
+
+#### 1. KPIMG's CFI allowlist is three fixed linker ranges
+
+`kernel/include/common.h` defines `should_cfi_pass()` inputs as:
+- `[_kp_text_start, _kp_text_end)`: KPIMG resident text;
+- `[_kp_hook_start, _kp_hook_end)`: KPIMG hook area;
+- `[_kp_rox_start, _kp_rox_end)`: KPIMG KPM executable arena.
+
+`kernel/kpimg.lds` places the transit sections and KPIMG `.text/.rodata` in `.kp.text`, then lays out KPIMG data separately. The CFI predicate has no dynamic range registry and does not include Linux LKM `THIS_MODULE->core_layout.text_size`, LKM callback trampoline pages, or LKM KPM allocations.
+
+Therefore the existing KPIMG slowpath replacement cannot authorize LKM KPM code, regardless of what the LKM's own `kp_kpm_cfi_allowed_addr()` returns.
+
+#### 2. LKM's KPM range predicate is lock-protected but is not a lifetime pin
+
+`kp_kpm_cfi_allowed_addr()`:
+- returns false unless `kp_kpm_ready` is set;
+- acquires `module_lock` with `spin_lock_irqsave()`;
+- checks each registered KPM's `[start, start + text_size)` interval;
+- releases the lock before returning the boolean;
+- separately checks the callback trampoline page.
+
+No module pointer escapes the locked scan. This is a sound bounded range lookup in isolation, but it only answers “was this address registered during the lookup?” It does not increment `active_calls`, reserve the KPM image, or protect the later indirect branch. The CFI predicate must never be treated as a substitute for the KPM owner's call reference.
+
+#### 3. Existing LKM call paths show the required lifetime pairing
+
+The LKM KPM implementation already uses separate lifetime references:
+- control operations call `kp_module_get()` before entering KPM control callbacks and `kp_module_put()` afterwards;
+- callback owner registration increments persistent `hook_refs`;
+- transit callback execution obtains `active_calls` with `kp_hook_owner_call_get()` and releases it after the callback;
+- `kp_kpm_safe_kallsyms_on_each_symbol()` obtains an owner by callback address before range decisions, then releases it after the kernel iterator returns;
+- unload marks the KPM `UNLOADING`, refuses to free while `active_calls` or `hook_refs` remain, and frees executable memory only after both drain.
+
+The bridge must preserve these references across the complete CFI-checked indirect call. A CFI “allowed” answer without the caller's active owner reference leaves a check/use race.
+
+#### 4. Proposed bridge semantics: immutable provider call + per-call module reference + owner pin
+
+A safe future KPIMG CFI provider call needs all of these properties:
+
+1. KPIMG's resident slowpath obtains the LKM provider through a Linux module symbol lookup that also acquires a reference (candidate: `__symbol_get` for a deliberately exported, versioned provider symbol). Do not cache an unpinned raw LKM function pointer.
+2. The provider is called only while that module reference is held; it performs the LKM registry lookup under `module_lock` and returns only a boolean/range classification, never an internal `struct kp_module *`.
+3. The provider's ABI is fixed-width/versioned, CFI-signature-compatible with the Y73s three-register slowpath environment, and compiled with the required no-sanitize boundary where recursion would otherwise occur.
+4. A positive CFI range result is accepted only when the *calling KPM operation* already holds an `active_calls`/owner reference that pins that exact KPM image until after the indirect call returns. The provider must not pretend to acquire that reference on behalf of an arbitrary CFI check.
+5. On provider lookup failure (LKM absent, GOING, or symbol unavailable), KPIMG must fail closed for LKM KPM ranges and continue normal CFI enforcement. It must not turn “provider absent” into unconditional pass.
+6. LKM teardown must first stop publishing new KPM calls, drain active calls and hook owners, and ensure no KPM image still depends on LKM text or callbacks before its module code can disappear. Only then can provider lookup naturally fail for subsequent checks.
+
+This is a design contract, not implemented code. In particular, `__symbol_get` per CFI check may be too expensive; a persistent provider registration with a resident gate could reduce overhead, but it must include a safe unregister/close/drain protocol that does not itself make ordinary `rmmod` impossible. Do not choose persistent self-pinning as a shortcut.
+
+#### 5. Current fail-closed status and a separate teardown concern
+
+On the Y73s image, LKM's own CFI hook attempt cannot chain over KPIMG's absolute branch. Under `CONFIG_CFI_CLANG`, the LKM init path therefore leaves its KPM loader disabled when the CFI enforcement hook was not installed. This is currently safer than exposing LKM KPM loading without an effective CFI path.
+
+The current `kernelpatch_exit()` does not call `kp_kpm_exit()`; that function is explicitly documented as init-failure-only and assumes the supercall entry was never published. This means the runtime unload contract for a live LKM KPM registry is not yet established by this code path. Before enabling the bridge, audit whether LKM unload is forbidden while KPM images exist, whether all KPMs must be explicitly unloaded, or whether a full KPM shutdown/drain phase must be added. Do not assume the CFI range provider alone makes KPM images safe after LKM teardown.
+
+Status: KPIMG linker ranges, LKM range predicate locking, active-call/owner reference pairing, and current LKM init gating are source-confirmed. The proposed provider contract is design-only. No production code changed; no target KDIR build or device test is claimed.
