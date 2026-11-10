@@ -1777,3 +1777,27 @@ int kp_kpm_init(void)
 	      kp_flush_icache_all_fn, kp_callback_tramp);
 	return 0;
 }
+
+ 
+/* Called only while the LKM init path is still private: the supercall entry
+ * has not been published, so no KPM image or callback can be active. */
+void kp_kpm_exit(void)
+{
+	WRITE_ONCE(kp_kpm_ready, false);
+	if (kp_callback_tramp) {
+		kp_free_exec(kp_callback_tramp, kp_callback_tramp_size);
+		kp_callback_tramp = NULL;
+		kp_callback_tramp_size = 0;
+	}
+	memset(kp_callback_tramp_slots, 0, sizeof(kp_callback_tramp_slots));
+	kp_real_kallsyms_on_each_symbol = NULL;
+	kp_exec_backend = KP_EXEC_BACKEND_NONE;
+	kp_module_alloc = NULL;
+	kp_module_memfree = NULL;
+	kp_execmem_alloc = NULL;
+	kp_execmem_free = NULL;
+	kp_flush_icache_all_fn = NULL;
+	kp_set_memory_x = NULL;
+	kp_set_memory_nx = NULL;
+	kp_kpm_init_mm = NULL;
+}
