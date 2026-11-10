@@ -265,10 +265,8 @@ def main():
             "module CFI allowlist must select the text memory type")
     require(r"return\s+THIS_MODULE->core_layout\.base", module_target,
             "legacy CFI allowlist must use the bounded executable text range")
-    require(r"MOD_MEM_NUM_TYPES|core_layout\.size|init_layout", module_target,
-            "module CFI allowlist must not trust data or init allocation ranges") if re.search(
-                r"MOD_MEM_NUM_TYPES|core_layout\.size|init_layout", module_target, re.S
-            ) else None
+    if re.search(r"MOD_MEM_NUM_TYPES|core_layout\.size|init_layout", module_target):
+        raise AssertionError("module CFI allowlist must not trust data or init allocation ranges")
 
     cfi_exit = body(secpass, "int kp_bypass_kcfi_exit(void)\n{")
     require(r"unhook_checked\(\(void\s*\*\)kp_find_check_fn_addr\)",
