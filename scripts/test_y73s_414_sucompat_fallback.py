@@ -107,7 +107,6 @@ static struct file *open_exec_stub(const char *path)
 }
 static struct file *(*kp_open_exec)(const char *name) = open_exec_stub;
 static void fput(struct file *file) { (void)file; fput_calls++; }
-static struct thread_info *current_thread_info(void) { return &ti; }
 static struct pt_regs *task_pt_regs(void *task) { (void)task; return &test_regs; }
 static long copy_from_user(void *to, const void *from, size_t n)
 {
