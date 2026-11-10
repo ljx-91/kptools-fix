@@ -226,3 +226,48 @@ Therefore do not assume KPIMG and LKM simply hook the same function body. The li
 4. Re-audit install/uninstall order and trampoline composition after the target is corrected. Do not infer safety merely because the two entry addresses differ.
 
 This is still a source/symbol audit; no Y73S runtime trace, vendor-KDIR build, or device test has been performed. No production hook code was changed in this pass.
+
+
+### Definitive closure: syscall-45 is the custom supercall and resolves to a 4-byte CFI stub (2026-11-11)
+
+The previously conditional mapping is now proven from the selected branch and the original Y73S boot:
+
+1. `kernel/patch/include/uapi/scdefs.h` defines `__NR_supercall 45`.
+2. `kernel/patch/common/supercall.c` installs the KPIMG handler with `hook_syscalln_override(__NR_supercall, 6, before, 0, 0)`.
+3. `kernel/patch/common/sysname.c` initializes `syscall_name_table[45]` as `"sys_truncate"`.
+4. `kernel/patch/common/syscall.c:syscalln_name_addr()` tries, in order, `__arm64_sys_truncate.cfi_jt`, `__arm64_sys_truncate.cfi`, `__arm64_sys_truncate`, `sys_truncate.cfi_jt`, `sys_truncate.cfi`, and finally `sys_truncate`. The Y73S KALLSYMS dump has none of the first five names and has the plain `sys_truncate` alias at Image offset `0x019305cc`.
+5. The Y73S KALLSYMS dump has no `sys_call_table` data symbol (the target config has `CONFIG_KALLSYMS_ALL=n`). The reviewed `hook_syscalln_override()` path therefore falls back to `inline_wrap_syscalln()`, which uses the name resolver above rather than a syscall-table slot.
+6. The LKM's own supercall hook deliberately resolves `SyS_truncate.cfi` at Image offset `0x003cd6b8`; it does not target the public alias.
+
+The original `boot.img` was materialized from the user's Library and its Android boot header parsed. The gzip kernel payload contains a valid AArch64 Image of 47,517,708 bytes. The original Image bytes were disassembled at both symbol locations:
+
+| Image offset | Word | AArch64 instruction | Destination |
+|---|---:|---|---:|
+| `0x019305cc` | `0x17aa743b` | `B` | `0x003cd6b8` |
+| `0x019305d0` | `0x17aa7474` | `B` | `0x003cd7a0` |
+| `0x019305d4` | `0x17aa74ad` | `B` | `0x003cd888` |
+| `0x019305d8` | `0x17aa753d` | `B` | `0x003cdacc` |
+| `0x019305dc` | `0x17aa7657` | `B` | `0x003cdf38` |
+| `0x019305e0` | `0x17aa7740` | `B` | `0x003ce2e0` |
+
+The first four entries are the four adjacent aliases already identified in the symbol dump. KPIMG `branch_absolute()` emits four AArch64 instructions (16 bytes), and `hook_install()` writes those four words at the resolved target. Consequently the current KPIMG syscall-45 inline path overwrites all four adjacent CFI jump-table entries beginning at `0x019305cc`. This is no longer a conditional risk: it is a statically proven out-of-bounds patch relative to the intended single 4-byte syscall entry on this Y73S boot.
+
+### Why a one-line symbol-name correction is not a safe complete fix
+
+Changing `syscall_name_table[45]` from `"sys_truncate"` to `"SyS_truncate"` would make KPIMG resolve the canonical `SyS_truncate.cfi` implementation body. However, the LKM already installs its own independent inline hook at that same body address. KPIMG and LKM use separate Hook Engine registries, locks, trampoline allocations, and patch backends. Making the addresses equal without first consolidating ownership would convert the current adjacent-entry overwrite into an uncoordinated same-entry double-hook problem; it is not an acceptable stand-alone patch.
+
+The safe architectural choices are therefore:
+
+- Establish one owner for syscall 45 and a shared, explicitly versioned callback/dispatch ABI so the other component registers with that owner; or
+- Remove one of the two syscall-45 handlers and deliberately route all required commands through the remaining handler, after proving that the removed side's KPM and SU operations remain available.
+
+Do not simply rename the table entry, increase trampoline size, or patch only the first instruction without a proven branch-island/relocation design. Do not write Gate assembly on top of the current dual-owner arrangement.
+
+### Updated status
+
+- KPIMG syscall-45 target resolution to `0x019305cc`: **confirmed from source + Y73S KALLSYMS**.
+- Original bytes at `0x019305cc..0x019305e0`: **disassembled and confirmed**.
+- Four-entry overwrite from the 16-byte absolute branch: **confirmed from source + target bytes**.
+- LKM target `SyS_truncate.cfi` at `0x003cd6b8`: **confirmed**.
+- Safe single-owner syscall-45 design: **not yet selected/implemented**.
+- No production hook code was changed. No vendor-KDIR build, runtime trace, or device test was performed.
