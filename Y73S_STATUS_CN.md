@@ -564,3 +564,40 @@
 3. 只有取得匹配的 KDIR + .config + 生成头文件 + Module.symvers 后，才执行 make V=1 dry-run 和真实 kernelpatch.ko 编译/modpost。
 
 全程只读 GitHub / 文档 / 本地离线文件；未连接设备，未执行 Fastboot、9008、刷写、boot/vbmeta 修改或分区写入。
+
+
+## 14. 2026-11-10：Clang CFI bypass 失败时关闭 KPM（源码修复，待 CI）
+
+### 问题
+
+Y73s 原始 Boot 已确认启用 CONFIG_CFI_CLANG=y 与 CONFIG_CFI_CLANG_SHADOW=y。KPM 映像由 LKM 自己分配和管理，不经过 Linux 原生模块加载器，因此不会自动获得原生模块加载流程中的 CFI shadow 注册。当前 LKM 依赖 kp_bypass_kcfi() 对目标内核 CFI failure/slowpath 入口安装 Hook，允许经过生命周期管理的 KPM 回调地址继续执行。
+
+旧实现有两个缺口：
+
+- 多个 Hook 安装结果共用同一个 rc，后续 Hook 的结果会覆盖前面失败，导致函数可能错误返回成功。
+- CFI bypass 安装失败后，kernelpatch_init() 只记录警告，仍继续调用 kp_kpm_init()，使 KPM 加载入口保持开放。
+
+### 修复
+
+- kp_bypass_kcfi() 分别检查 find_check_fn、report_cfi_failure 和 __cfi_slowpath_diag / __cfi_slowpath 的 Hook 结果，不再让后续结果覆盖早先错误。
+- 只有实际成功安装 report_cfi_failure 或 CFI slowpath Hook，才认定 enforcing bypass 已就绪。
+- 在 CONFIG_CFI_CLANG=y 时，如果没有任何 enforcing bypass 成功安装，则返回错误。
+- 任何部分安装失败都会调用 kp_bypass_kcfi_exit() 回滚已经成功安装的 Hook，避免留下指向失败初始化路径的分支。
+- kernelpatch_init() 在 CONFIG_CFI_CLANG=y 且 bypass 初始化失败时不再调用 kp_kpm_init()；KPM 管理 supercall 保持未初始化并返回 -ENOSYS。LKM 其余不依赖 KPM 的功能仍可继续初始化。
+- scripts/verify_lkm_kpm_contract.py 增加 CFI Hook 结果、失败回滚和 KPM 初始化门控契约。
+
+### 变更提交
+
+- 8f6956c：跟踪 CFI Hook 安装结果并在部分失败时回滚。
+- a8657b4：目标启用 Clang CFI 但 bypass 不可用时关闭 KPM 初始化。
+- d27adf0：增加源码契约，防止失败处理回归。
+- 7d3edec、43313de：修正新增诊断字符串的转义，保持 C 源码换行格式。
+
+### 复查与状态
+
+- 已重新从目标分支读取 secpass.c、core/init.c 和 verify_lkm_kpm_contract.py。
+- 对 enforcing hook 跟踪、CONFIG_CFI_CLANG 必需条件、部分安装回滚、错误保留、KPM 禁用门控和成功路径初始化执行了 7 项独立结构检查，7/7 符合预期。
+- 这些是源码结构检查，不是 Clang 9.0.3 目标 KDIR 编译，也不是运行时 CFI 测试。对应 GitHub Actions 尚未取得最终结果，当前标记为待 CI。
+- 尚未修改 Boot、KPIMG、vbmeta 或任何设备分区；未连接设备，未执行 Fastboot、9008 或真机启动测试。
+
+下一步：等待并检查本次 LKM 源码契约 CI；随后继续审计目标 4.14.141 CFI shadow ABI、LTO module link 和 MODVERSIONS CRC。未取得精确 KDIR 前，不把该修复描述为真机兼容已验证。
