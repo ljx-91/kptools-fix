@@ -1925,6 +1925,6 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 ### 回归检查
 
 - 扩展 scripts/verify_y73s_syscall45_contract.py，增加 KPIMG 四字绝对分支、LKM literal-in-overwrite 拒绝、LKM init unwind 三项契约。
-- 新增契约已推送；本次记录生成时等待最新 Host CI 对新增断言的执行结果。
+- 新增契约已推送；Host Run 42866139367（提交 d87dd78）success，新增的 KPIMG 绝对分支、LKM literal-overwrite 拒绝和 LKM init unwind 三项检查均通过；syscall-45 专项总计 11/11 通过。Y73S GCC 14.2 KPIMG Run 42866138775 亦为 success。
 - 这仍是原始 Boot 离线反汇编、源码控制流和静态契约证据；不替代目标 KDIR 编译或设备运行验证。
 - 不使用 Fastboot，不刷写、不修改分区，不执行真机启动测试。
