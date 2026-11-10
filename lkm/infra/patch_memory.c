@@ -20,9 +20,11 @@
 #include <linux/uaccess.h>
 #include <linux/string.h>
 #include <linux/preempt.h>
+#include <linux/vmalloc.h>
 #include <asm/irqflags.h>
 #include <asm/cacheflush.h>
 #include <asm/fixmap.h>
+#include <asm/memory.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/barrier.h>
@@ -83,6 +85,22 @@ static struct mm_struct *kp_patch_init_mm;
  * another CPU. */
 static DEFINE_RAW_SPINLOCK(kp_fixmap_patch_lock);
 
+/*
+ * With CONFIG_KALLSYMS_ALL=n, init_mm is not available by name on Y73s.
+ * Text patching still needs to work for the kernel image and linear map.
+ * ARM64 virt_to_phys() handles both via kimage_voffset/PHYS_OFFSET; reject
+ * vmalloc and module_alloc ranges because they are not direct mappings.
+ */
+static unsigned long kp_phys_from_virt_no_init_mm(unsigned long addr)
+{
+	if ((addr >= MODULES_VADDR && addr < MODULES_END) ||
+	    is_vmalloc_addr((void *)addr))
+		return 0;
+	if (addr < KIMAGE_VADDR && addr < PAGE_OFFSET)
+		return 0;
+	return (unsigned long)virt_to_phys((void *)addr);
+}
+
 __attribute__((no_sanitize("cfi")))
 static unsigned long kp_phys_from_virt(unsigned long addr)
 {
@@ -94,7 +112,7 @@ static unsigned long kp_phys_from_virt(unsigned long addr)
 	struct mm_struct *mm = kp_patch_init_mm;
 
 	if (!mm)
-		return 0;
+		return kp_phys_from_virt_no_init_mm(addr);
 	pgd = pgd_offset(mm, addr);
 	if (pgd_none(*pgd) || pgd_bad(*pgd))
 		return 0;
