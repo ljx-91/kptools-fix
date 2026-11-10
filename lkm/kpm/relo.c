@@ -149,12 +149,13 @@ static int reloc_insn_imm(enum kp_aarch64_reloc_op op, void *place, u64 val, int
 	imm_mask = (BIT(lsb + len) - 1) >> lsb;
 	imm = sval & imm_mask;
 	insn = kp_aarch64_insn_encode_immediate(imm_type, insn, imm);
-	*(u32 *)place = insn;
 
 	sval = (s64)(sval & ~(imm_mask >> 1)) >> (len - 1);
 	if ((u64)(sval + 1) >= 2)
 		return -ERANGE;
 
+	/* Commit the instruction only after alignment and range checks pass. */
+	*(u32 *)place = insn;
 	return 0;
 }
 
