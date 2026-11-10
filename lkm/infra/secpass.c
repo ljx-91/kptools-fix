@@ -125,7 +125,7 @@ static unsigned long kp_find_check_fn_addr;
 static unsigned long kp_report_cfi_failure_addr;
 static unsigned long kp_cfi_slowpath_addr;
 
-void kp_bypass_kcfi_exit(void);
+int kp_bypass_kcfi_exit(void);
 
 int kp_bypass_kcfi(void)
 {
@@ -187,9 +187,15 @@ int kp_bypass_kcfi(void)
 #endif
 
 	if (rc) {
-		/* Do not leave successful partial hooks pointing at an init routine
-		 * that is about to fail or allow a partially protected KPM runtime. */
-		kp_bypass_kcfi_exit();
+		int cleanup_rc;
+
+		/* A patch may be uncertain even when hook() reports failure. Track
+		 * every attempted address and verify that cleanup really restored it. */
+		cleanup_rc = kp_bypass_kcfi_exit();
+		if (cleanup_rc) {
+			logke("CFI hook rollback failed: %d\n", cleanup_rc);
+			return cleanup_rc;
+		}
 		return rc;
 	}
 
@@ -199,22 +205,44 @@ int kp_bypass_kcfi(void)
 
 /* Remove the CFI bypass hooks so the module can be unloaded without leaving
  * branches into freed module memory (IABT). Call last on exit. */
-void kp_bypass_kcfi_exit(void)
+int kp_bypass_kcfi_exit(void)
 {
+	int rc = 0;
+	int unhook_rc;
+
 	if (kp_find_check_fn_addr) {
-		unhook((void *)kp_find_check_fn_addr);
-		kp_find_check_fn_addr = 0;
-		__backup_find_check_fn = NULL;
+		unhook_rc = unhook_checked((void *)kp_find_check_fn_addr);
+		if (!unhook_rc || unhook_rc == -ENOENT) {
+			kp_find_check_fn_addr = 0;
+			__backup_find_check_fn = NULL;
+		} else {
+			logke("failed to remove find_check_fn hook: %d\n", unhook_rc);
+			rc = unhook_rc;
+		}
 	}
 	if (kp_report_cfi_failure_addr) {
-		unhook((void *)kp_report_cfi_failure_addr);
-		kp_report_cfi_failure_addr = 0;
-		__backup_report_cfi_failure = NULL;
+		unhook_rc = unhook_checked((void *)kp_report_cfi_failure_addr);
+		if (!unhook_rc || unhook_rc == -ENOENT) {
+			kp_report_cfi_failure_addr = 0;
+			__backup_report_cfi_failure = NULL;
+		} else {
+			logke("failed to remove report_cfi_failure hook: %d\n", unhook_rc);
+			if (!rc)
+				rc = unhook_rc;
+		}
 	}
 	if (kp_cfi_slowpath_addr) {
-		unhook((void *)kp_cfi_slowpath_addr);
-		kp_cfi_slowpath_addr = 0;
-		__backup_cfi_slowpath = NULL;
+		unhook_rc = unhook_checked((void *)kp_cfi_slowpath_addr);
+		if (!unhook_rc || unhook_rc == -ENOENT) {
+			kp_cfi_slowpath_addr = 0;
+			__backup_cfi_slowpath = NULL;
+		} else {
+			logke("failed to remove CFI slowpath hook: %d\n", unhook_rc);
+			if (!rc)
+				rc = unhook_rc;
+		}
 	}
-	logki("CFI bypass unhooked\n");
+	if (!rc)
+		logki("CFI bypass unhooked\n");
+	return rc;
 }
