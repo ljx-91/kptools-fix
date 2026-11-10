@@ -71,7 +71,6 @@ static void (*kp_execmem_free)(void *ptr);
 static void *(*kp_execmem_alloc)(int type, size_t size);
 static void (*kp_execmem_free)(void *ptr);
 #endif
-static void (*kp_flush_icache_all_fn)(void);
 static int (*kp_set_memory_x)(unsigned long addr, int numpages);
 static int (*kp_set_memory_nx)(unsigned long addr, int numpages);
 
@@ -86,15 +85,22 @@ enum kp_exec_backend {
 };
 static enum kp_exec_backend kp_exec_backend;
 
-/* Clear the Guarded-Page bit (BTI enable), Privileged-eXecute-Never and
- * User-eXecute-Never. Fail closed if any page cannot be inspected or made
- * executable: the KPM must never enter init on an NX/BTI-incompatible image. */
+/* Kernel text must be executable at EL1 (PXN clear), remain non-executable
+ * at EL0 (UXN set), and have the BTI Guarded-Page bit clear. */
 static int kp_update_bti_gp(unsigned long base, unsigned long size, bool executable)
 {
 	unsigned long addr, end;
 
-	if (!kp_kpm_init_mm || !base || !size || size > ULONG_MAX - base)
+	if (!base || !size || size > ULONG_MAX - base)
+		return -EINVAL;
+	if (!kp_kpm_init_mm) {
+#if !defined(PTE_GP)
+		if (kp_exec_backend == KP_EXEC_BACKEND_MODULE ||
+		    kp_exec_backend == KP_EXEC_BACKEND_EXECMEM)
+			return 0;
+#endif
 		return -ENOSYS;
+	}
 	end = base + size;
 	for (addr = base; addr < end; addr += PAGE_SIZE) {
 		pgd_t *pgd = pgd_offset(kp_kpm_init_mm, addr);
@@ -104,6 +110,10 @@ static int kp_update_bti_gp(unsigned long base, unsigned long size, bool executa
 		pte_t *pte;
 		spinlock_t *ptl;
 		pteval_t v;
+		unsigned long exec_deny_mask =
+			KP_LKM_PTE_PXN | KP_LKM_PTE_GP;
+		unsigned long nx_mask =
+			exec_deny_mask | KP_LKM_PTE_UXN;
 
 		if (pgd_none(*pgd) || pgd_bad(*pgd))
 			return -EFAULT;
@@ -124,15 +134,17 @@ static int kp_update_bti_gp(unsigned long base, unsigned long size, bool executa
 			return -EFAULT;
 		}
 		v = pte_val(*pte);
-		if (executable)
-			v &= ~(KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP);
-		else
-			v |= KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP;
+		if (executable) {
+			v &= ~exec_deny_mask;
+			v |= KP_LKM_PTE_UXN;
+		} else {
+			v |= nx_mask;
+		}
 		set_pte_at(kp_kpm_init_mm, addr, pte, __pte(v));
 		if (executable ?
-		    (pte_val(*pte) & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) :
-		    ((pte_val(*pte) & (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP)) !=
-		     (KP_LKM_PTE_PXN | KP_LKM_PTE_UXN | KP_LKM_PTE_GP))) {
+		    ((pte_val(*pte) & exec_deny_mask) ||
+		     !(pte_val(*pte) & KP_LKM_PTE_UXN)) :
+		    ((pte_val(*pte) & nx_mask) != nx_mask)) {
 			spin_unlock(ptl);
 			return -EACCES;
 		}
@@ -207,15 +219,12 @@ static void kp_free_exec(void *region, unsigned long size)
 __attribute__((no_sanitize("cfi")))
 static void kp_flush_kpm_icache(void *start, size_t size)
 {
-	/* flush_icache_all() performs the architecture's inner-shareable
-	 * instruction-cache invalidation. Local-only invalidation is insufficient:
-	 * another CPU may execute freshly written KPM or trampoline code. */
-	(void)start;
-	(void)size;
-	dsb(ishst);
-	kp_flush_icache_all_fn();
-	dsb(ish);
-	isb();
+	unsigned long base = (unsigned long)start;
+
+	if (!start || !size || size > ULONG_MAX - base)
+		return;
+	/* The exported ARM64 range helper performs the required D/I cache sync. */
+	flush_icache_range(base, base + size);
 }
 
 __attribute__((no_sanitize("cfi")))
@@ -1738,37 +1747,41 @@ int kp_kpm_init(void)
 	spin_lock_init(&module_lock);
 	kp_kpm_symbols_init();
 
-	/* Resolve matched allocator/free pairs. Never free through a different
-	 * backend, and require init_mm to verify executable and BTI PTE state. */
+	/* Resolve matched allocator/free pairs. module_alloc/execmem_alloc
+	 * provide executable module-text mappings; on 4.14 the PTE_GP bit and
+	 * init_mm symbol are absent from the runtime symbol view. */
 	kp_module_alloc = (void *(*)(unsigned long))kallsyms_lookup_name("module_alloc");
 	kp_module_memfree = (void (*)(void *))kallsyms_lookup_name("module_memfree");
 	kp_execmem_alloc = (void *)kallsyms_lookup_name("execmem_alloc");
 	kp_execmem_free = (void (*)(void *))kallsyms_lookup_name("execmem_free");
-	kp_flush_icache_all_fn = (void (*)(void))kallsyms_lookup_name("flush_icache_all");
 	kp_set_memory_x = (int (*)(unsigned long, int))kallsyms_lookup_name("set_memory_x");
 	kp_set_memory_nx = (int (*)(unsigned long, int))kallsyms_lookup_name("set_memory_nx");
 	kp_kpm_init_mm = (struct mm_struct *)kallsyms_lookup_name("init_mm");
 	logki("kpm runtime: module_alloc=%px execmem_alloc=%px set_memory_x=%px init_mm=%px\n",
 	      kp_module_alloc, kp_execmem_alloc, kp_set_memory_x, kp_kpm_init_mm);
 
-	if (!kp_kpm_init_mm) {
-		logke("init_mm unavailable; cannot verify KPM executable permissions\n");
-		return -ENOSYS;
-	}
-	if (!kp_flush_icache_all_fn) {
-		logke("flush_icache_all unavailable; cannot safely publish executable KPM code\n");
-		return -ENOSYS;
-	}
 	if (kp_module_alloc && kp_module_memfree)
 		kp_exec_backend = KP_EXEC_BACKEND_MODULE;
 	else if (kp_execmem_alloc && kp_execmem_free)
 		kp_exec_backend = KP_EXEC_BACKEND_EXECMEM;
-	else if (kp_set_memory_x)
+	else if (kp_set_memory_x && kp_set_memory_nx)
 		kp_exec_backend = KP_EXEC_BACKEND_VMALLOC;
 	else {
 		logke("no matched executable-memory allocator/free backend\n");
 		return -ENOSYS;
 	}
+#if defined(PTE_GP)
+	if (!kp_kpm_init_mm) {
+		logke("init_mm unavailable; cannot verify BTI guarded KPM pages\n");
+		return -ENOSYS;
+	}
+#else
+	if (!kp_kpm_init_mm && kp_exec_backend != KP_EXEC_BACKEND_MODULE &&
+	    kp_exec_backend != KP_EXEC_BACKEND_EXECMEM) {
+		logke("init_mm unavailable and no executable module allocator\n");
+		return -ENOSYS;
+	}
+#endif
 
 	/* One executable page holds per-call BTI-C trampolines. If its PTEs
 	 * cannot be verified, keep kallsyms callbacks disabled rather than
@@ -1797,8 +1810,8 @@ int kp_kpm_init(void)
 		(kp_kallsyms_on_each_symbol_t)kallsyms_lookup_name("kallsyms_on_each_symbol");
 	WRITE_ONCE(kp_kpm_ready, true);
 
-	logki("kpm loader ready (module_alloc=%px flush_icache_all=%px tramp=%px)\n", kp_module_alloc,
-	      kp_flush_icache_all_fn, kp_callback_tramp);
+	logki("kpm loader ready (backend=%d module_alloc=%px tramp=%px)\n",
+	      kp_exec_backend, kp_module_alloc, kp_callback_tramp);
 	return 0;
 }
 
@@ -1820,7 +1833,6 @@ void kp_kpm_exit(void)
 	kp_module_memfree = NULL;
 	kp_execmem_alloc = NULL;
 	kp_execmem_free = NULL;
-	kp_flush_icache_all_fn = NULL;
 	kp_set_memory_x = NULL;
 	kp_set_memory_nx = NULL;
 	kp_kpm_init_mm = NULL;
