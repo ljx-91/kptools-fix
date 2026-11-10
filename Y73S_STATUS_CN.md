@@ -816,3 +816,23 @@ android-trusty-4.14 的 add_module_to_shadow() 只登记 core_layout.base 到 co
 - 此项目前完成了代码与 verifier 的静态一致性复核；新提交触发的 CI 仍需等待最终结果。
 - 这不是实际执行内核 loader 的 ELF fixture 测试，也不等同于真实 KPM 加载验证。
 - Y73s 精确 4.14.141 KDIR、Clang 9.0.3 + LLD 9.0.3 LTO/MODVERSIONS 构建以及真机运行仍未验证。
+
+
+## 25. AArch64 指令重定位低位对齐检查（2026-11-10）
+
+继续复核 RELA 的指令重定位时发现：`reloc_insn_imm()` 会按 relocation 类型右移 `lsb` 位后编码立即数字段，但此前没有验证被丢弃的低位是否为零。这会把未对齐的 PC-relative 分支位移或缩放 load/store 地址静默向下截断，产生错误目标地址/位移，而不是拒绝不合法的重定位表达式。
+
+已同时修复 LKM KPM loader 与 KPIMG loader：
+- 在右移和编码前检查 `(u64)sval & ((1ULL << lsb) - 1)`。
+- 低位非零时返回 `-ENOEXEC`，由现有 RELA 事务回滚路径恢复目标 section。
+- 对 `lsb == 0` 的 ADR/ADD 等未缩放字段不增加额外约束。
+- 对 branch/conditional branch/literal load 的 4-byte 位移以及 LD/ST scaled immediate 的自然对齐统一生效。
+
+提交：
+- `74479e10f04a8d366a817a2c5e74b2eb447c83ff`：LKM 对齐检查。
+- `a2b2d8560fe1159291e41de82c7bcc8308ea1324`：KPIMG 对齐检查。
+- `3b9082560d70c19daa9e93d6d11a6fabde7bc62c`、`a5a7f8b52db1e89c782420d2262df8b1df13f981`：两套 loader 的回归契约。
+
+验证边界：
+- 本轮修复针对 relocation 表达式中被移除的低位，避免静默截断；静态 verifier 和新 CI 仍需验证。
+- 尚未使用实际 AArch64 ELF fixture 执行 relocation 函数，也没有真实 KPM 加载或真机运行结果。
