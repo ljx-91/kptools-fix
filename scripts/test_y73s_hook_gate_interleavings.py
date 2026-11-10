@@ -67,7 +67,15 @@ def advance_entrant(state, index):
     item = state.entrants[index]
     entrants = list(state.entrants)
 
-    if item.step == "load":
+    if item.step == "stub":
+        # The branch was fetched before teardown but this CPU has not executed
+        # the first resident-Gate instruction yet.
+        if state.gate & CLOSED:
+            entrants[index] = replace(item, step="done", fallback=True)
+        else:
+            entrants[index] = replace(item, step="load")
+        next_state = replace(state, entrants=tuple(entrants))
+    elif item.step == "load":
         if state.gate & CLOSED:
             entrants[index] = replace(item, step="done", fallback=True)
             next_state = replace(state, entrants=tuple(entrants))
@@ -215,18 +223,21 @@ def test_delayed_branch_arrival_after_unload_uses_retained_fallback():
         origin_retained=True,
     )
     check_invariants(state)
-    late = state.entrants[0]
 
-    # The first Gate instruction observes CLOSED. It must branch to the
-    # retained original trampoline without reading any LKM/module pointer.
-    assert state.gate & CLOSED
-    assert state.gate_code_resident
-    assert state.origin_retained
-    late = replace(late, step="done", fallback=True)
-    assert late.fallback
+    # Execute the delayed entrant's first Gate instruction after unload.
+    next_state = advance_entrant(state, 0)
+    assert next_state is not None
+    late = next_state.entrants[0]
+
+    # It must branch to the retained original trampoline without entering
+    # LKM text or acquiring/reading an LKM module reference.
+    assert next_state.gate & CLOSED
+    assert next_state.gate_code_resident
+    assert next_state.origin_retained
+    assert late.step == "done" and late.fallback
     assert not late.token and not late.module_ref and not late.active
-    assert state.module_refs == 0
-    assert state.active_calls == 0
+    assert next_state.module_refs == 0
+    assert next_state.active_calls == 0
 
 
 if __name__ == "__main__":
