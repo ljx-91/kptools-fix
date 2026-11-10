@@ -1842,3 +1842,23 @@ KPIMG metadata parser 的新增测试现已真实接入 CI，并在修复测试�
 Gate 方案必须先明确 syscall 45 的唯一常驻分发 owner，并为另一组件提供显式、版本化注册 ABI；或者移除其中一套竞争 handler。不能把另一镜像里的 callback 当成当前 Hook Engine 的 chain 项。
 
 状态：本轮仅追加审计文档，未修改生产代码。Gate 未实现，普通 LKM 卸载安全仍未建立。
+
+## 62. 2026-11-11：Y73s syscall 45 CFI 跳转表与实现体地址交叉核对
+
+从资料库原始 Y73s KALLSYMS 日志直接确认：
+
+- `SyS_truncate.cfi` 实现体：Image offset `0x003cd6b8`。
+- `SyS_truncate` / `sys_truncate` 普通别名：Image offset `0x019305cc`。
+- 相邻 4 字节别名：`compat_SyS_truncate`=`0x019305d0`、`SyS_ftruncate`=`0x019305d4`、`compat_SyS_ftruncate`=`0x019305d8`。
+
+LKM 明确选择 `SyS_truncate.cfi`，并注释说明普通 `sys_truncate` 是 4 字节 CFI jump-table stub，不能按普通函数 prologue 覆盖。
+
+KPIMG `syscalln_name_addr()` 对 syscall-name table 中的名字按 `__arm64_`/空前缀、`.cfi_jt`/`.cfi`/空后缀顺序解析。如果 native syscall 45 表项名为预期的 `sys_truncate`，Y73s KALLSYMS 中不存在 `__arm64_sys_truncate`、`sys_truncate.cfi_jt`、`sys_truncate.cfi`，最后会回退到 `sys_truncate` 普通别名 `0x019305cc`。目前尚未找到 KPIMG syscall-name table 的实际初始化文件，因此“表项名为 sys_truncate”仍是高置信条件判断，不冒充已完全证明。
+
+若上述映射成立，风险严重：KPIMG `branch_absolute()` 产生 4 条指令，`hook_install()` 会写入 4 个 32-bit words，即从 `0x019305cc` 起覆盖 16 字节，范围同时跨过 `sys_truncate`、`compat_SyS_truncate`、`sys_ftruncate`、`compat_SyS_ftruncate` 四个相邻 CFI 入口。`hook_prepare()` 还会从目标起始位置读取六条指令。此行为正是 LKM 代码注释明确规避的邻接 CFI 表项破坏。
+
+因此不能简单描述成 KPIMG/LKM hook 同一函数体。当前更可能是 KPIMG hook CFI jump-table stub、LKM hook `.cfi` 实现体；两者可能串行，但 KPIMG 的 16 字节写入可能破坏邻近入口。KALLSYMS 只能确认符号地址，不能证明实际 branch 链。
+
+下一步：定位 KPIMG syscall-name table 的 native 45 号表项；对原始 boot Image 的 `0x019305cc..0x019305e0` 和 `0x003cd6b8` 做反汇编；若确认 KPIMG 命中 4 字节 stub，先修 resolver/表项选择或移除竞争 handler，并增加拒绝 4-byte CFI stub 的回归检查，再重新审计安装/卸载链。
+
+本轮只更新审计文档，未修改生产代码；无目标运行时 trace、vendor KDIR 编译或真机测试。
