@@ -1997,3 +1997,12 @@ c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5；
 - hook() 直接替换、hook_wrap() 链式入口和 secpass/manager/sucompat 的所有 Hook 都必须迁移到此入口；只迁移 syscall 45 或只迁移 hook_wrap 都不构成完整修复。
 
 该布局仍是待实现设计；在精确 Y73s KDIR 下完成汇编、结构体偏移、Clang 9.0.3 编译与 AArch64 ABI 验证之前，不修改生产 Hook 入口。
+
+
+### Gate AArch64 汇编原型（本地实验，未进入分支）
+
+- 使用独立描述符布局做了一个 position-independent AArch64 Gate 原型；保存 x0-x8、x19、LR 和 x0/x1 返回值，支持 9-12 个参数的栈参数复制。
+- 原型按 closed/count 64-bit 状态使用 LDAXR/STLXR 获取与释放 token；成功后通过描述符中的 try_module_get/module_put 指针保护 LKM callback，失败/关闭路径只调用 retained original trampoline。
+- Gate token 在 closed 状态降为 0 时调用 __wake_up（TASK_NORMAL=3）唤醒卸载等待者。
+- Clang 17 AArch64 汇编结果为 440 bytes，ELF relocation table 为空；这是代码位置无关性的初步证据。
+- 该原型没有目标 hook_t 结构体静态偏移断言，没有与 Clang 9.0.3/KDIR 链接，也没有 QEMU/真机执行；不能视为可用 Gate，更没有提交到生产源码。
