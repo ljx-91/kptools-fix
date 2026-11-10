@@ -284,12 +284,15 @@ static int kp_hook_prepare_binprm(void)
 	}
 
 	logki("sucompat: prepare_binprm at %px\n", (void *)addr);
-	if (hook_wrap1((void *)addr, kp_before_prepare_binprm,
-		       kp_after_prepare_binprm, 0))
-		return -EIO;
+	/*
+	 * Record the target before patching: hook_wrap1() can return
+	 * -HOOK_PATCH_UNCERTAIN after publishing a live chain. Init rollback
+	 * must still know which entry to retire before the LKM image is freed.
+	 */
 	kp_prepare_binprm_addr = addr;
 	kp_sucompat_backend = KP_SUCOMPAT_BACKEND_BINPRM;
-	return 0;
+	return hook_wrap1((void *)addr, kp_before_prepare_binprm,
+			  kp_after_prepare_binprm, 0);
 }
 
 /* ---- getname_flags path-probe redirect -------------------------------- */
@@ -441,23 +444,42 @@ int kp_sucompat_hook_init(void)
 	return kp_hook_prepare_binprm();
 }
 
-void kp_sucompat_hook_exit(void)
+int kp_sucompat_hook_exit(void)
 {
+	int rc = 0;
+	int unhook_rc;
+
 	if (kp_sucompat_backend == KP_SUCOMPAT_BACKEND_SYSCALL) {
 		kp_syscall_unhook(KP_EXECVE_NR, kp_orig_execve);
 		kp_orig_execve = NULL;
+		kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
 	} else if (kp_sucompat_backend == KP_SUCOMPAT_BACKEND_BINPRM &&
 		   kp_prepare_binprm_addr) {
-		hook_unwrap((void *)kp_prepare_binprm_addr,
-			    kp_before_prepare_binprm, kp_after_prepare_binprm);
-		kp_prepare_binprm_addr = 0;
+		unhook_rc = hook_unwrap_remove((void *)kp_prepare_binprm_addr,
+					       kp_before_prepare_binprm,
+					       kp_after_prepare_binprm, 1);
+		if (!unhook_rc || unhook_rc == -ENOENT) {
+			kp_prepare_binprm_addr = 0;
+			kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
+		} else {
+			logke("sucompat: prepare_binprm hook is still live: %d\\n",
+			      unhook_rc);
+			rc = unhook_rc;
+		}
 	}
-	kp_sucompat_backend = KP_SUCOMPAT_BACKEND_NONE;
 
 	if (kp_getname_flags_addr) {
-		/* Installed as hook_wrap3(addr, 0, kp_after_getname_flags, 0); pass the
-		 * same (before, after) pair to unwrap so the chain item matches. */
-		hook_unwrap((void *)kp_getname_flags_addr, 0, kp_after_getname_flags);
-		kp_getname_flags_addr = 0;
+		unhook_rc = hook_unwrap_remove((void *)kp_getname_flags_addr,
+					       0, kp_after_getname_flags, 1);
+		if (!unhook_rc || unhook_rc == -ENOENT)
+			kp_getname_flags_addr = 0;
+		else {
+			logke("sucompat: getname_flags hook is still live: %d\\n",
+			      unhook_rc);
+			if (!rc)
+				rc = unhook_rc;
+		}
 	}
+
+	return rc;
 }
