@@ -974,3 +974,52 @@ Host harness 使用 ELF64 的 `Elf64_Shdr`、`Elf64_Sym`、`Elf64_Rela` 构造�
 ### 验证边界
 
 本 harness 执行真实 `kp_apply_relocate_add()`，但仅覆盖该函数的多记录校验、数据重定位和目标段事务回滚；指令重定位函数在该 harness 中为 stub，另由单函数 harness 覆盖。它没有执行完整 ELF `setup_load_info()`、真实文件输入到最终模块映像的完整链路，也没有执行 KPIMG 的同等 RELA loader、精确 Y73s Linux 4.14.141 KDIR 编译或真机加载。
+
+
+## 31. 完整执行 setup_load_info() 的 Host ELF Fixture（2026-11-10）
+
+### 新增测试
+
+新增 `scripts/test_kpm_setup_load_info.py`，从生产 `lkm/kpm/module.c` 提取并执行真实函数体：
+
+- `elf_header_check()`
+- `rewrite_section_headers()`
+- `kp_elf_range_valid()` / `kp_elf_string_valid()`
+- `find_sec()`、`get_sh_base()`、`get_sh_size()`
+- `set_load_error()`
+- `setup_load_info()`
+
+使用内存中的 ELF64 AArch64 ET_REL fixture，实际走过 section-name table、KPM init/exit/info sections、SYMTAB/STRTAB、symbol name、symbol section index、RELA 元数据的验证顺序。仅 `get_modinfo()` 用固定返回值 stub；本测试不声称覆盖 KPM info tag 的字符串解析实现。
+
+### 覆盖结果
+
+13 项测试全部通过：
+
+1. 合法 KPM metadata、SYMTAB/STRTAB 和 RELA 元数据被接受。
+2. SYMTAB `sh_entsize` 错误拒绝。
+3. SYMTAB `sh_size` 不是符号条目整数倍拒绝。
+4. SYMTAB link 指向非 STRTAB 节拒绝。
+5. 符号名偏移超出 STRTAB 拒绝。
+6. 符号名在 STRTAB 剩余范围内没有 NUL 终止符拒绝。
+7. 普通符号 section index 越界拒绝。
+8. `SHN_XINDEX` 拒绝。
+9. 不支持的 reserved symbol section index 拒绝。
+10. RELA `sh_entsize` 错误在 layout 前拒绝。
+11. RELA `sh_size` 不是条目整数倍在 layout 前拒绝。
+12. SYMTAB 的 STRTAB link 越界拒绝。
+13. 多个 SYMTAB 拒绝。
+
+### 测试修正记录
+
+首轮 Host fixture 发现测试辅助函数错误地用 `strstr()` 查找以 NUL 开头的 ELF section-name table，无法遍历首个空字符串之后的名称。已将 fixture 名称查找改为按 NUL 分隔条目逐项遍历。此前 Host 编译器对 ELF section count 比较产生的 host-only `-Wtype-limits` 警告也已通过测试编译参数处理。以上是 harness 自身问题，修正后生产 parser 的 13 项 fixture 均通过。
+
+### CI
+
+- 测试脚本：`a58585cee56b860a945865c086b223c908100fb0`
+- fixture 修正：`6ce113939620c9c9ee04a673310850c4623f6949`、`9c15e18b0c5a8417c49a52684858158b7052f3bc`、`53a569243b01d6449c48867bd86aa260f00021c9`、`f8f72faf0c8388fc542cd7273d14fb75ed383017`
+- workflow 接入：`f05d89245b4acc3d426cb6ac3b7d1044ae02d6b7`
+- 最新可确认 Host audit run：`42793489625`，`Audit LKM KPM ELF loader source` job 成功，日志明确输出 13 项 `[PASS]`；同一 run 的 `build-kptools` job 当时仍在运行，需另行确认整体 workflow 结束状态。
+
+### 验证边界
+
+这一步执行了真实 `setup_load_info()` 解析路径（`get_modinfo()` 除外），但仍是构造的 ELF fixture，不是实际第三方 KPM 文件，也未执行后续完整布局、符号简化、真实 ELF 到可执行映像的全链路。尚未覆盖 KPIMG 对应解析器、精确 Y73s Linux 4.14.141 KDIR 构建或真机加载。
