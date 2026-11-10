@@ -1,4 +1,4 @@
-# Y73S KPIMG-resident Gate design audit
+# Y73S Resident Hook Gate design audit
 
 Date: 2026-11-10
 
@@ -8,7 +8,19 @@ Scope: design and source audit only. This document does not claim a production G
 
 ## Decision
 
-Continue with the KPIMG-resident Gate architecture. Do not add a permanent `try_module_get(THIS_MODULE)` self-reference to the LKM. The intended behavior is to retain ordinary module unload, provided the full entry-lifetime barrier can be implemented and validated.
+**Architecture correction (2026-11-11): the KPIMG-resident Gate is not a valid host for the standalone LKM deployment.** Y73S KPIMG-patched Boot and standalone LKM are mutually exclusive: when KPIMG has already patched `SyS_truncate.cfi`, the LKM's relocation guard rejects the overlapping hook rather than stacking a second patch. KPIMG's private symbol table and syscall-45 command path are not a supported LKM-to-KPIMG Gate registration ABI. Therefore the earlier KPIMG-hosted Gate proposal is retained below as historical analysis, not the selected implementation.
+
+The current candidate for standalone LKM is a **detached LKM-owned resident executable page**:
+- Allocate the Gate page independently through the matched `module_alloc()/module_memfree()` backend during LKM initialization; do not allocate it from the Linux module image and never call `module_memfree()` for it during ordinary unload.
+- Copy a position-independent Gate code range into that page only after verifying the assembled object has no relocations and its internal PC-relative references remain valid after copying.
+- Store per-hook descriptors and the closed/count state in separately allocated retained payloads. Never let the closed path dereference LKM callback pointers, module pointers, owner tokens, or registry metadata.
+- Keep the Gate page and every payload/trampoline reachable from a possibly stale branch permanently allocated. This intentionally trades bounded per-load retained memory for safe late-entry fallback.
+- Gate entry must acquire its atomic token before reading the module pointer, then call the correctly resolved `try_module_get(THIS_MODULE)`; only a successful module reference permits entry into LKM text. The resident return path must finish all LKM accesses before `module_put()`, then release the resident token.
+- Individual Hook removal needs per-hook close/drain; module exit needs a global close/drain. A late branch that has not reached the first Gate instruction is not counted, so its Gate code, descriptor and original trampoline must remain resident and usable after unload.
+
+Do not add a permanent `try_module_get(THIS_MODULE)` self-reference. The intended behavior is to retain ordinary module unload, provided the detached Gate, per-hook/global state machine, KPM parent-reference accounting, AArch64 ABI and target-kernel symbol ABI can all be implemented and validated. This is still a design decision, not a production implementation.
+
+The KPIMG-hosted design below is retained only to document why it cannot be reused in standalone LKM mode; any statement below that calls KPIMG the selected Gate host is superseded by this correction.
 
 ## Source facts confirmed on the selected branch
 
@@ -851,3 +863,23 @@ The ordinary chain transit classes are 0, 4, 8, and 12 64-bit arguments. The 8- 
 The original relocated trampoline is stored in `chain->hook.relo_addr`. LKM `hook_mem_retire()` removes the lookup metadata but intentionally does not release the executable region, so a resident closed-gate fallback can in principle read the retained chain payload and invoke the original relocated trampoline without calling LKM callbacks. This is only safe if the Gate's own retirement protocol guarantees that the payload and trampoline remain allocated and executable for every branch that could already have reached the Gate. The fallback must not consult the removed LKM hook-memory registry or dereference callback/owner fields.
 
 This gives a narrow fallback contract: after gate closure, use only resident Gate state plus the retained chain's original-trampoline fields; never enter LKM callback/owner logic. The retained-region behavior currently trades memory reclamation for safety and must be preserved until a proven grace-period reclamation mechanism exists.
+
+
+## Architecture correction: standalone LKM deployment (2026-11-11)
+
+The deployment audit in `Y73S_STATUS_CN.md` section 64 establishes that the KPIMG-patched Boot and standalone LKM are mutually exclusive on this Y73S path. The LKM relocation guard intentionally rejects the overlapping `SyS_truncate.cfi` patch. The KPIMG private `.kp.symbol` exports are not Linux kallsyms, and the two syscall-45 command paths are independent. No supported cross-component Gate registration ABI was found.
+
+Accordingly, a production LKM Gate must not depend on KPIMG being present. The detached `module_alloc()` page is the only current candidate grounded in the LKM's own allocator path: it is allocated independently of the module image and normally released only by an explicit paired `module_memfree()` call. The implementation must deliberately retain it, and must separately retain every descriptor/payload/trampoline that a stale branch can reach. Prefer a dedicated allocation path that requires the matched `module_alloc/module_memfree` pair; do not silently fall back to a backend whose post-unload lifetime has not been proven.
+
+The state protocol must distinguish:
+1. **Global LKM gate** — closed first during module exit; prevents any new LKM dispatch across all hooks.
+2. **Per-hook gate** — closed before an individual hook is restored/removed; prevents new dispatch through that hook while allowing unrelated hooks to remain active.
+3. **Resident token** — acquired before reading the module pointer or callback descriptor fields; protects the pre-`try_module_get` interval from module-exit completion.
+4. **Linux module reference** — acquired through `try_module_get()` before entering LKM code; released from resident Gate code only after the LKM call frame has fully returned.
+5. **Retained fallback** — a closed/failed entry reads only its permanent original-trampoline pointer and tail-branches to it.
+
+For module exit, close the global gate, close and restore all per-hook entries, then wait for accepted resident tokens to drain. Do not reclaim resident Gate pages or stale-entry payloads. For a single-hook removal, close that hook's state, restore the target, wait for that hook's accepted tokens, and retain its payload. A global gate count alone is insufficient to make an individual hook's callback logically dead while other hooks keep the module alive.
+
+KPMs loaded through the LKM are an additional parent/child lifetime problem. Their raw relocations into LKM text require a persistent parent-LKM reference for each published child. The last such reference cannot be dropped in LKM text; it must be deferred until a resident return path has left all LKM frames. Until this protocol exists, safe ordinary LKM unload remains blocked even if inline Hook entry Gate is implemented.
+
+No production Gate code was changed by this correction. No target KDIR build, MODPOST, Module.symvers validation or device test is claimed.
