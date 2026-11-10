@@ -54,7 +54,16 @@
  * remains available on the older cache-maintenance path.
  */
 static void (*kp_flush_dcache_area_fn)(void *addr, size_t len);
-#define kp_flush_dcache(start, sz) kp_flush_dcache_area_fn((void *)(start), (sz))
+
+/* The resolved target is an assembly entry without a compiler CFI type
+ * record. Keep this one indirect call outside the CFI jump-table check. */
+__attribute__((no_sanitize("cfi")))
+static void kp_flush_dcache_legacy(unsigned long start, size_t len)
+{
+	if (kp_flush_dcache_area_fn)
+		kp_flush_dcache_area_fn((void *)start, len);
+}
+#define kp_flush_dcache(start, sz) kp_flush_dcache_legacy((start), (sz))
 #define kp_flush_icache(start, end) flush_icache_range((start), (end))
 #endif
 
