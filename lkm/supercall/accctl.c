@@ -28,12 +28,10 @@
  * security_secctx_to_secid is not exported by the 4.14 vendor baseline.
  * Resolve it through kallsyms there; 5.15+ exposes the GPL export.
  */
+typedef int (*kp_secctx_to_secid_fn_t)(const char *secdata, u32 seclen, u32 *secid);
+static kp_secctx_to_secid_fn_t kp_security_secctx_to_secid_fn;
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
 extern int security_secctx_to_secid(const char *secdata, u32 seclen, u32 *secid);
-#define kp_security_secctx_to_secid security_secctx_to_secid
-#else
-typedef int (*kp_secctx_to_secid_fn_t)(const char *secdata, u32 seclen, u32 *secid);
-static kp_secctx_to_secid_fn_t kp_security_secctx_to_secid;
 #endif
 
 /* selinux_blob_sizes is hidden data with CONFIG_KALLSYMS_ALL=n. */
@@ -58,8 +56,10 @@ struct kp_task_sec {
 
 int kp_accctl_init(void)
 {
-#if LINUX_VERSION_CODE < KERNEL_VERSION(5, 15, 0)
-	kp_security_secctx_to_secid =
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 15, 0)
+	kp_security_secctx_to_secid_fn = security_secctx_to_secid;
+#else
+	kp_security_secctx_to_secid_fn =
 		(kp_secctx_to_secid_fn_t)kp_resolve_symbol("security_secctx_to_secid");
 #endif
 	kp_selinux_blob_sizes = (struct kp_lsm_blob_sizes *)kp_resolve_symbol("selinux_blob_sizes");
@@ -77,13 +77,13 @@ int kp_accctl_init(void)
 #endif
 	}
 
-	if (kp_selinux_cred_offset < 0 || !kp_security_secctx_to_secid) {
-		logkw("SELinux translabel unavailable (offset=%d resolver=%px)\n",
-		      kp_selinux_cred_offset, kp_security_secctx_to_secid);
+	if (kp_selinux_cred_offset < 0 || !kp_security_secctx_to_secid_fn) {
+		logkw("SELinux translabel unavailable (offset=%d resolver=%d)\n",
+		      kp_selinux_cred_offset, !!kp_security_secctx_to_secid_fn);
 		return 0;
 	}
-	logki("SELinux cred offset: %d; secctx resolver: %px\n",
-	      kp_selinux_cred_offset, kp_security_secctx_to_secid);
+	logki("SELinux cred offset: %d; secctx resolver ready\n",
+	      kp_selinux_cred_offset);
 	return 0;
 }
 
@@ -96,11 +96,11 @@ static int kp_selinux_set_cred_context(struct cred *new, const char *sctx)
 	u32 sid;
 	int rc;
 
-	if (kp_selinux_cred_offset < 0 || !kp_security_secctx_to_secid ||
+	if (kp_selinux_cred_offset < 0 || !kp_security_secctx_to_secid_fn ||
 	    !sctx || !sctx[0])
 		return -EINVAL;
 
-	rc = kp_security_secctx_to_secid(sctx, strlen(sctx), &sid);
+	rc = kp_security_secctx_to_secid_fn(sctx, strlen(sctx), &sid);
 	if (rc || !sid) {
 		logkw("secctx_to_secid(%s) failed: %d sid=%u\n", sctx, rc, sid);
 		return rc ? rc : -EINVAL;
