@@ -59,6 +59,8 @@ def main():
             "LKM section alignment must be validated")
 
     setup = body(module, "static int setup_load_info(")
+    require(r"relsec->sh_type\s*==\s*SHT_RELA[\s\S]*?relsec->sh_entsize\s*!=\s*sizeof\(Elf64_Rela\)[\s\S]*?relsec->sh_size\s*%\s*sizeof\(Elf64_Rela\)", setup,
+            "original RELA entry size and extent must be validated before layout")
     for pattern, message in (
         (r"symsec->sh_entsize\s*!=\s*sizeof\(Elf_Sym\)", "symbol entry size"),
         (r"symsec->sh_size\s*%\s*sizeof\(Elf_Sym\)", "symbol table divisibility"),
@@ -101,10 +103,11 @@ def main():
     require(r"symsec->sh_entsize\s*!=\s*sizeof\(Elf_Sym\)", setup,
             "original ELF symbol entry size must be validated before layout")
     rela = body(relo, "int kp_apply_relocate_add(")
+    if "rsec->sh_entsize" in rela:
+        raise AssertionError("RELA apply must not inspect sh_entsize after layout repurposes it")
     if re.search(r"symsec->sh_entsize\s*!=", rela):
         raise AssertionError("RELA must not treat the rewritten in-image symbol offset as ELF sh_entsize")
     for pattern, message in (
-        (r"sh_entsize\s*!=\s*sizeof\(Elf64_Rela\)", "RELA entry size"),
         (r"sh_size\s*%\s*sizeof\(Elf64_Rela\)", "RELA table divisibility"),
         (r"symidx\s*>=\s*nsym", "RELA symbol index"),
         (r"r_offset\s*>\s*target->sh_size", "RELA target offset"),
