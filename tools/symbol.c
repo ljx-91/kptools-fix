@@ -369,7 +369,13 @@ int fillin_patch_config(kallsym_t *kallsym, char *img_buf, int imglen, patch_con
     if (!symbol->rest_init && !symbol->cgroup_init) tools_loge_exit("no symbol rest_init");
 
     symbol->kernel_init = try_get_symbol_offset_zero(kallsym, img_buf, "kernel_init");
-    if (!symbol->kernel_init) tools_logw("no symbol kernel_init (KPM event timing degraded)\n");
+    if (!symbol->kernel_init) {
+        if (symbol->rest_init) {
+            tools_logw("no symbol kernel_init (PRE_KERNEL_INIT will use rest_init fallback; POST_KERNEL_INIT unavailable)\n");
+        } else {
+            tools_logw("no symbol kernel_init (kernel-init KPM events unavailable without rest_init)\n");
+        }
+    }
 
     symbol->report_cfi_failure = get_symbol_offset_zero(kallsym, img_buf, "report_cfi_failure");
     symbol->__cfi_slowpath_diag = get_symbol_offset_zero(kallsym, img_buf, "__cfi_slowpath_diag");
