@@ -125,43 +125,76 @@ static unsigned long kp_find_check_fn_addr;
 static unsigned long kp_report_cfi_failure_addr;
 static unsigned long kp_cfi_slowpath_addr;
 
+void kp_bypass_kcfi_exit(void);
+
 int kp_bypass_kcfi(void)
 {
 	int rc = 0;
+	int hook_rc;
+	bool cfi_enforcement_hooked = false;
 
 	unsigned long addr = kallsyms_lookup_name("find_check_fn");
 	if (addr) {
-		kp_find_check_fn_addr = addr;
-		rc = hook((void *)addr, (void *)__replace_find_check_fn,
-			  (void **)&__backup_find_check_fn);
-		if (rc)
-			logkw("hook find_check_fn error: %d\n", rc);
+		hook_rc = hook((void *)addr, (void *)__replace_find_check_fn,
+			       (void **)&__backup_find_check_fn);
+		if (hook_rc) {
+			logkw("hook find_check_fn error: %d\\n", hook_rc);
+			if (!rc)
+				rc = hook_rc;
+		} else {
+			kp_find_check_fn_addr = addr;
+		}
 	} else {
-		logkw("find_check_fn not found; KPM kallsyms CFI check unshielded\n");
+		logkw("find_check_fn not found; KPM kallsyms CFI check unshielded\\n");
 	}
 
 	addr = kallsyms_lookup_name("report_cfi_failure");
 	if (addr) {
-		kp_report_cfi_failure_addr = addr;
-		rc = hook((void *)addr, (void *)__replace_report_cfi_failure,
-			  (void **)&__backup_report_cfi_failure);
-		if (rc)
-			logkw("hook report_cfi_failure error: %d\n", rc);
+		hook_rc = hook((void *)addr, (void *)__replace_report_cfi_failure,
+			       (void **)&__backup_report_cfi_failure);
+		if (hook_rc) {
+			logkw("hook report_cfi_failure error: %d\\n", hook_rc);
+			if (!rc)
+				rc = hook_rc;
+		} else {
+			kp_report_cfi_failure_addr = addr;
+			cfi_enforcement_hooked = true;
+		}
 	}
 
 	addr = kallsyms_lookup_name("__cfi_slowpath_diag");
 	if (!addr)
 		addr = kallsyms_lookup_name("__cfi_slowpath");
 	if (addr) {
-		kp_cfi_slowpath_addr = addr;
-		rc = hook((void *)addr, (void *)__replace_cfi_slowpath,
-			  (void **)&__backup_cfi_slowpath);
-		if (rc)
-			logkw("hook __cfi_slowpath_diag error: %d\n", rc);
+		hook_rc = hook((void *)addr, (void *)__replace_cfi_slowpath,
+			       (void **)&__backup_cfi_slowpath);
+		if (hook_rc) {
+			logkw("hook CFI slowpath error: %d\\n", hook_rc);
+			if (!rc)
+				rc = hook_rc;
+		} else {
+			kp_cfi_slowpath_addr = addr;
+			cfi_enforcement_hooked = true;
+		}
 	}
 
-	logki("CFI bypass ready\n");
-	return rc;
+#ifdef CONFIG_CFI_CLANG
+	/* The Y73S kernel uses Clang CFI. A KPM image is not registered in the
+	 * kernel module CFI shadow, so at least one enforcing slowpath hook must
+	 * be installed before any KPM callback can be entered. */
+	if (!cfi_enforcement_hooked && !rc)
+		rc = -ENOSYS;
+#endif
+
+	if (rc) {
+		/* Do not leave successful partial hooks pointing at an init routine
+		 * that is about to fail or allow a partially protected KPM runtime. */
+		kp_bypass_kcfi_exit();
+		return rc;
+	}
+
+	logki("CFI bypass ready\\n");
+	return 0;
 }
 
 /* Remove the CFI bypass hooks so the module can be unloaded without leaving
