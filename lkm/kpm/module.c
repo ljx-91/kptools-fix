@@ -511,7 +511,13 @@ static int simplify_symbols(struct kp_module *mod, struct kp_load_info *info)
 		}
 		default:
 		{
-			Elf_Shdr *symsh = &info->sechdrs[sym[i].st_shndx];
+			Elf_Shdr *symsh;
+
+			if (sym[i].st_shndx >= info->hdr->e_shnum) {
+				set_load_error(info, "invalid ELF symbol section index");
+				return -ENOEXEC;
+			}
+			symsh = &info->sechdrs[sym[i].st_shndx];
 
 			/* ET_REL symbol values are offsets within their defining
 			 * section. Reject out-of-section values and extents before
