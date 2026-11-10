@@ -72,11 +72,10 @@ checks = {
         body(lkm_module, "long kp_module_control0(") and
         "outlen < 0 || (outlen && !out_msg)" in
         body(kpimg_module, "long module_control0("),
-    "execve filename uses bounded copy before string comparisons":
-        "kp_copy_user_string(filename, sizeof(filename), ufilename)" in
-        body(sucompat, "static long kp_execve_handler(") and
-        "if (flen <= 0)" in body(sucompat, "static long kp_execve_handler(") and
-        "strncpy_from_user(" not in body(sucompat, "static long kp_execve_handler("),
+    "sucompat never commits current credentials before exec completion":
+        "kp_commit_su(" not in sucompat and "kp_syscall_hook(" not in sucompat and
+        "return kp_hook_prepare_binprm();" in
+        body(sucompat, "int kp_sucompat_hook_init(void)"),
     "SUPERCMD argv and scontext strings are bounded":
         "kp_copy_user_string(buf, sizeof(buf), arg)" in
         body(sucompat, "static const char *kp_get_supercmd_sctx(") and
@@ -84,20 +83,8 @@ checks = {
         body(sucompat, "static const char *kp_get_supercmd_sctx("),
     "scontext scratch buffers are caller-local, not shared statics":
         "char sctx_buf[SUPERCALL_SCONTEXT_LEN]" in
-        body(sucompat, "static long kp_execve_handler(") and
+        body(sucompat, "static void kp_after_prepare_binprm(") and
         "static char sctx[" not in sucompat,
-    "execve redirect does not overwrite caller filename memory":
-        "current_user_stack_pointer()" in
-        body(sucompat, "static long kp_redirect_to_sh(") and
-        "((struct pt_regs *)regs)->regs[0]" in
-        body(sucompat, "static long kp_redirect_to_sh(") and
-        "copy_to_user(ufilename" not in
-        body(sucompat, "static long kp_redirect_to_sh("),
-    "execve redirect checks user-stack arithmetic before staging":
-        "sp < strlen(target) + 1 + 8" in
-        body(sucompat, "static long kp_redirect_to_sh(") and
-        "sp < strlen(LEGACY_SU_PATH) + 1 + 8" in
-        body(sucompat, "static long kp_redirect_to_sh("),
 }
 
 for label, ok in checks.items():
