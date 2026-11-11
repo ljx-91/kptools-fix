@@ -3,7 +3,8 @@
 日期：2026-11-12  
 仓库：ljx-91/kptools-fix  
 分支：y73s-cred-layout-guards-20261108  
-本轮代码 HEAD：bbaa8e39c3b9ed054acfc60067d4f8382f82a3ba
+当前分支 HEAD：3291b6d3b91a524897df83544eb8f009fa76d73e  
+本轮最新源码/CI 测试提交：491d3aa5ee8d523878f136e4ea0874351678080e
 
 ## 1. 范围与结论
 
