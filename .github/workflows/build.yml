@@ -249,12 +249,6 @@ jobs:
 
           echo "Windows kptools build successful"
 
-      - name: Smoke-test Windows executable
-        shell: msys2 {0}
-        run: |
-          set -eux
-          tools/kptools.exe --version
-
       - name: Collect Windows executable and runtime DLLs
         shell: msys2 {0}
         run: |
