@@ -191,9 +191,9 @@ def verify_hidden_kernel_init():
          "PRE_KERNEL_INIT must remain attached to the actual kernel_init entry")
     need(r"extra_event_init\(EXTRA_EVENT_POST_KERNEL_INIT\)", after,
          "POST_KERNEL_INIT must remain attached to the actual kernel_init return path")
-    need(r"hook_fargs1_t\s*\*args", before,
+    need(r"static void before_kernel_init\\(hook_fargs1_t\\s*\\*args", patch,
          "kernel_init before callback must declare its one-argument AAPCS signature")
-    need(r"hook_fargs1_t\s*\*args", after,
+    need(r"static void after_kernel_init\\(hook_fargs1_t\\s*\\*args", patch,
          "kernel_init after callback must declare its one-argument AAPCS signature")
     need(r"hook_wrap1\(\(void \*\)kernel_init_addr,\s*before_kernel_init,\s*after_kernel_init", patch_entry,
          "kernel_init must be installed with the one-argument hook wrapper")
