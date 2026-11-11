@@ -2448,3 +2448,41 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 4. 当前未读取设备实际 lock state，未确认手机正在运行的 LK build/revision，也没有设备启动日志。因此本轮结论为：**AVB 静态链与 LK OEM key/policy 高度吻合；候选 hash mismatch 已证实；unlocked 容忍路径有源码级支持，但运行时条件尚未确认。**
 5. 没有执行 Fastboot、刷写、分区写入、Recovery 写入或真机启动测试；也没有确认候选 Boot 已安装。
 
+
+
+## 76. 2026-11-11：Hook dispatch argno ABI class consistency 修复与 Resident Gate 再审
+
+### 本轮实际代码修复
+
+提交 `e9b5d55f9a18789ae1e3125aa92a318c7050ac6a` 修复了 inline chain 与 function-pointer chain 的 dispatch ABI 元数据缺失：
+
+- 旧行为中，`hook_wrap()` / `fp_hook_wrap()` 第一次安装时按 `argno` 选择 `_transit0/4/8/12`，但没有把选择结果保存在 chain；同一 origin 已有 chain 时，后续注册直接追加 callback，传入不同甚至越界的 `argno` 也可能被接受，实际仍沿用第一次安装的 transit 原型。
+- 新增 `hook_argno_abi_class()`：`0 -> 0`、`1..4 -> 4`、`5..8 -> 8`、`9..12 -> 12`，范围外返回 `-1`。这里记录的是实际 transit C ABI 分组，不是原始参数个数；组内的 `hook_fargs1_t..4_t`、`hook_fargs5_t..8_t`、`hook_fargs9_t..12_t` 本身分别是同一结构类型的别名。
+- `hook_chain_t` 与 `fp_hook_chain_t` 新增 `argno_abi_class`；KPIMG inline、LKM inline 和 KPIMG FP chain 的 prepare 路径都在发布前记录 class。
+- 对已存在的 chain，`hook_wrap()` / `fp_hook_wrap()` 在 owner 注册和 callback slot 修改之前比较 class；不一致返回 `-HOOK_ABI_MISMATCH`。非法 `argno` 在查找/复用 chain 之前即拒绝。
+- `hook_t` 布局不变；Host ABI 测试确认 `hook_chain_t=1416`、`fp_hook_chain_t=1800`，并覆盖 0/1/4/5/8/9/12 及 -1/13 边界。该变化属于内部 chain 布局更新，不能据此宣称外部 KPM 二进制 ABI 已经做过目标设备验证。
+
+### 本轮测试与 CI
+
+- Host C layout test：编译并执行成功，输出 `hook_t=296 hook_chain_t=1416 fp_hook_chain_t=1800 transit=968`。
+- `verify_lkm_hook_runtime_contract.py`：新增的 inline/LKM ABI class 记录、非法参数拒绝和既有 chain mismatch 检查均 PASS。
+- `verify_y73s_fphook_contract.py`：新增的 FP chain ABI class 记录和 mismatch 检查均 PASS。
+- GitHub Actions：
+  - Host audit / Linux kptools：run `42977503650`，success；source-contract job 与 host kptools job 均成功。
+  - Y73S Android KPIMG Arm GNU GCC 14.2：run `42977503651`，success；KPIMG 构建、相关 source contracts 和打包步骤完成。
+  - Windows kptools / KPIMG workflow：run `42977503636`，success；Android KPIMG 与 Windows kptools 两个 job 均成功。
+- KPIMG 构建日志仍有已有警告：若干未使用函数/变量，以及 `kpimg.elf` 存在 RWX LOAD segment；本次未把这些警告误报为本次修复导致，也未声称它们已解决。
+
+### 重新扫描后的剩余问题
+
+- LKM manager 的 `security_path_rename/security_inode_rename` 通过 `hook_wrap5()` 注册，属于 class 8；`hook_fargs5_t` 是 `hook_fargs8_t` 别名，当前 transit 分组一致。
+- `lkm/kpm/symbols.c` 将 `hook_wrap`、`hook`、`hook_unwrap_remove` 及 KPM owner API 映射到 LKM 函数地址；没有导出 `fp_hook_wrap`。LKM Kbuild 仍未编译 `kernel/base/fphook.c`，因此 FP Hook 目前仍是 KPIMG 侧实现，不能宣称 LKM 提供了 FP Hook。
+- 直接 inline `hook()` / `fp_hook()` 没有 `argno` 参数；本次 class 修复只覆盖 chain dispatch，不解决 direct replacement 的通用 AAPCS64 ABI 描述问题。
+- **新增生命周期阻塞项：** `kp_kpm_exit()` 当前只在 `module_init()` 失败回滚路径调用；正常 `kernelpatch_exit()` 不调用它。该函数本身也只关闭 KPM runtime 并释放 kallsyms callback trampoline，不会遍历/卸载仍加载的 KPM。与此同时，KPM symbol table 保存了指向 LKM 函数的地址；目前没有建立 KPM image 对 parent LKM 的可证明引用/退出协议。因此 KPM 仍存活时的正常 LKM 卸载顺序不能证明安全，不能仅靠 KPM 的 `active_calls/hook_refs` 解决。
+- **Resident Gate 仍未实现：** LKM `hook_chain_prepare()` 仍把 chain stub 指向 LKM `_transitN`；reader 计数仍发生在 Transit 代码开始执行之后。已取到旧 branch 但尚未执行第一条 LKM 指令的 CPU 仍处于 pre-reader window。本次没有新增 Gate 机器码，也没有把抽象 interleaving model 当作生产实现。
+- Gate 设计下一步必须同时证明：常驻 Gate 与 sidecar 的生命周期、close 与 restore 的线性化、Gate token 与 `try_module_get/module_put` 顺序、KPM owner pin、original trampoline 的永久可达性、callback retirement，以及 LKM 正常 exit 对 KPM 的关闭/卸载顺序。还必须处理 direct `hook()` 的无 argno ABI，以及 FP Hook 是否需要纳入同一入口。
+- 尚无匹配的 Y73s Linux 4.14.141+ KDIR；目标 `.ko`、MODPOST、Module.symvers CRC、真实模块装载/卸载和真机验证均未完成。没有执行 Fastboot、刷写、分区写入或设备启动测试。
+
+### 本轮结论
+
+本轮完成的是一个可独立审查的 dispatch ABI class 一致性修复，并已通过 Host、KPIMG 和 Windows CI。它缩小了 chain 复用时的 ABI 歧义，但**没有解决 Resident Gate、pre-reader window 或 KPM-parent-LKM 生命周期问题**；这些仍是阻止宣称生产级卸载安全的硬阻塞项。
