@@ -2355,3 +2355,35 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 - 兼容性：本轮已对原厂 4.14.141 镜像做工具级静态解析和离线重打包；尚未在真机验证。对其他 4.14.141+ 厂商编译版本，静态 kernel_init 恢复仅在同样的可识别指令模式下生效，否则会失败关闭。
 - 未执行 Fastboot、刷写、分区写入或真机启动测试。
 
+## 74. 2026-11-11：LKM Resident Gate、函数指针 Hook 与 ABI 复核
+
+### Resident Gate：生产实现尚未具备，卸载竞态仍然阻塞
+
+复核当前实际源码，而非只依赖 scripts/test_y73s_hook_gate_interleavings.py 的抽象模型：
+
+- lkm/hook/hook_engine.c 的 hook_chain_prepare() 在 chain->transit 中写入 chain 指针，然后通过 branch_absolute() 跳转到 _transit0/_transit4/_transit8/_transit12。目标是 LKM hook_engine.o 中的函数，不是常驻的独立 Gate stub。
+- kernel/base/hook.c 的 hook_chain_reader_enter() 只在 _transit* 已经开始执行后才增加 active_readers。CPU 若已取到原 Hook 跳转目标、但尚未执行 _transit* 第一条指令，仍不在 reader 计数中。
+- lkm/hook/hook_runtime.c 的 hook_mem_retire() 会从注册表移除记录并释放描述符，但刻意不释放 executable region；这只能保留 transit/chain/trampoline 数据，不能保留 _transit* 的 LKM 代码。
+- manager.c 的 hook_rename_lsm_exit() 等待 active_readers 归零；该等待无法证明没有尚未执行第一条 Transit 指令的 CPU。
+- scripts/test_y73s_hook_gate_interleavings.py 明确声明它是协议模型，不测试生产 Gate 机器码、ARM64 内存模型、Linux 4.14 模块内部机制或真机运行。其 delayed-entry 测试假设 gate_code_resident=true、origin_retained=true，但生产实现当前没有对应的常驻入口代码。
+
+结论：不得把当前模型测试描述为 Resident Gate 已实现或卸载安全已通过。LKM 模块卸载仍有 pre-reader window 风险。下一步应先设计并实现独立于 LKM 生命周期的常驻入口和 sidecar，关闭 Gate 后只能走常驻 original trampoline；不能在 Gate 关闭路径读取 LKM 回调或执行 LKM 指令。实现后需要针对真实 AArch64 汇编和 Linux 4.14 内存序编写测试，不能仅用 Python 状态模型代替。
+
+### 函数指针 Hook：LKM 构建面不包含 fphook.c
+
+- kernel/include/hook.h 对外声明 fp_hook、fp_unhook、fp_hook_wrap、fp_hook_unwrap。
+- kernel/base/fphook.c 实现上述函数及 _fp_transit0/4/8/12。
+- 当前 lkm/Kbuild 的 kernelpatch-objs 包含 hook/hook_engine.o 和 hook/hook_runtime.o，但没有 hook/fphook.o；hook_engine.o 仅 include kernel/base/hook.c。
+- 因此不能声称当前 LKM 已提供函数指针 Hook 的实现或导出符号。当前已审阅的 LKM 业务调用路径使用 inline hook_wrap*，没有确认到 LKM 内部调用 fp_hook* 的调用点。
+- 暂不把 fphook.o 直接加入 Y73s 构建：其函数指针链同样跳转到 _fp_transit*，仍有相同生命周期问题；在缺少目标 KDIR/Module.symvers 时贸然启用会扩大未经验证的 API 面。
+
+### AArch64 调用约定：按 Y73s 实际调用点限定结论
+
+- inline _transit4/_transit8/_transit12 以 uint64_t 参数和 uint64_t 返回值调用 relocated origin；当前实现不是完整的通用 AAPCS64 保存/恢复层，不应宣称支持任意 FP/SIMD、HFA/HVA 或 x8 间接聚合返回 ABI。
+- 当前已审阅的 Y73s 相关 LKM inline Hook 调用点包括 security_path_rename/security_inode_rename（5 个整数/指针参数）、prepare_binprm（1 个参数），以及先前确认的 supercall、CFI 和 legacy syscall Hook。对这些具体整数/指针参数及标量返回路径，当前 wrapper 的寄存器/栈参数传递模型与调用签名相符；但仍需在目标编译器和目标内核头文件下做 ABI 测试。
+- 任何新增 Hook 都必须记录真实原型、argno、返回类型、是否有栈参数和是否存在间接返回；不允许把通用 0–12 参数接口误当成所有 AArch64 类型的 ABI 保证。
+
+### 本轮结论
+
+本轮没有提交未经目标构建验证的 Gate 或 fphook 代码变更。已确认的两个阻塞项是：生产 Resident Gate 缺失，以及 LKM 构建未包含 fphook.c。当前源码模型测试仍可作为协议回归测试，但不能替代生产实现验证。Y73s 4.14.141+ 的目标 .ko、MODPOST、Module.symvers CRC、运行时重定位和真机行为仍未验证；未执行刷写或设备启动测试。
+
