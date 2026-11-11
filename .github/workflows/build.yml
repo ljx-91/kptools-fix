@@ -255,13 +255,40 @@ jobs:
           set -eux
           tools/kptools.exe --version
 
-      - name: Collect and package Windows artifacts
+      - name: Collect Windows executable and runtime DLLs
+        shell: msys2 {0}
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+          cp kernel/kpimg artifacts/kpimg-android
+          cp tools/kptools.exe artifacts/kptools.exe
+
+          # Bundle every non-system DLL reported by the Windows loader.
+          # This includes zlib (libz-1.dll) and any MinGW runtime DLLs.
+          ldd tools/kptools.exe | tee artifacts/DEPENDENCIES.txt
+          while IFS= read -r line; do
+            dep="$(printf '%s\n' "$line" | sed -n 's/.*=> \([^ ]*\) .*/\1/p')"
+            if [ -n "$dep" ] && [ -f "$dep" ]; then
+              cp -n "$dep" artifacts/
+            fi
+          done < <(ldd tools/kptools.exe)
+
+          test -f artifacts/libz-1.dll
+          ls -lh artifacts
+
+      - name: Smoke-test packaged Windows executable
+        shell: msys2 {0}
+        run: |
+          set -eux
+          PATH="$PWD/artifacts:$PATH" artifacts/kptools.exe --version
+          # Verify the executable resolves its bundled dependencies.
+          ldd artifacts/kptools.exe | tee artifacts/DEPENDENCIES-PACKAGED.txt
+          ! grep -E 'not found' artifacts/DEPENDENCIES-PACKAGED.txt
+
+      - name: Package Windows ZIP and checksums
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          Copy-Item kernel/kpimg artifacts/kpimg-android
-          Copy-Item tools/kptools.exe artifacts/kptools.exe
 
           @'
           KernelPatch Windows tools - vivo Y73s branch
@@ -269,18 +296,16 @@ jobs:
 
           Target branch: y73s-cred-layout-guards-20261108
           Build: GitHub Actions / Windows x64
-          Contents:
-            kptools.exe     Windows x64 command-line tool
-            kpimg-android   ARM64 Android kpimg built by the paired Ubuntu job
-            SHA256SUMS      SHA-256 checksums
+
+          Extract the entire ZIP before running kptools.exe. Keep all DLL files
+          in the same directory as kptools.exe; do not delete libz-1.dll.
+          The package includes the non-system DLL dependencies detected by
+          the Windows runtime dependency scan.
 
           Quick start (PowerShell or CMD):
             .\kptools.exe --version
             .\kptools.exe --help
-
-          Run commands from this directory, or provide the full path to the
-          executable. Keep kpimg-android alongside the package when using
-          workflows that require the Android kpimg payload.
+            .\kptools.exe unpack boot.img
 
           IMPORTANT Y73s / AVB STATUS
           This package is a build artifact, not a device-validated release.
@@ -296,14 +321,14 @@ jobs:
           "%~dp0kptools.exe" %*
           '@ | Set-Content -Encoding ascii artifacts/kptools-help.cmd
 
-          $files = Get-ChildItem artifacts -File | Where-Object { $_.Name -ne "SHA256SUMS" -and $_.Name -ne "KernelPatch-Windows-Y73S.zip" }
+          $files = Get-ChildItem artifacts -File | Where-Object { $_.Name -ne "SHA256SUMS" }
           $lines = foreach ($file in $files) {
             $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLower()
             "$hash  $($file.Name)"
           }
           $lines | Set-Content -Encoding ascii artifacts/SHA256SUMS
 
-          Compress-Archive -Path artifacts/kptools.exe,artifacts/kpimg-android,artifacts/README-Windows.txt,artifacts/kptools-help.cmd,artifacts/SHA256SUMS -DestinationPath KernelPatch-Windows-Y73S.zip -Force
+          Compress-Archive -Path artifacts/* -DestinationPath KernelPatch-Windows-Y73S.zip -Force
           Get-FileHash -Algorithm SHA256 KernelPatch-Windows-Y73S.zip
           Get-ChildItem artifacts,KernelPatch-Windows-Y73S.zip | Format-Table FullName,Length
 
