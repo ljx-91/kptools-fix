@@ -2387,3 +2387,64 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 
 本轮没有提交未经目标构建验证的 Gate 或 fphook 代码变更。已确认的两个阻塞项是：生产 Resident Gate 缺失，以及 LKM 构建未包含 fphook.c。当前源码模型测试仍可作为协议回归测试，但不能替代生产实现验证。Y73s 4.14.141+ 的目标 .ko、MODPOST、Module.symvers CRC、运行时重定位和真机行为仍未验证；未执行刷写或设备启动测试。
 
+
+
+## 75. 2026-11-11：Y73s AVB 链、LK 根公钥与 unlocked verification-error 路径复核
+
+### 本轮离线输入与复核方法
+
+- 原厂 `boot.img`：100,663,296 bytes，SHA-256 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`。
+- LK 样本 `lk-verified.img`：1,071,184 bytes，SHA-256 `e44dc34afa12235011331309c3cac1f995cbca65c5e61c9e598984a5539000d4`。
+- 根 `vbmeta.img`：8,192 bytes，SHA-256 `9dea25766afba4fbaf601e80ae73bd69637d15aa40ae13a468312a8bb90aa652`。
+- `vbmeta_system.img`：4,096 bytes，SHA-256 `8463fe5995be29055e9bf35483110e9eeecf80fbfb1af34953631ba883fcfa12`。
+- 当前 kernel_init 已修正的离线候选 Boot：SHA-256 `e1b4972c6bb1fa7f5466b364c57a6ef0a85fdabf6be202b3695ad60e7102b6b2`。
+- 新增可重复的离线审计工具：`scripts/verify_y73s_avb_chain.py`。工具不访问设备、不修改镜像；检查 AVB header/auth/aux、RSA-2048 签名、chain descriptor、公钥关联、LK 公钥材料、Footer 与 boot HashDescriptor 的 salted SHA-256。
+
+### AVB 元数据和签名链结果
+
+- 原厂 Boot Footer：`original_image_size=17,618,944`，`vbmeta_offset=17,620,992`，`vbmeta_size=1,472`。
+- 修补候选 Footer：`original_image_size=17,688,576`，`vbmeta_offset=17,690,624`，`vbmeta_size=1,472`。
+- 原厂 Boot、候选 Boot 的内嵌 vbmeta 完全相同；候选没有改写 OEM 签名的 vbmeta 内容。
+- 根 `vbmeta.img`、`vbmeta_system.img`、原厂 Boot 内嵌 vbmeta、候选 Boot 内嵌 vbmeta 的 AVB auth-block SHA-256 均通过重新计算；四份 RSA-2048 签名均通过离线验签。
+- 根 vbmeta 的 `boot` ChainPartitionDescriptor 公钥与 Boot 内嵌 vbmeta 公钥逐字节相同；根 vbmeta 的 `vbmeta_system` 委托公钥也与 `vbmeta_system.img` 内嵌公钥相同。
+- 根 vbmeta 的 RSA 公钥模数在 LK 样本文件偏移 `0xDBBC4` 找到；公钥 520-byte AVB 编码的 SHA-256 为 `4bdf3ccd984613cd7265bcccfa43755fb961db5e6e19c5686e5a7a4d2b594b87`。MTK 参考实现 `avb_hal_verify_public_key()` 将 vbmeta 公钥模数与 LK 内置 `g_avb_key` 比较；本轮二进制模数定位与该信任检查方式相符。
+- LK 样本内可见 build id：`k6853v1_64_6360-5cfd6cf-20210414212350-20220215124501`，并含 MT6853、MT6853V/ZA、`pd2031_samsung_s6e8fc1` 标识。它是强 PD2031/MT6853 匹配证据，但仍不能单独证明手机当前运行的 LK 与该文件完全相同。
+
+### Boot HashDescriptor：候选确实不匹配
+
+原厂 Boot 的 HashDescriptor：
+- 分区名：`boot`；算法：SHA-256。
+- `image_size=17,618,944`。
+- salt：`aee087a5be3b982978c923f566a94613496b417f2af592639bc80d141e34dfe7`。
+- descriptor digest：`36a3d398fc5a5350e1642f54584ebca8d06e20644e622993f9547e057467623c`。
+- 重新计算 `SHA256(salt || boot[0:image_size])` 与 descriptor 完全一致。
+
+修补候选仍保留原 descriptor digest 和 `image_size=17,618,944`，但 Footer 的 `original_image_size` 已变为 `17,688,576`，两者相差 69,632 bytes。按原 descriptor 的 salt 与 image_size 重新计算，候选实际摘要为：
+
+`21427b6f65003db8a5549e8de99308f254114e312dd001641421b554f46dbfe2`
+
+它与原 descriptor digest 不同。因此**候选 Boot 的内容摘要验证确实失败**；不能称候选 AVB hash 匹配，也不能把保留 Footer/签名误说成 AVB cryptographically valid。
+
+### LK unlocked 策略：静态路径得到源码级交叉印证
+
+- LK 样本 policy table 的 `boot` 行位于文件偏移 `0xB0C18`；结构字段之后四个策略字节为 `01 00 03 00`。
+- MTK `sec_policy.h` 的四列顺序为：SBC disabled + locked、SBC disabled + unlocked、SBC enabled + locked、SBC enabled + unlocked。
+- `sec_policy_config_common.h` 定义 `VFY_BIT=1`、`VFY_BIT_SET(policy)=((policy >> 1) & 1)`。因此 `01 00 03 00` 的两个 unlocked 列验证位均为 0。
+- `sec_policy.c` 的 `get_sec_policy()` 按 SBC 状态和 lock state 选择对应列；`get_vfy_policy()` 返回该列的验证位。
+- MTK `load_vfy_boot.c` 中，`boot_authentication(BOOTIMG_TYPE_BOOT)==0` 时设置 `AVB_SLOT_VERIFY_FLAGS_ALLOW_VERIFICATION_ERROR`；调用 `avb_slot_verify()` 后，如果该 flag 存在，调用方会将返回结果归一化为 `AVB_SLOT_VERIFY_RESULT_OK`。这为 unlocked 状态容忍 Boot HashDescriptor 错误提供了直接源码级路径。
+- 重要限制：`sec_policy.c` 在 lock-state 无效时会回退到 locked；参考 `avb_hal_read_is_device_unlocked()` 对 provider 错误也返回错误。只有运行时确实得到 `LKS_UNLOCK`，上述 unlocked 策略才成立。
+
+参考源码（仅用于解释 MTK 同家族实现，不能证明 Vivo LK 与参考树逐行相同）：
+- `load_vfy_boot.c`: https://github.com/svoboda18/lk/blob/37ec8bcbc4361c0e267617f517d154656804c17a/platform/common/boot/avb20/load_vfy_boot.c
+- `avb_hal.c`: https://github.com/saidanimelek26/little-kernel-NovaLK/blob/08f0238cb3db36c3660aa7627a112e1133d72046/platform/common/avb/avb_hal/avb_hal.c
+- `sec_policy.c`: https://github.com/saidanimelek26/little-kernel-NovaLK/blob/08f0238cb3db36c3660aa7627a112e1133d72046/platform/mt6853/sec_policy.c
+- `sec_policy.h` 与 `sec_policy_config_common.h`、`sec_policy_config1.h` 至 `sec_policy_config4.h`：同一 MT6853 源码树。
+
+### 处理结论与下一步
+
+1. **不修改候选 Boot 内嵌 vbmeta、根 vbmeta 或 vbmeta_system。** 当前 OEM RSA 签名与委托公钥链保持完整；修改 HashDescriptor digest/image_size 会改变已签名的 vbmeta 内容，没有 vivo OEM 私钥就无法重新生成 OEM 信任签名。
+2. 不伪造 OEM 签名、不替换根 vbmeta 公钥、不制造“hash 已通过”的假结果。自行生成密钥并改写 root chain 也不能获得 LK OEM 信任，且会引入更多签名链变化。
+3. 当前最小风险方案是保留候选现有签名元数据，依赖目标 LK 在真实 `LKS_UNLOCK` 状态下的 `ALLOW_VERIFICATION_ERROR` 策略；这属于**策略容忍**，不是修复了 Boot digest。
+4. 当前未读取设备实际 lock state，未确认手机正在运行的 LK build/revision，也没有设备启动日志。因此本轮结论为：**AVB 静态链与 LK OEM key/policy 高度吻合；候选 hash mismatch 已证实；unlocked 容忍路径有源码级支持，但运行时条件尚未确认。**
+5. 没有执行 Fastboot、刷写、分区写入、Recovery 写入或真机启动测试；也没有确认候选 Boot 已安装。
+
