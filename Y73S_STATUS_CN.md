@@ -2,7 +2,7 @@
 
 > 更新时间：2026-11-11  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 最近代码/测试基线（本次状态文档更新前）：`d5df51f08113dba16b9069776add4c4383f6c1a0`  
+> 最近代码/测试基线（本次状态文档更新前）：`d65f3d77eb46d35ef5082a06491c1242e79ad388`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -2920,3 +2920,45 @@ Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号
 ### 限制
 
 这是源码级契约和编译级验证，不是目标 vendor KDIR 的 `.ko` / MODPOST 证明，也不是设备端安装顺序或启动测试。双重所有权仍未解决；当前行为是其中一边检测到冲突后 fail-closed。未进行 Fastboot、刷写、分区写入或真机启动测试。
+
+
+## 89. 2026-11-11：Y73s vendor KDIR 来源核查
+
+### 已核查的公开仓库
+
+- [PD2031 设备树](https://github.com/4accccc/android_device_vivo_pd2031/tree/twrp-12.1) README 标识设备为 vivo Y73s / PD2031 / MT6853 / Android 10；其 [BoardConfig.mk](https://github.com/4accccc/android_device_vivo_pd2031/blob/twrp-12.1/BoardConfig.mk) 设置 `TARGET_FORCE_PREBUILT_KERNEL := true`，指向仓库中的预编译 kernel 和 DTB，而不是完整 Linux 内核源码。
+- [vivo-4.x-kernel-autopatch](https://github.com/4accccc/vivo-4.x-kernel-autopatch) 是 4.x 内核修补工具。已检查其 main 分支文件树，包含 CSharp、Legacy 和 Kernel4.9 脚本目录，没有可作为 Y73s vendor KDIR 的完整 4.14.141 内核树。
+- [vivo-source-mirror/Y53s](https://github.com/vivo-source-mirror/Y53s) 的源码含有 [PD2031 设备树文件](https://github.com/vivo-source-mirror/Y53s/blob/master/arch/arm64/boot/dts/mediatek/k6853v1_64_6360_PD2031.dts)，但该仓库 Makefile 是 `VERSION = 4`、`PATCHLEVEL = 14`、`SUBLEVEL = 186`，即 4.14.186；仓库只有 master 分支。不能因含 PD2031 DTS 就把它当成目标 4.14.141+ 的 ABI 等价源码。
+- [KernelPatch 上游 Y73s 记录](https://github.com/bmax121/KernelPatch/issues/189) 与本项目原始内核 banner 均记录 Linux 4.14.141+、Android Clang 9.0.3。该信息可作为目标版本指纹，不能替代 vendor 源码。
+
+### 结论与编译门槛
+
+在本轮检查的公开 GitHub 结果和设备树/工具仓库中，尚未找到能够证明与 `PD2031_A_5.12.1`、Linux `4.14.141+` 完全匹配的 vendor kernel source、生成配置及 `Module.symvers`。
+
+因此目前不能声称已经完成目标 LKM 的真实 Kbuild/MODPOST。4.14.186、通用 MT6853、Android common kernel 或只含预编译 kernel 的 TWRP 设备树都不能替代目标 KDIR。要解除该阻塞，需要同一原厂构建对应的完整源码、`.config`、生成头文件和 `Module.symvers`；仅修改 Makefile 的版本号不构成 ABI 匹配证明。
+
+以上是对已检查公开来源的结论，不代表断言互联网任何位置都不存在该源码。
+
+## 90. 2026-11-11：memblock 错误回退增加负向回归保护
+
+### 已确认的旧缺陷
+
+旧 Y73s patch 日志显示曾选择 `memblock_alloc_try_nid` 作为 map 物理分配器；对原始 4.14.141 内核的静态反汇编表明，该三参数函数执行了物理到虚拟地址转换并返回内核虚拟指针。若调用方把它当物理地址使用，会污染早期映射计算。相关历史证据和后续更正记录见 [Allocator ABI audit](Y73S_ALLOCATOR_DISPATCH_AUDIT.md)。
+
+### 当前源码和新回归检查
+
+- `tools/symbol.c::fillin_map_symbol()` 优先解析四参数 `memblock_find_in_range`，由 `kernel/base/map.c` 用 `memblock_reserve` 保留返回的物理区间；只有确实找到正确的三参数 `memblock_phys_alloc_try_nid` 时才可选择该物理分配 ABI。
+- 线性映射探测单独使用五参数 `memblock_virt_alloc_try_nid_nopanic`（缺少时才使用同 ABI 的普通 variant），不会把虚拟分配器当作物理分配器。
+- 缺少已验证的物理分配接口时，工具必须 fail closed；`map_phys_alloc()` 不再保留旧的 `MAP_SYM_MEMBLOCK_ALLOC_TRY_NID` 分派。
+- `scripts/verify_y73s_memblock_contract.py` 新增负向检查，明确拒绝重新引入 `memblock_alloc_try_nid` 旧回退，并检查物理分配符号缺失时的失败保护。
+
+### 当前代码/CI 结果
+
+- 当前代码基线：`d65f3d77eb46d35ef5082a06491c1242e79ad388`。
+- Linux Host / LKM-KPM 源码契约 / kptools：Run [43002480671](https://github.com/ljx-91/kptools-fix/actions/runs/43002480671)，两个 jobs 成功；日志明确输出 `obsolete virtual-return memblock_alloc_try_nid fallback is not selected`。
+- Y73s GCC 14.2 KPIMG：Run [43002480626](https://github.com/ljx-91/kptools-fix/actions/runs/43002480626)，成功。
+- Windows 工作流 [43002480571](https://github.com/ljx-91/kptools-fix/actions/runs/43002480571)：Android KPIMG / Linux kptools / source-contract 子任务成功；Windows `kptools.exe` 子任务在本节记录时仍在运行，故不把整条 workflow 标记为成功。
+
+### 限制
+
+这些结果证明源码契约和 KPIMG 构建通过，不证明目标 vendor LKM 已经 Kbuild/MODPOST，不证明设备端 map 探测一定成功，也不证明 APatch bootloop 已解决。没有执行设备启动、Fastboot 或分区写入。
