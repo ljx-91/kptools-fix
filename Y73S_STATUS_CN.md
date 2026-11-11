@@ -2,7 +2,7 @@
 
 > 更新时间：2026-11-11  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 最近代码/测试基线（本次状态文档更新前）：`2f25b3cab99d3b8c375e63a17d51fbdf62da7829`  
+> 最近代码/测试基线（本次状态文档更新前）：`d5df51f08113dba16b9069776add4c4383f6c1a0`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -2891,3 +2891,32 @@ Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号
 - 尚无目标 `.ko` 编译/MODPOST、设备端 Hook 调用序列或启动日志闭环。
 - 本节修正不能证明 APatch 早期重启问题已经解决，也不能保证任何候选镜像能够启动。
 - 没有执行 Fastboot、刷写、分区写入或真机启动测试。
+
+
+## 88. 2026-11-11：增加 KPIMG/LKM syscall-45 共存拒绝路径的集成契约
+
+### 新增检查
+
+在既有 11 项 syscall-45 源码契约上增加第 12 项，检查跨 KPIMG/LKM 的完整失败闭环：
+
+1. KPIMG 写入的是 `LDR X17, #8; BR X17` 四字绝对分支，literal 位于入口偏移 +8。
+2. LKM 的入口跳板解析器只识别已支持的 B/BTI 入口形式，不把该 LDR/BR literal stub 错当成普通 B 跳板。
+3. LKM `hook_prepare()` 逐条搬迁其 4-word prologue；`relo_ldr()` 发现 literal 目标位于将被覆盖的 prologue 内时返回 `-HOOK_BAD_RELO`。
+4. LKM supercall 安装将 Hook 错误向上传递，`kernelpatch_init()` 进入错误回滚路径，而不是继续报告模块初始化成功。
+
+本检查的目的，是把当前“拒绝双重 Hook、失败时中止 LKM 初始化”的安全行为固定为回归条件；它没有让 KPIMG 与 standalone LKM 共存，也没有改动生产 Hook 逻辑。
+
+### 首次失败与修正记录
+
+- 提交 `6d48c7503fa019d7351b594d00a6f04d249c49c0` 的第一次 Host CI 失败，原因是新增契约中的换行/制表符匹配写成了双重转义；日志显示旧的 init-unwind 断言和新集成断言均失败。该失败属于测试表达式错误，不是生产源码测试通过。
+- 修正测试字符串后，提交 `d5df51f08113dba16b9069776add4c4383f6c1a0` 的 Linux Host source-contract job 成功，日志明确输出 `Y73S syscall-45 contract: 12/12 checks passed`。
+
+### 当前 HEAD 验证
+
+- Linux Host source contracts + host kptools：Run [43001553689](https://github.com/ljx-91/kptools-fix/actions/runs/43001553689)，两个 jobs 均成功。
+- Y73S GCC 14.2 KPIMG build/audit：Run [43001553728](https://github.com/ljx-91/kptools-fix/actions/runs/43001553728)，成功。
+- Windows workflow：Run [43001553762](https://github.com/ljx-91/kptools-fix/actions/runs/43001553762)，其中 Android KPIMG / Linux kptools / source-contract job 成功；Windows `kptools.exe` job 在本节记录时仍为 queued，因此不能报告整条 Windows workflow 已通过。
+
+### 限制
+
+这是源码级契约和编译级验证，不是目标 vendor KDIR 的 `.ko` / MODPOST 证明，也不是设备端安装顺序或启动测试。双重所有权仍未解决；当前行为是其中一边检测到冲突后 fail-closed。未进行 Fastboot、刷写、分区写入或真机启动测试。
