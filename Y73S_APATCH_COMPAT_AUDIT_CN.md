@@ -205,6 +205,9 @@ CI：
 验证：
 - Linux Host / 源码契约 Run [43080710934](https://github.com/ljx-91/kptools-fix/actions/runs/43080710934)，成功；Manager exclude/key-copy 早期授权检查、真实 SuperKey C fixture、真实 syscall x0-x5 capture fixture 全部 PASS。
 - Y73s GCC 14.2 KPIMG Run [43080712484](https://github.com/ljx-91/kptools-fix/actions/runs/43080712484)，成功；KPIMG 交叉编译和全套回归测试通过。
-- Windows + Android KPIMG Run [43080711483](https://github.com/ljx-91/kptools-fix/actions/runs/43080711483)，Android KPIMG / Linux / 源码契约 job 成功；Windows kptools.exe job 在本段记录时仍在执行。
+- Windows + Android KPIMG Run [43080711483](https://github.com/ljx-91/kptools-fix/actions/runs/43080711483) 整条 workflow 成功；Android KPIMG、Linux kptools、源码契约、Windows kptools.exe、DLL 收集、Smoke Test、ZIP 与 Artifact 上传全部通过。
 
 **边界：**以上仍是离线 C fixture、源码契约和交叉编译，不是目标设备上的 syscall 45 trace。要最终确认 Authentication Failed 是否消失，仍需真实 Manager UID、x0 指针、key-copy 返回值、`auth_superkey` 返回值、命令号和 `args->ret` 的设备日志。
+
+
+本轮 Manager / SuperKey / syscall 参数链路源码与测试提交：`d58fc4220fee22ba8ea49ead66a9ee17ad98c119`；其后提交仅更新审计文档。
