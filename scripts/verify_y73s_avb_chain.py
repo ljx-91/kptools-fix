@@ -97,9 +97,9 @@ def parse_vbmeta(blob, label):
             name = body[q:q + name_n]; q += name_n
             salt = body[q:q + salt_n]; q += salt_n
             digest = body[q:q + digest_n]; q += digest_n
-            if q != n:
-                raise AuditError(f"{label}: invalid HashDescriptor lengths")
-            descs.append({"kind": "hash", "partition": name.decode("utf-8", "replace"),
+            if q > n or n - q > 7 or any(body[q:]):
+                raise AuditError(f"{label}: invalid HashDescriptor lengths/padding")
+            descs.append({"kind": "hash", "partition": name.decode("utf-8", "strict"),
                           "image_size": image_sz, "algorithm": hash_alg,
                           "salt": salt, "digest": digest, "flags": flags})
         elif tag == 4:  # ChainPartitionDescriptor: 16-byte fields + 60 reserved
@@ -120,10 +120,22 @@ def parse_boot(path, label):
     data = Path(path).read_bytes()
     if len(data) < 64 or data[-64:-60] != b"AVBf":
         raise AuditError(f"{label}: AVB footer missing")
-    major, minor, original_sz, vb_off, vb_sz = struct.unpack_from(">IIQQQ", data, len(data) - 60)
-    if (major, minor) != (1, 0) or vb_off < original_sz or vb_off + vb_sz > len(data) - 64 or original_sz > len(data):
-        raise AuditError(f"{label}: invalid footer")
+    footer = data[-64:]
+    major, minor, original_sz, vb_off, vb_sz = struct.unpack_from(">IIQQQ", footer, 4)
+    if (major, minor) != (1, 0):
+        raise AuditError(f"{label}: unsupported AVB footer version")
+    if any(footer[36:]):
+        raise AuditError(f"{label}: AVB footer reserved bytes are non-zero")
+    pre_footer_size = len(data) - 64
+    if original_sz > pre_footer_size:
+        raise AuditError(f"{label}: original_image_size exceeds pre-footer area")
+    if vb_off < original_sz or vb_off % 64:
+        raise AuditError(f"{label}: vbmeta_offset precedes image end or is not 64-byte aligned")
+    if vb_sz == 0 or vb_off + vb_sz > pre_footer_size:
+        raise AuditError(f"{label}: vbmeta range is empty or exceeds pre-footer area")
     vb_blob = data[vb_off:vb_off + vb_sz]
+    if len(vb_blob) != vb_sz or vb_blob[:4] != b"AVB0":
+        raise AuditError(f"{label}: footer-selected vbmeta is truncated or lacks AVB0")
     vb = parse_vbmeta(vb_blob, label + "/embedded-vbmeta")
     return {"data": data, "footer_original_size": original_sz, "vbmeta_blob": vb_blob,
             "vbmeta": vb, "hashes": [d for d in vb["descriptors"] if d["kind"] == "hash"]}
