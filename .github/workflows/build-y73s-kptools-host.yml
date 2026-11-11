@@ -8,6 +8,7 @@ on:
     paths:
       - 'tools/**'
       - 'scripts/**'
+      - 'tests/**'
       - 'lkm/**'
       - 'kernel/patch/**'
       - '.github/workflows/build-y73s-kptools-host.yml'
