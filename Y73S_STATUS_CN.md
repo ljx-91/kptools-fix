@@ -2486,3 +2486,39 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 ### 本轮结论
 
 本轮完成的是一个可独立审查的 dispatch ABI class 一致性修复，并已通过 Host、KPIMG 和 Windows CI。它缩小了 chain 复用时的 ABI 歧义，但**没有解决 Resident Gate、pre-reader window 或 KPM-parent-LKM 生命周期问题**；这些仍是阻止宣称生产级卸载安全的硬阻塞项。
+
+
+## 77. 2026-11-11：AVB OEM 根密钥证据重新分级（修正第 75 节的过度推断）
+
+### 新发现：公开 MT6853 target key 与本机 root vbmeta key 不一致
+
+继续检查 MTK 参考树的实际验证实现后，发现：
+
+- `platform/common/avb/avb_hal/avb_hal.c` 中，`g_avb_key[AVB_PUBK_SZ]` 由目标配置 `avbkey.h` 初始化；`avb_hal_verify_public_key()` 取出 vbmeta 公钥模数后，以 `memcmp(g_avb_key, pubk, 256)` 判断 OEM key 是否可信。
+- 同一参考树 `target/k6853v1_64_6360/inc/avbkey.h`（以及 `target/k6853v1_64/inc/avbkey.h`）提供的 256-byte `AVB_PUBK`，SHA-256 为 `4ffc881faafb2d1af7dd40cfba4ca90464b4f5689ef7f4ec3a0fe7b741440688`。
+- Y73s 根 `vbmeta.img` 的 256-byte RSA modulus SHA-256 为 `5de742a4b3a29de2eb6ab8ba999e36a8be07e2f73c3ca5839fb2c1aea42acdba`；两者不相同。
+- 根 vbmeta modulus 确实在 `lk-verified.img` 偏移 `0xDBBC4` 出现一次，但**仅凭字节串出现在 LK 文件中，不能证明它就是实际参与 `memcmp(g_avb_key, pubk, 256)` 的数组**，也不能证明 LK 会信任该根 vbmeta key。
+- LK 样本内 build-id 字符串与 `k6853v1_64_6360` 家族吻合，但公开参考树中的 key header 与样本不匹配。这可能来自不同产品配置、Vivo 私有修改或参考源码版本差异；目前没有该 LK 精确构建的 map/symbol/源码，不能选择其中一种解释当作事实。
+
+### 修正后的结论
+
+1. 原厂 Boot 与候选 Boot 内嵌 vbmeta 的 RSA 数学签名、auth-block hash 均可独立验证；根 vbmeta 与 vbmeta_system 的 RSA 数学签名也可独立验证。这只证明签名与各自嵌入公钥自洽，不自动证明公钥受设备 OEM LK 信任。
+2. 根 vbmeta → Boot child key、根 vbmeta → vbmeta_system child key 的链式公钥字节匹配仍成立。
+3. **OEM root key 是否被这份 LK 的实际 `g_avb_key` 接受，目前降级为未确认。** 第 75 节“根密钥与 LK 信任材料吻合”的推断不应作为已证明结论。
+4. MTK 参考源码中的 unlocked policy 和 `ALLOW_VERIFICATION_ERROR` 流程仍然提供有价值的候选解释，但其成立前提是：目标 LK 的实际 OEM key 接受根 vbmeta，并且运行时 lock state 确实为 `LKS_UNLOCK`。两个前提都还没有设备级确认。
+5. 当前仍不能说 AVB 已完全解决。若 OEM root key 不被 LK 接受，unlocked hash-error 容忍路径也无法补救前面的 vbmeta 信任失败。
+
+### 审计工具加固
+
+`scripts/verify_y73s_avb_chain.py` 增加：
+- 验证 LK build-id 字符串存在；
+- 要求根 modulus 在该固定 LK 样本中的偏移必须为 `0xDBBC4`，避免“任意位置命中”；
+- 输出 root modulus SHA-256 和公开 MT6853 target header key SHA-256 的比较结果；
+- 明确输出 `lk_binary_modulus_presence_proves_trust=false`；
+- 验证 AVB Footer 的 vbmeta offset 不早于 original image size。
+
+这些是静态证据边界检查，不会把 key presence 自动升级为 OEM trust。脚本尚未在专门 AVB fixture CI 中执行；最近的 KPIMG/Windows 构建 CI 不覆盖该脚本。
+
+### 本轮结论
+
+**AVB 当前状态：OEM 签名数学正确、链式 key 一致、候选 Boot hash 不匹配；但根 OEM key 信任和设备实际 unlocked 状态仍未确认。** 不修改任何 vbmeta，不伪造签名，不刷写设备。
