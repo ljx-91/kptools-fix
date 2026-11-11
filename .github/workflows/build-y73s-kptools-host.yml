@@ -55,6 +55,7 @@ jobs:
             verify_lkm_kpm_loader_contract.py \
             verify_lkm_hook_runtime_contract.py \
             verify_lkm_supercall_input_contract.py \
+            verify_lkm_manager_auth_contract.py \
             verify_userd_file_contract.py \
             verify_y73s_fphook_contract.py \
             verify_y73s_memblock_contract.py \
