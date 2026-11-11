@@ -148,12 +148,12 @@ void extra_event_init(const char *event)
 }
 KP_EXPORT_SYMBOL(extra_event_init);
 
-static void before_kernel_init(hook_fargs4_t *args, void *udata)
+static void before_kernel_init(hook_fargs1_t *args, void *udata)
 {
     extra_event_init(EXTRA_EVENT_PRE_KERNEL_INIT);
 }
 
-static void after_kernel_init(hook_fargs4_t *args, void *udata)
+static void after_kernel_init(hook_fargs1_t *args, void *udata)
 {
     extra_event_init(EXTRA_EVENT_POST_KERNEL_INIT);
 }
@@ -198,7 +198,7 @@ int patch()
     /* kernel_init */
     unsigned long kernel_init_addr = patch_config->kernel_init;
     if (kernel_init_addr) {
-        rc = hook_wrap4((void *)kernel_init_addr, before_kernel_init, after_kernel_init, 0);
+        rc = hook_wrap1((void *)kernel_init_addr, before_kernel_init, after_kernel_init, 0);
     } else if (patch_config->rest_init) {
         log_boot("kernel_init could not be resolved from rest_init; PRE/POST_KERNEL_INIT events unavailable\n");
     } else {
