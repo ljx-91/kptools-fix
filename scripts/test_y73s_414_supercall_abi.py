@@ -149,7 +149,6 @@ int main(void)
     kp_orig_truncate_args = NULL;
     manager_allowed = false;
     su_allowed = false;
-    su_allowed = false;
     rc = kp_supercall_handler_legacy(0x1111, 0x10002, 1, 2, 3, 4);
     if (rc != -ENOSYS) {
         fprintf(stderr, "missing original trampoline was not fail-closed\n");
@@ -159,7 +158,7 @@ int main(void)
     return 0;
 }
 """
-    code = prefix + "\n" + original + "\n" + handler + "\n" + tests
+    code = prefix + "\n" + original + "\n" + manager_only + "\n" + handler + "\n" + tests
     with tempfile.TemporaryDirectory(prefix="y73s-414-supercall-") as tmp:
         cfile = Path(tmp) / "supercall_abi.c"
         binary = Path(tmp) / "supercall_abi"
