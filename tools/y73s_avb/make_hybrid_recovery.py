@@ -68,8 +68,8 @@ def extract_hash_descriptors(vbmeta: bytes) -> list[dict]:
             raise ImageError("truncated AVB descriptor header")
         tag, n = struct.unpack_from(">QQ", aux, pos)
         pos += 16
-        if pos + n > end:
-            raise ImageError("truncated AVB descriptor body")
+        if pos + n > end or n % 8:
+            raise ImageError("truncated or unaligned AVB descriptor body")
         body = aux[pos:pos + n]
         pos += n
         if tag != 2:
