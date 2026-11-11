@@ -249,24 +249,70 @@ jobs:
 
           echo "Windows kptools build successful"
 
-      - name: Collect artifacts
+      - name: Smoke-test Windows executable
         shell: msys2 {0}
         run: |
           set -eux
+          tools/kptools.exe --version
 
-          mkdir -p artifacts
+      - name: Collect and package Windows artifacts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Copy-Item kernel/kpimg artifacts/kpimg-android
+          Copy-Item tools/kptools.exe artifacts/kptools.exe
 
-          cp kernel/kpimg artifacts/kpimg-android
-          cp tools/kptools.exe artifacts/kptools.exe
+          @'
+          KernelPatch Windows tools - vivo Y73s branch
+          ============================================
 
-          sha256sum artifacts/* > artifacts/SHA256SUMS
+          Target branch: y73s-cred-layout-guards-20261108
+          Build: GitHub Actions / Windows x64
+          Contents:
+            kptools.exe     Windows x64 command-line tool
+            kpimg-android   ARM64 Android kpimg built by the paired Ubuntu job
+            SHA256SUMS      SHA-256 checksums
 
-          ls -lh artifacts
+          Quick start (PowerShell or CMD):
+            .\kptools.exe --version
+            .\kptools.exe --help
+
+          Run commands from this directory, or provide the full path to the
+          executable. Keep kpimg-android alongside the package when using
+          workflows that require the Android kpimg payload.
+
+          IMPORTANT Y73s / AVB STATUS
+          This package is a build artifact, not a device-validated release.
+          Modified boot images have NOT been proven to pass the OEM Y73s AVB
+          boot HashDescriptor check. Do not flash or boot a modified image
+          based solely on successful compilation, packaging, or RSA signature
+          verification. No Fastboot, partition write, or device boot test is
+          implied by this artifact.
+          '@ | Set-Content -Encoding utf8 artifacts/README-Windows.txt
+
+          @'
+          @echo off
+          "%~dp0kptools.exe" %*
+          '@ | Set-Content -Encoding ascii artifacts/kptools-help.cmd
+
+          $files = Get-ChildItem artifacts -File | Where-Object { $_.Name -ne "SHA256SUMS" -and $_.Name -ne "KernelPatch-Windows-Y73S.zip" }
+          $lines = foreach ($file in $files) {
+            $hash = (Get-FileHash -Algorithm SHA256 $file.FullName).Hash.ToLower()
+            "$hash  $($file.Name)"
+          }
+          $lines | Set-Content -Encoding ascii artifacts/SHA256SUMS
+
+          Compress-Archive -Path artifacts/kptools.exe,artifacts/kpimg-android,artifacts/README-Windows.txt,artifacts/kptools-help.cmd,artifacts/SHA256SUMS -DestinationPath KernelPatch-Windows-Y73S.zip -Force
+          Get-FileHash -Algorithm SHA256 KernelPatch-Windows-Y73S.zip
+          Get-ChildItem artifacts,KernelPatch-Windows-Y73S.zip | Format-Table FullName,Length
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: KernelPatch-Windows-Y73S
-          path: artifacts/
+          path: |
+            artifacts/
+            KernelPatch-Windows-Y73S.zip
           if-no-files-found: error
           retention-days: 14
