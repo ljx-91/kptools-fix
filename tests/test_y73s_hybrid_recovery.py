@@ -19,6 +19,7 @@ def make_vbmeta(payload: bytes, partition=b"recovery") -> bytes:
     name = partition
     struct.pack_into(">IIII", body, 40, len(name), len(salt), len(digest), 0)
     body.extend(name + salt + digest)
+    body.extend(bytes((-len(body)) % 8))
     descriptor = struct.pack(">QQ", 2, len(body)) + body
     auth_size, aux_size = 0, 256 + len(descriptor)
     header = bytearray(256)
