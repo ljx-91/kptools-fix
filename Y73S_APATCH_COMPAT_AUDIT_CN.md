@@ -86,7 +86,7 @@ Y73s 符号审计结果：
 
 - Linux Host kptools + 仓库源码契约：Run [43071269698](https://github.com/ljx-91/kptools-fix/actions/runs/43071269698)，成功；日志包含 Y73s AVC 指纹检查全部 PASS。
 - Y73s GCC 14.2 Android KPIMG：Run [43071269821](https://github.com/ljx-91/kptools-fix/actions/runs/43071269821)，成功。
-- Windows kptools：Run [43071269905](https://github.com/ljx-91/kptools-fix/actions/runs/43071269905)，构建、DLL 收集、Smoke Test 和 ZIP 打包步骤均已完成；最终 workflow 状态需以 GitHub Actions 页面为准。
+- Windows kptools：最新 HEAD 的 Run [43071760162](https://github.com/ljx-91/kptools-fix/actions/runs/43071760162)，Android KPIMG job 与 Windows kptools.exe job 均成功；Windows DLL 收集、Smoke Test、ZIP 打包和上传全部通过。
 - 仅修正日志换行后的最新 Linux Host run：[43071760192](https://github.com/ljx-91/kptools-fix/actions/runs/43071760192)，成功。
 
 ## 7. 仍未解决
