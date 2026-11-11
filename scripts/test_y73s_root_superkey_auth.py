@@ -41,10 +41,20 @@ def main():
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
-#include <sha256.h>
-
 #define SUPER_KEY_LEN 64
 #define ROOT_SUPER_KEY_HASH_LEN 32
+#define SHA256_BLOCK_SIZE 32
+typedef uint8_t BYTE;
+typedef uint32_t WORD;
+typedef struct {
+    BYTE data[64];
+    WORD datalen;
+    unsigned long bitlen;
+    WORD state[8];
+} SHA256_CTX;
+void sha256_init(SHA256_CTX *ctx);
+void sha256_update(SHA256_CTX *ctx, const BYTE data[], size_t len);
+void sha256_final(SHA256_CTX *ctx, BYTE hash[]);
 
 static char *superkey;
 static char *root_superkey;
@@ -130,8 +140,7 @@ int main(void)
         binary = Path(tmp) / "superkey_auth"
         cfile.write_text(code, encoding="utf-8")
         subprocess.run([compiler, "-std=gnu11", "-Wall", "-Wextra", "-Werror",
-                        "-I", str(ROOT / "kernel/include"), str(cfile),
-                        "-o", str(binary)], check=True)
+                        str(cfile), "-o", str(binary)], check=True)
         subprocess.run([str(binary)], check=True)
     print("[PASS] runtime root-SuperKey authentication fixture")
 
