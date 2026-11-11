@@ -76,7 +76,7 @@ class HybridBuilderTests(unittest.TestCase):
 
     def test_rejects_bad_footer_bounds(self):
         blob = bytearray(make_footered(b"payload", make_vbmeta(b"payload"), 1024))
-        struct.pack_into(">Q", blob, len(blob) - 64 + 20, 0xFFFFFFFF)
+        struct.pack_into(">Q", blob, len(blob) - 64 + 20, 0xFFFFFFC0)
         with self.assertRaisesRegex(hybrid.ImageError, "outside pre-footer"):
             hybrid.parse_footer(bytes(blob), "bad")
 
