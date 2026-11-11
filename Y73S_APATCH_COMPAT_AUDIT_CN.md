@@ -147,4 +147,4 @@ Y73s 符号审计结果：
 此外，本轮 CI 没有目标 PD2031 4.14.141+ vendor KDIR，因此没有编译/MODPOST 出真实 Y73s LKM .ko；也没有设备端 manager UID 扫描日志、SuperKey syscall trace、KPM load/unload 运行记录。不能据此宣称真机鉴权或 Root 已经工作。
 
 
-当前分支 HEAD（含本轮所有文档更新）：`a1a033c4c15e9ece1bd01fd17f34ba33901ea0bf`；本轮源码/测试 CI 提交：`d39cbe92d463ca6a1fb0b2f16affcfad64426b6d`。
+本轮源码/测试 CI 提交：`d39cbe92d463ca6a1fb0b2f16affcfad64426b6d`；本轮后续提交仅更新审计文档。
