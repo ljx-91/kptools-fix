@@ -41,6 +41,8 @@ def parse_footer(data: bytes, label: str) -> tuple[int, int, int, int, int, byte
         raise ImageError(f"{label}: unsupported AVB footer minor version {minor}")
     if original_size > len(data) - FOOTER_SIZE:
         raise ImageError(f"{label}: original_image_size exceeds pre-footer area")
+    if vbmeta_offset < original_size or vbmeta_offset % 64:
+        raise ImageError(f"{label}: vbmeta_offset precedes image end or is not 64-byte aligned")
     if vbmeta_size == 0 or vbmeta_offset + vbmeta_size > len(data) - FOOTER_SIZE:
         raise ImageError(f"{label}: vbmeta range is empty or outside pre-footer area")
     vbmeta = data[vbmeta_offset:vbmeta_offset + vbmeta_size]
@@ -108,9 +110,9 @@ def check_payload_hash(payload: bytes, vbmeta: bytes, partition: str) -> tuple[b
     d = descriptors[0]
     if d["algorithm"] != "sha256":
         raise ImageError(f"unsupported {partition} HashDescriptor algorithm: {d['algorithm']}")
-    if d["image_size"] > len(payload):
+    if d["image_size"] != len(payload):
         return False, (
-            f"descriptor image_size {d['image_size']} exceeds payload size {len(payload)}"
+            f"descriptor image_size {d['image_size']} does not equal payload size {len(payload)}"
         )
     actual = hashlib.sha256(d["salt"] + payload[:d["image_size"]]).digest()
     return actual == d["digest"], (
@@ -132,8 +134,8 @@ def build_image(payload: bytes, template: bytes, target_size: int,
             "Use --allow-hash-mismatch only for non-flashable research artifacts."
         )
 
-    new_vbmeta_offset = len(payload)
-    required = len(payload) + vbmeta_size + FOOTER_SIZE
+    new_vbmeta_offset = (len(payload) + 63) & ~63
+    required = new_vbmeta_offset + vbmeta_size + FOOTER_SIZE
     if required > target_size:
         raise ImageError(
             f"payload+vbmeta+footer needs {required} bytes; target is {target_size}"
@@ -142,7 +144,13 @@ def build_image(payload: bytes, template: bytes, target_size: int,
     struct.pack_into(">Q", footer, 12, len(payload))
     struct.pack_into(">Q", footer, 20, new_vbmeta_offset)
     struct.pack_into(">Q", footer, 28, vbmeta_size)
-    output = payload + vbmeta + bytes(target_size - required) + bytes(footer)
+    output = (
+        payload
+        + bytes(new_vbmeta_offset - len(payload))
+        + vbmeta
+        + bytes(target_size - required)
+        + bytes(footer)
+    )
     # Read-back: prove the footer points at the exact preserved vbmeta bytes.
     _, _, original_size, out_offset, out_size, _ = parse_footer(output, "output")
     if original_size != len(payload) or out_offset != new_vbmeta_offset or out_size != vbmeta_size:
@@ -187,8 +195,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.recovery_image.resolve() == args.output.resolve():
             raise ImageError("output path must differ from input path")
         recovery_data = args.recovery_image.read_bytes()
-        _, _, _, recovery_vbmeta_offset, _, _ = parse_footer(recovery_data, "recovery input")
-        payload = recovery_data[:recovery_vbmeta_offset]
+        _, _, recovery_original_size, _, _, _ = parse_footer(recovery_data, "recovery input")
+        payload = recovery_data[:recovery_original_size]
         template = args.template.read_bytes()
         output, verdict = build_image(
             payload, template, args.target_size, args.partition, args.allow_hash_mismatch
