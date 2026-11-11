@@ -3012,4 +3012,4 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 本次修复是 LKM Manager UID 权限路径，不是 APatch SuperKey 认证修复。LKM dispatcher 仍未实现 `SUPERCALL_SKEY_GET/SET/ROOT_ENABLE`；KPIMG 才包含上游 SuperKey 认证分支。缺少 PD2031 4.14.141+ vendor KDIR，未做真实 LKM .ko Kbuild/MODPOST；没有真机 SuperKey syscall、Manager UID、KPM load/unload 或 Wi-Fi 稳定性日志。AVB 摘要不匹配仍然阻止刷入。
 
 
-当前分支 HEAD（含状态文档更新）：`08b2bb201a9283ad3b348c3792c5fc030f3519db`；本轮源码/测试 CI 提交：`d39cbe92d463ca6a1fb0b2f16affcfad64426b6d`。
+当前分支 HEAD（含本轮所有文档更新）：`a1a033c4c15e9ece1bd01fd17f34ba33901ea0bf`；本轮源码/测试 CI 提交：`d39cbe92d463ca6a1fb0b2f16affcfad64426b6d`。
