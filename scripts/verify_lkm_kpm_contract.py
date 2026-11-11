@@ -250,8 +250,12 @@ def main():
             init_entry, "successful KPM init must be tracked for rollback")
     require(r"kp_sucompat_hook_init\(\)[\s\S]*?kp_supercall_install\(\)",
             init_entry, "supercall must be published after the other fallible hook setup")
-    require(r"kp_supercall_install\(\)[\s\S]*?kp_manager_init\(\)",
-            init_entry, "no fallible init stage may follow publication of the supercall")
+    require(r"kp_manager_init\(\)[\s\S]*?hook_rename_lsm\(\)[\s\S]*?kp_supercall_install\(\)",
+            init_entry, "manager identity and refresh hook must be ready before supercall publication")
+    require(r"kp_supercall_install\(\)[\s\S]*?supercall_installed\s*=\s*true[\s\S]*?return\s+0",
+            init_entry, "supercall remains the final fallible init step")
+    require(r"err_unwind:[\s\S]*?hook_rename_lsm_exit\(\)",
+            init_entry, "failed init removes the manager refresh hook")
     require(r"if\s*\(kpm_initialized\)\s*kp_kpm_exit\(\)",
             init_entry, "failed LKM init must release a successfully initialized private KPM runtime")
     kpm_exit = body(module, "void kp_kpm_exit(void)")
