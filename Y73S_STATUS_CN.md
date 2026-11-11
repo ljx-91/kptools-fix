@@ -3005,8 +3005,11 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - Manager APK 证书 + packages.list 扫描和 rename refresh hook 在 syscall 45 发布前完成；init unwind 负责移除 rename hook。
 - 新增 `scripts/verify_lkm_manager_auth_contract.py`；扩展 `scripts/test_y73s_414_supercall_abi.py`，真实编译执行 legacy handler 片段，验证 SU allowlist 非 Manager 无法加载 KPM，trusted Manager 可以调用 KPM。
 - Linux Host / 源码契约 Run [43077994524](https://github.com/ljx-91/kptools-fix/actions/runs/43077994524) 成功；Y73s GCC 14.2 KPIMG Run [43077994724](https://github.com/ljx-91/kptools-fix/actions/runs/43077994724) 成功；4.14 ABI fixture 的拒绝/允许两条权限用例均 PASS。
-- Windows + Android KPIMG Run [43077994511](https://github.com/ljx-91/kptools-fix/actions/runs/43077994511)：Android KPIMG 与 Linux/源码契约 job 成功；Windows kptools.exe job 在记录时仍运行。
+- Windows + Android KPIMG Run [43077994511](https://github.com/ljx-91/kptools-fix/actions/runs/43077994511) 整条 workflow 成功；Android KPIMG、Linux/源码契约、Windows kptools.exe、DLL 收集、Smoke Test、ZIP 与 Artifact 上传全部通过。
 
 ### 未解决 / 不可夸大
 
 本次修复是 LKM Manager UID 权限路径，不是 APatch SuperKey 认证修复。LKM dispatcher 仍未实现 `SUPERCALL_SKEY_GET/SET/ROOT_ENABLE`；KPIMG 才包含上游 SuperKey 认证分支。缺少 PD2031 4.14.141+ vendor KDIR，未做真实 LKM .ko Kbuild/MODPOST；没有真机 SuperKey syscall、Manager UID、KPM load/unload 或 Wi-Fi 稳定性日志。AVB 摘要不匹配仍然阻止刷入。
+
+
+当前分支 HEAD（含状态文档更新）：`08b2bb201a9283ad3b348c3792c5fc030f3519db`；本轮源码/测试 CI 提交：`d39cbe92d463ca6a1fb0b2f16affcfad64426b6d`。
