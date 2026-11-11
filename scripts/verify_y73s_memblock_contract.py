@@ -88,6 +88,17 @@ def main():
     if fill.find('"memblock_virt_alloc_try_nid_nopanic"') < 0 or fill.find('"memblock_virt_alloc_try_nid"') < 0:
         raise AssertionError("preset resolver must prefer nopanic virtual allocator and retain fallback")
 
+    # Regression guard for the previously confirmed Y73S failure mode:
+    # memblock_alloc_try_nid is a virtual-return allocator on this binary,
+    # so it must never be selected as a physical-address allocator.
+    if re.search(r'"memblock_alloc_try_nid"\\s*\\)', fill):
+        raise AssertionError("obsolete virtual-return memblock_alloc_try_nid fallback must not be selected")
+    if "MAP_SYM_MEMBLOCK_ALLOC_TRY_NID" in alloc:
+        raise AssertionError("map_phys_alloc must not dispatch through the obsolete virtual-return allocator")
+    require(r"if \\(!symbol->memblock_phys_alloc_relo\\)\\s*\\{\\s*tools_loge_exit",
+            fill, "missing verified physical allocator must fail closed")
+
+    print("[PASS] obsolete virtual-return memblock_alloc_try_nid fallback is not selected")
     print("[PASS] Y73S memblock API, allocation, linear-probe, and preset source contracts")
     print("[NOTE] Source contract checks do not prove runtime boot compatibility")
 
