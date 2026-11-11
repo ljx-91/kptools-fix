@@ -3,7 +3,6 @@
 日期：2026-11-12  
 仓库：ljx-91/kptools-fix  
 分支：y73s-cred-layout-guards-20261108  
-当前分支 HEAD：3291b6d3b91a524897df83544eb8f009fa76d73e  
 本轮最新源码/CI 测试提交：491d3aa5ee8d523878f136e4ea0874351678080e
 
 ## 1. 范围与结论
@@ -85,10 +84,9 @@ Y73s 符号审计结果：
 
 ## 6. CI
 
-- Linux Host kptools + 仓库源码契约：Run [43071269698](https://github.com/ljx-91/kptools-fix/actions/runs/43071269698)，成功；日志包含 Y73s AVC 指纹检查全部 PASS。
-- Y73s GCC 14.2 Android KPIMG：Run [43071269821](https://github.com/ljx-91/kptools-fix/actions/runs/43071269821)，成功。
-- Windows kptools：最新 HEAD 的 Run [43071760162](https://github.com/ljx-91/kptools-fix/actions/runs/43071760162)，Android KPIMG job 与 Windows kptools.exe job 均成功；Windows DLL 收集、Smoke Test、ZIP 打包和上传全部通过。
-- 仅修正日志换行后的最新 Linux Host run：[43071760192](https://github.com/ljx-91/kptools-fix/actions/runs/43071760192)，成功。
+- Linux Host kptools + 仓库源码契约：Run [43072740995](https://github.com/ljx-91/kptools-fix/actions/runs/43072740995)，成功；AVC 指纹和 CFI slowpath profile 检查全部 PASS。
+- Y73s GCC 14.2 Android KPIMG：Run [43072740986](https://github.com/ljx-91/kptools-fix/actions/runs/43072740986)，成功。
+- Windows kptools：Run [43072741042](https://github.com/ljx-91/kptools-fix/actions/runs/43072741042)，成功；Windows kptools.exe 构建、DLL 收集、Smoke Test、ZIP 打包和上传全部通过。
 
 ## 7. 仍未解决
 
