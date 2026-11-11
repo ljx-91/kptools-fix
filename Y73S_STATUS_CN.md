@@ -2658,3 +2658,43 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 3. 用真实 TWRP payload 与模板进行只读演练；默认严格模式必须在 hash 不匹配时拒绝，不能使用研究覆盖结果作为生产镜像。
 4. 若要支持不同用途（例如 TEE 仅读取 patchlevel 的恢复环境），需单独证明 LK/TEE 的实际消费路径，不能把该行为等同于 AVB 验证通过。
 
+
+
+## 82. 2026-11-11：混合 Recovery 构建器二次修正与 Host 回归通过
+
+### 发现并修正的第二层布局问题
+
+继续逐项对照 AVB Footer 语义后，发现上一版还有两处关键细节需要收紧：
+
+1. **Recovery payload 截取必须使用 Footer 的 `original_image_size`，不能使用 `vbmeta_offset`。** 两者之间允许存在对齐填充；将 `payload = image[:vbmeta_offset]` 会把填充字节算入原始镜像内容。
+2. **vbmeta_offset 需要按 64-byte 边界对齐。** 输出布局现在是 `payload + zero alignment padding + preserved vbmeta + partition padding + Footer`；Footer 的 `original_image_size` 指向真实 payload 末尾，`vbmeta_offset` 指向对齐后的 vbmeta。
+3. **HashDescriptor 的 image_size 必须与 payload 长度完全一致。** 不再仅检查 descriptor size 小于 payload；否则尾部未被 descriptor 覆盖的数据会被误当作受 AVB hash 保护。
+4. **AVB descriptor body 长度必须 8-byte 对齐**；HashDescriptor 的可变字段之后只允许最多 7 个零填充字节。测试 fixture 同步按 AVB descriptor 对齐规则构造。
+5. 修正坏 Footer 测试，使越界偏移保持 64-byte 对齐，从而确实覆盖“范围越界”分支，而不是先命中“偏移未对齐”分支。
+6. Host workflow 的 path filter 加入 `tests/**`，避免测试文件变化不触发回归工作流。
+
+### CI 结果与失败处理
+
+- `b963f6440aad054caa7489b3a6f72dde603f04b4` 的 Linux Host 回归曾失败。下载 job log 后确认，失败来自当时测试 fixture 仍按未对齐的旧布局生成模板 Footer；这不是被测生成器的目标行为。没有隐藏该失败。
+- 随后修正测试 fixture：模板 vbmeta offset 按 64-byte 对齐，测试覆盖完整 payload 长度要求。
+- 最终本轮相关提交：
+  - Builder Footer/payload/alignment 修复：`b963f6440aad054caa7489b3a6f72dde603f04b4`。
+  - 失败 fixture 修正：`8dace0a6570d0c0628bec9350f1a684402380546`。
+  - 越界用例修正：`9a791f51982187341465d905a6ce298d7ef5f981`。
+  - CI path filter 修正：`350adec37da218a21e370abff4a5d0e3019025ea`。
+- 最新 Host Linux CI run `42987641726`：两个 jobs（source contracts、host kptools build）均成功；其中 source contracts 已执行 `py_compile` 和 `tests/test_y73s_hybrid_recovery.py`。
+- 同一 HEAD 的 Windows/KPIMG workflow `42987641845` 检查时仍在运行，不能提前报告成功。
+
+### 当前实现的保证边界
+
+- 生成器现在对 Footer 布局、vbmeta 位置、payload 长度、64-byte vbmeta 对齐、HashDescriptor 内容摘要和输出回读做严格检查。
+- 它没有实现 RSA 公钥验签；“HashDescriptor 匹配”只代表该 descriptor 的 salted payload digest 匹配，不代表整个 OEM vbmeta 签名链已完成密码学验证。
+- 若真实模板的 recovery descriptor 与待封装 payload 不匹配，严格模式仍拒绝输出；研究覆盖参数只会产生明确标记的研究文件。
+- 上游 `vivo_avb_footer.bin` 仍无法从当前 GitHub 文件读取接口取得二进制内容；未对真实 51,257,344-byte 模板运行脚本，真实 offset、descriptor 名称、digest 与签名状态仍未确认。
+
+### 当前 HEAD 与下一步
+
+- 当前分支 HEAD：`350adec37da218a21e370abff4a5d0e3019025ea`。
+- 下一步等待 Windows/KPIMG workflow 完成；然后需要取得原始 `vivo_avb_footer.bin` 和待封装 Recovery 文件的真实字节，运行严格模式并记录实际 descriptor/hash 结果。
+- 本轮没有修改第三方设备树仓库、LK、Boot、vbmeta 或设备分区；没有 Fastboot、刷写或真机启动测试。
+
