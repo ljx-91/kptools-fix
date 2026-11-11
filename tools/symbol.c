@@ -553,7 +553,7 @@ int fillin_patch_config(kallsym_t *kallsym, char *img_buf, int imglen, patch_con
     if (!symbol->avc_denied) {
         symbol->avc_denied = resolve_y73s_avc_denied_fingerprint(kallsym, img_buf, imglen, target_is_be);
         if (symbol->avc_denied) {
-            tools_logi("vivo Y73s 4.14.141 avc_denied fingerprint verified: 0x%08x\\n",
+            tools_logi("vivo Y73s 4.14.141 avc_denied fingerprint verified: 0x%08x\n",
                        (unsigned int)symbol->avc_denied);
         }
     }
