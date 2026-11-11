@@ -2794,3 +2794,30 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 ### 证据边界
 
 本次 parser 加固没有更改任何镜像字节或 AVB descriptor，也没有新增设备级证据。Host CI 的 py_compile 只能证明脚本语法可编译，不等于对用户原始镜像重新执行了完整脚本；原始镜像的 Footer、digest、auth hash、RSA 和 key-link 结论以第 83 节的逐字节离线复核为准。
+
+
+## 85. 2026-11-11：严格解析 Y73S 隐藏的 kernel_init CFI 入口
+
+### 问题与修复
+
+Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号。现有实现已尝试从 `rest_init` 中的 `kernel_thread` 调用点恢复该入口；本轮继续收紧候选验证，避免把任意落在 `rest_init` 符号范围内的指令误判为函数入口：
+
+- CFI 函数指针目标必须是 4-byte 对齐且完整位于镜像内的指令。
+- 目标必须是 AArch64 无条件 `B` 跳板；不再接受“不是 B 指令就直接把跳板地址当函数体”的宽松路径。
+- 解码后的函数体入口必须 4-byte 对齐，且完整首条指令同时落在镜像范围和 `rest_init` 的 KALLSYMS 范围内。
+- 继续要求从 `rest_init` 的 `kernel_thread.cfi` 调用反向解码 ADRP/ADD x0 参数，并拒绝不唯一的函数体候选。
+- 保持 `PRE_KERNEL_INIT` / `POST_KERNEL_INIT` 分别挂在解析出的真实入口与返回路径；解析失败时只记录事件不可用，不将事件提前伪装成 `rest_init` 事件。
+
+### 回归检查
+
+`scripts/verify_y73s_symbol_scan_and_startup_events.py` 新增静态契约，检查 CFI stub 对齐、必须为 B 跳板、函数体对齐，以及函数体首条指令不得越过 `rest_init` 符号边界。原厂 Boot 的固定指令偏移 fixture 继续验证 kernel_init 与 kthreadd 两条 `kernel_thread` 调用路径不会混淆。
+
+### 提交
+
+- 实现：`f7cc454842ef91eaa04aa0e5d1b22a775cfb62c1`。
+- 回归契约：`be825b12dd03e7cb477a3e718edcad3da33e8f63`。
+- 当前分支 HEAD：`be825b12dd03e7cb477a3e718edcad3da33e8f63`。
+
+### 验证边界
+
+本轮已推送源码和回归检查；该提交触发的 GitHub Actions 结果仍需实际查询。源码契约通过也不等于 Y73S 目标 `.ko` 已构建、Hook 已在设备运行或 KPM 事件已在真机触发。目标 KDIR 缺失，因此暂不宣称设备级验证完成。全程没有 Fastboot、刷写、分区写入或真机启动测试。
