@@ -2552,3 +2552,28 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 ### 本轮结论
 
 新增了 PD2031 设备树交叉检查，排除了把第三方 recovery 的 AVB test key / flags 误当成原厂 LK 信任配置的风险。没有发现能解决 OEM key 信任疑点的新 LK 证据；不修改任何镜像或签名元数据。
+
+
+## 79. 2026-11-11：无原厂 LK 源码条件下的公开仓库检索
+
+### 检索范围与结果
+
+在用户确认没有可提供的原厂 LK 源码包后，继续检索公开 GitHub 材料，目标是寻找能与 PD2031 / V2031A / MT6853 对应的 LK 源码或 AVB target key：
+
+- `PD2031 LK`：找到 `4accccc/android_device_vivo_pd2031`。其设备配置确认 `PD2031`、`mt6853`、`k6853v1_64_6360` 家族信息，但配置 `TARGET_NO_BOOTLOADER := true`，仓库没有 LK 源码、LK map 或 AVB 公钥头文件。
+- `pd2031_samsung_s6e8fc1`：没有找到可用的 LK 源码/构建产物匹配结果。
+- `MT6853 lk source vivo`：找到 `vivo-source-mirror/Y53s` 内核源码镜像。该仓库是 Linux kernel 源码树，不是 Little Kernel 源码树；其递归 Git tree 返回结果中未发现 `sec_policy.c`、`load_vfy_boot.c`、`avb_hal` 或 LK 源码目录。Y53s 是同 SoC 参考，不是 Y73s 原厂 LK。
+- `V2031A lk`：未找到可确认属于 V2031A 的 LK 源码仓库。
+
+### 当前能做与不能做的修改
+
+- 可以继续维护 `kptools-fix` 中的 AVB 离线审计、候选 Boot hash mismatch 检查、LK 二进制静态证据和风险说明。
+- 可以基于公开 MTK 参考源码编写“参考实现适配草案”，但必须标记为非 Vivo OEM source patch，不能声称能直接编译或适用于设备当前 LK。
+- 不能对 `lk-verified.img` 盲目打二进制补丁：目前缺少目标函数边界、交叉引用、调用约定、分支范围、lock-state 读取路径和精确构建身份的完整证明。仅凭字符串、策略表字节或某个 key modulus 出现位置做 patch 风险过高。
+- 不能把 `ALLOW_VERIFICATION_ERROR` 参考路径当成目标设备既定行为；OEM root key 是否被 LK 实际信任、当前运行 LK revision、运行时 `LKS_UNLOCK` 仍未确认。
+
+### 结论与下一步
+
+本轮没有找到可用于直接修改的 Y73s 原厂 LK 源码，也没有修改或重打包 LK/Boot/vbmeta。下一步应转为对现有 LK 样本做只读逆向：确认 AVB key 比较函数、`g_avb_key` 数据引用、policy table 的读取调用链、lock-state provider 和 `load_vfy_boot` 验证错误分支；只有这些控制流与数据流均可交叉验证后，才评估是否存在范围受限的 binary patch。不得把静态分析结果称为设备启动验证。
+
+没有执行 Fastboot、刷写、分区写入、Recovery 写入或真机启动测试。
