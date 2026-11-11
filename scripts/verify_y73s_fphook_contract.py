@@ -46,6 +46,14 @@ checks = {
     "KPIMG hook arena initialization uses subtraction-safe bounds":
         "i <= end - sizeof(uint64_t)" in hmem and
         "i + sizeof(uint64_t) <= end" not in hmem,
+    "FP hook chain records normalized argno ABI class":
+        "chain->argno_abi_class = abi_class;" in src,
+    "FP wrap rejects invalid or mismatched transit ABI classes":
+        "abi_class < 0" in src and
+        "chain->argno_abi_class != abi_class" in src and
+        src.index("chain->argno_abi_class != abi_class", src.index("hook_err_t fp_hook_wrap(")) <
+            src.index("fp_chain_add_locked(chain", src.index("hook_err_t fp_hook_wrap(")),
+
 }
 for label, ok in checks.items():
     print(("PASS" if ok else "FAIL") + ": " + label)

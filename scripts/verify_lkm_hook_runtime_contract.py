@@ -250,6 +250,18 @@ checks = {
         "int hook_rename_lsm_exit(void);" in manager_h and
         "BUG_ON(hook_rename_lsm_exit());" in init and
         "hook_unwrap(" not in manager_exit,
+    "inline and LKM chain preparation record the normalized argno ABI class":
+        "chain->argno_abi_class = abi_class;" in hook and
+        "chain->argno_abi_class = abi_class;" in hook_engine and
+        "hook_argno_abi_class(argno)" in hook_engine,
+    "inline wrap rejects invalid or mismatched transit ABI classes":
+        "abi_class < 0" in function_body(hook, "hook_err_t hook_wrap(") and
+        "chain->argno_abi_class != abi_class" in function_body(hook, "hook_err_t hook_wrap(") and
+        function_body(hook, "hook_err_t hook_wrap(").index("chain->argno_abi_class != abi_class") <
+            function_body(hook, "hook_err_t hook_wrap(").index("hook_chain_add_locked(chain"),
+    "LKM chain prepare records ABI class before publishing transit":
+        "chain->argno_abi_class = abi_class;" in function_body(hook_engine, "static hook_err_t hook_chain_prepare("),
+
 }
 
 for label, ok in checks.items():

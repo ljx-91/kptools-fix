@@ -880,8 +880,10 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
     uint64_t transit_start;
     hook_chain_t *chain = local_container_of(transit, hook_chain_t, transit);
 
-    if (argno < 0 || argno > 12)
+    int32_t abi_class = hook_argno_abi_class(argno);
+    if (abi_class < 0)
         return -HOOK_BAD_ADDRESS;
+    chain->argno_abi_class = abi_class;
     if (argno == 0)
         transit_start = (uint64_t)_transit0;
     else if (argno <= 4)
@@ -1000,8 +1002,10 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
     hook_err_t err;
     unsigned long flags;
     int patch_rc;
+    int32_t abi_class = hook_argno_abi_class(argno);
 
-    if (is_bad_address(func) || (!before && !after)) return -HOOK_BAD_ADDRESS;
+    if (abi_class < 0 || is_bad_address(func) || (!before && !after))
+        return -HOOK_BAD_ADDRESS;
     faddr = (uint64_t)func;
     origin = branch_func_addr(faddr);
     if (is_bad_address((void *)origin)) return -HOOK_BAD_ADDRESS;
@@ -1009,6 +1013,10 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
     flags = hook_engine_lock();
     chain = (hook_chain_t *)hook_get_mem_from_origin_type(origin, INLINE_CHAIN);
     if (chain) {
+        if (chain->argno_abi_class != abi_class) {
+            hook_engine_unlock(flags);
+            return -HOOK_ABI_MISMATCH;
+        }
         err = hook_chain_add_locked(chain, before, after, udata);
         hook_engine_unlock(flags);
         return err;

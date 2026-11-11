@@ -24,28 +24,61 @@ _Static_assert(offsetof(hook_t, relo_insts) == 88, "hook_t.relo_insts offset");
 _Static_assert(offsetof(hook_chain_t, hook) == 0, "hook_chain_t.hook offset");
 _Static_assert(offsetof(hook_chain_t, chain_items_max) == 296,
                "hook_chain_t.chain_items_max offset");
-_Static_assert(offsetof(hook_chain_t, active_readers) == 300,
+_Static_assert(offsetof(hook_chain_t, argno_abi_class) == 300,
+               "hook_chain_t.argno_abi_class offset");
+_Static_assert(offsetof(hook_chain_t, active_readers) == 304,
                "hook_chain_t.active_readers offset");
-_Static_assert(offsetof(hook_chain_t, states) == 304,
+_Static_assert(offsetof(hook_chain_t, states) == 308,
                "hook_chain_t.states offset");
-_Static_assert(offsetof(hook_chain_t, udata) == 320,
+_Static_assert(offsetof(hook_chain_t, udata) == 328,
                "hook_chain_t.udata offset");
-_Static_assert(offsetof(hook_chain_t, befores) == 448,
+_Static_assert(offsetof(hook_chain_t, befores) == 456,
                "hook_chain_t.befores offset");
-_Static_assert(offsetof(hook_chain_t, afters) == 576,
+_Static_assert(offsetof(hook_chain_t, afters) == 584,
                "hook_chain_t.afters offset");
-_Static_assert(offsetof(hook_chain_t, before_owners) == 704,
+_Static_assert(offsetof(hook_chain_t, before_owners) == 712,
                "hook_chain_t.before_owners offset");
-_Static_assert(offsetof(hook_chain_t, after_owners) == 832,
+_Static_assert(offsetof(hook_chain_t, after_owners) == 840,
                "hook_chain_t.after_owners offset");
-_Static_assert(offsetof(hook_chain_t, transit) == 960,
+_Static_assert(offsetof(hook_chain_t, transit) == 968,
                "hook_chain_t.transit offset");
-_Static_assert(sizeof(hook_chain_t) == 1408, "hook_chain_t size changed");
+_Static_assert(sizeof(hook_chain_t) == 1416, "hook_chain_t size changed");
+
+_Static_assert(offsetof(fp_hook_chain_t, hook) == 0, "fp_hook_chain_t.hook offset");
+_Static_assert(offsetof(fp_hook_chain_t, chain_items_max) == 24,
+               "fp_hook_chain_t.chain_items_max offset");
+_Static_assert(offsetof(fp_hook_chain_t, argno_abi_class) == 28,
+               "fp_hook_chain_t.argno_abi_class offset");
+_Static_assert(offsetof(fp_hook_chain_t, active_readers) == 32,
+               "fp_hook_chain_t.active_readers offset");
+_Static_assert(offsetof(fp_hook_chain_t, states) == 36,
+               "fp_hook_chain_t.states offset");
+_Static_assert(offsetof(fp_hook_chain_t, udata) == 72,
+               "fp_hook_chain_t.udata offset");
+_Static_assert(offsetof(fp_hook_chain_t, befores) == 328,
+               "fp_hook_chain_t.befores offset");
+_Static_assert(offsetof(fp_hook_chain_t, afters) == 584,
+               "fp_hook_chain_t.afters offset");
+_Static_assert(offsetof(fp_hook_chain_t, before_owners) == 840,
+               "fp_hook_chain_t.before_owners offset");
+_Static_assert(offsetof(fp_hook_chain_t, after_owners) == 1096,
+               "fp_hook_chain_t.after_owners offset");
+_Static_assert(offsetof(fp_hook_chain_t, transit) == 1352,
+               "fp_hook_chain_t.transit offset");
+_Static_assert(sizeof(fp_hook_chain_t) == 1800, "fp_hook_chain_t size changed");
 
 int main(void)
 {
-	printf("hook_t=%zu hook_chain_t=%zu transit=%zu\n",
-	       sizeof(hook_t), sizeof(hook_chain_t),
+	if (hook_argno_abi_class(0) != 0 ||
+	    hook_argno_abi_class(1) != 4 || hook_argno_abi_class(4) != 4 ||
+	    hook_argno_abi_class(5) != 8 || hook_argno_abi_class(8) != 8 ||
+	    hook_argno_abi_class(9) != 12 || hook_argno_abi_class(12) != 12 ||
+	    hook_argno_abi_class(-1) != -1 || hook_argno_abi_class(13) != -1) {
+		fprintf(stderr, "hook argno ABI class boundary test failed\n");
+		return 1;
+	}
+	printf("hook_t=%zu hook_chain_t=%zu fp_hook_chain_t=%zu transit=%zu\n",
+	       sizeof(hook_t), sizeof(hook_chain_t), sizeof(fp_hook_chain_t),
 	       offsetof(hook_chain_t, transit));
 	return 0;
 }

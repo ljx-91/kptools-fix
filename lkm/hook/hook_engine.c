@@ -24,8 +24,10 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
 	uint64_t target;
 	hook_chain_t *chain = local_container_of(transit, hook_chain_t, transit);
 
-	if (argno < 0 || argno > 12)
+	int32_t abi_class = hook_argno_abi_class(argno);
+	if (abi_class < 0)
 		return -HOOK_BAD_ADDRESS;
+	chain->argno_abi_class = abi_class;
 	if (argno == 0)
 		target = (uint64_t)_transit0;
 	else if (argno <= 4)

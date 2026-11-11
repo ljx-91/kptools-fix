@@ -22,7 +22,22 @@ typedef enum
     HOOK_CHAIN_FULL = 4090,
     HOOK_PATCH_FAILED = 4089,
     HOOK_PATCH_UNCERTAIN = 4088,
+    HOOK_ABI_MISMATCH = 4087,
 } hook_err_t;
+
+/* All callers for one hook origin must use the same transit ABI class. */
+static inline int32_t hook_argno_abi_class(int32_t argno)
+{
+    if (argno < 0 || argno > 12)
+        return -1;
+    if (argno == 0)
+        return 0;
+    if (argno <= 4)
+        return 4;
+    if (argno <= 8)
+        return 8;
+    return 12;
+}
 
 enum hook_type
 {
@@ -213,6 +228,7 @@ typedef struct _hook_chain
     // must be the first element
     hook_t hook;
     int32_t chain_items_max;
+    int32_t argno_abi_class;
     unsigned int active_readers;
     chain_item_state states[HOOK_CHAIN_NUM];
     void *udata[HOOK_CHAIN_NUM];
@@ -234,6 +250,7 @@ typedef struct _fphook_chain
 {
     fp_hook_t hook;
     int32_t chain_items_max;
+    int32_t argno_abi_class;
     unsigned int active_readers;
     chain_item_state states[FP_HOOK_CHAIN_NUM];
     void *udata[FP_HOOK_CHAIN_NUM];
