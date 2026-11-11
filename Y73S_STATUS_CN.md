@@ -2766,3 +2766,31 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 ### 本轮结论
 
 纠正旧报告对原厂 Boot Footer 长度的错误记录；当前原厂 Boot AVB 数学验证与 salted payload digest 均通过。候选 Boot hash mismatch、OEM LK key trust 未确认、Recovery 模板缺失三项仍是独立问题，不能互相混为一谈。
+
+
+
+## 84. 2026-11-11：AVB 审计解析器边界加固
+
+### 源码改动
+
+更新 `scripts/verify_y73s_avb_chain.py` 的严格解析：
+
+- Footer 版本必须为 1.0，保留字段必须为零。
+- `original_image_size` 必须位于 Footer 之前的文件区域。
+- `vbmeta_offset` 不得早于原始镜像末尾，并必须按 64-byte 对齐。
+- `vbmeta_size` 不得为零，且整个 vbmeta 范围必须落在 Footer 之前；选中区域必须完整以 `AVB0` 开始。
+- HashDescriptor 可变字段之后允许最多 7 bytes 的零填充；拒绝超长或非零填充，分区名使用严格 UTF-8 解码。
+
+提交：`24a1f9801c1f0483dfb70240ace3105a07aa0f2c`。
+
+### CI
+
+同一 HEAD 的结果：
+
+- Linux Host workflow run `42988981044`：两个 jobs 均 success；source-contract job 执行了 `python3 -m py_compile scripts/*.py` 和既有回归脚本。
+- Y73S KPIMG workflow run `42988981298`：Arm GNU GCC 14.2 KPIMG build/audit job success。
+- Windows workflow run `42988980972`：Android KPIMG job success；Windows kptools job 在本节记录时仍处于 MSYS2 环境初始化阶段，尚未完成。
+
+### 证据边界
+
+本次 parser 加固没有更改任何镜像字节或 AVB descriptor，也没有新增设备级证据。Host CI 的 py_compile 只能证明脚本语法可编译，不等于对用户原始镜像重新执行了完整脚本；原始镜像的 Footer、digest、auth hash、RSA 和 key-link 结论以第 83 节的逐字节离线复核为准。
