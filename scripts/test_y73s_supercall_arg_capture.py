@@ -31,7 +31,14 @@ def main():
         raise SystemExit("no host C compiler")
 
     header = (ROOT / "kernel/patch/include/syscall.h").read_text(encoding="utf-8")
+    hook_header = (ROOT / "kernel/include/hook.h").read_text(encoding="utf-8")
     source = (ROOT / "kernel/patch/common/supercall.c").read_text(encoding="utf-8")
+    if "uint64_t args[8];" not in hook_header or "typedef hook_fargs8_t hook_fargs6_t;" not in hook_header:
+        raise AssertionError("hook_fargs6_t no longer matches the expected eight-register layout")
+    prefix_order = ["void *chain;", "int skip_origin;", "hook_local_t local;", "uint64_t ret;", "uint64_t args[8];"]
+    positions = [hook_header.find(item, hook_header.find("} hook_fargs8_t") - 500) for item in prefix_order]
+    if any(pos < 0 for pos in positions) or positions != sorted(positions):
+        raise AssertionError("hook_fargs8_t prefix layout changed")
     args_fn = extract_function(header, "static inline uint64_t *syscall_args(")
     argn_fn = extract_function(header, "static inline uint64_t syscall_argn(")
     before_start = source[source.find("static void before("):]
