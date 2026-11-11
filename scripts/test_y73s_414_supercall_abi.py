@@ -32,6 +32,9 @@ def main():
     original = extract_function(
         source, "static long kp_call_original_truncate_args("
     )
+    manager_only = extract_function(
+        source, "static bool kp_supercall_manager_only("
+    )
     handler = extract_function(
         source, "static long kp_supercall_handler_legacy("
     )
@@ -45,7 +48,13 @@ def main():
 typedef unsigned int uid_t;
 #define __user
 #define SUPERCALL_HELLO 1
-#define SUPERCALL_MAX 8
+#define SUPERCALL_MAX 0x1200
+#define SUPERCALL_KPM_LOAD 0x1020
+#define SUPERCALL_KPM_UNLOAD 0x1021
+#define SUPERCALL_KPM_CONTROL 0x1022
+#define SUPERCALL_KPM_NUMS 0x1030
+#define SUPERCALL_KPM_LIST 0x1031
+#define SUPERCALL_KPM_INFO 0x1032
 static uid_t test_uid;
 static bool manager_allowed;
 static bool su_allowed;
@@ -118,8 +127,28 @@ int main(void)
     }
     puts("[PASS] invalid command is passed to original SyS_truncate");
 
+    manager_allowed = false;
+    su_allowed = true;
+    rc = kp_supercall_handler_legacy(0x1111, 0x11020, 1, 2, 3, 4);
+    if (rc != -EPERM || dispatch_calls != 1 || original_calls != 2) {
+        fprintf(stderr, "SU allowlist must not authorize KPM load\\n");
+        return 1;
+    }
+    puts("[PASS] SU allowlisted non-manager is denied KPM management");
+
+    manager_allowed = true;
+    su_allowed = false;
+    rc = kp_supercall_handler_legacy(0x1111, 0x11020, 1, 2, 3, 4);
+    if (rc != 0x123456 || dispatch_calls != 2 ||
+        dispatch_args[0] != SUPERCALL_KPM_LOAD) {
+        fprintf(stderr, "trusted manager KPM dispatch failed\\n");
+        return 1;
+    }
+    puts("[PASS] trusted manager can dispatch KPM management");
+
     kp_orig_truncate_args = NULL;
     manager_allowed = false;
+    su_allowed = false;
     su_allowed = false;
     rc = kp_supercall_handler_legacy(0x1111, 0x10002, 1, 2, 3, 4);
     if (rc != -ENOSYS) {
