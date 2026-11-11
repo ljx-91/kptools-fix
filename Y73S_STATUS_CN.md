@@ -2973,7 +2973,7 @@ Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号
 - 新增 `scripts/verify_y73s_avc_denied_fallback.py` 并接入 Linux Host CI；检查 31-word 指纹、版本/长度/架构边界、调用点目标、Android 标志、AVC 主 Hook 和旧 ABI 参数布局。
 - 使用该分支 Host kptools + GCC 14.2 KPIMG 对原厂 Boot 副本离线修补成功。日志确认 `avc_denied=0x0069141c`、`slow_avc_audit=0x01917b34`、`rest_init=0x018f1280`、`kernel_init=0x018f1354`（从 rest_init 调用点恢复）、`__cfi_slowpath=0x002ddc00`。
 - 输出再次 unpack 成功；对解包 kernel 执行 `kptools -d` 成功，108,006 条符号记录，关键符号偏移与原厂基线一致。
-- Linux Host / 源码契约 CI：Run [43071760192](https://github.com/ljx-91/kptools-fix/actions/runs/43071760192)，成功。Y73s GCC 14.2 KPIMG：Run [43071269821](https://github.com/ljx-91/kptools-fix/actions/runs/43071269821)，成功。Windows + Android KPIMG 最新 HEAD workflow：Run [43071760162](https://github.com/ljx-91/kptools-fix/actions/runs/43071760162)，整条 workflow 成功；Android KPIMG 构建、Windows kptools.exe 构建、DLL 收集、Smoke Test、ZIP 打包和上传均通过。
+- Linux Host / 源码契约 CI：Run [43071760192](https://github.com/ljx-91/kptools-fix/actions/runs/43071760192)，成功。Y73s GCC 14.2 KPIMG：Run [43071269821](https://github.com/ljx-91/kptools-fix/actions/runs/43071269821)，成功。Windows + Android KPIMG workflow：Run [43072741042](https://github.com/ljx-91/kptools-fix/actions/runs/43072741042)，整条 workflow 成功；Android KPIMG 构建、Windows kptools.exe 构建、DLL 收集、Smoke Test、ZIP 打包和上传均通过。
 - 离线输出 SHA-256：`c13992164c1b906d63c38db5888cc1fe543ea85f3cfe52eba7c0b10eafd726d3`。原厂 AVB Hash Descriptor 重算不匹配（输出 digest `8af33870c5e108c134750ced150cffc39fdf4a94b204500081eab99c18599925`），明确禁止将其当作可刷写/已验证镜像。
 - 完整报告见 [Y73S_APATCH_COMPAT_AUDIT_CN.md](Y73S_APATCH_COMPAT_AUDIT_CN.md)。
 
@@ -2995,4 +2995,4 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 这只是目标原厂二进制上的静态 prologue / ABI 兼容证明，不是设备端 Hook 安装或 CFI 旁路运行证明。Wi-Fi 连接后崩溃、Vivo 安全模块交互、KPM load/unload 和 APatch Manager 鉴权仍未验证。
 
 
-当前分支 HEAD（含本轮报告更新）：`3291b6d3b91a524897df83544eb8f009fa76d73e`；最新 CFI profile 测试源码提交：`491d3aa5ee8d523878f136e4ea0874351678080e`。
+最新源码/CI 测试提交：`491d3aa5ee8d523878f136e4ea0874351678080e`；其后提交仅更新本轮审计报告和状态记录。
