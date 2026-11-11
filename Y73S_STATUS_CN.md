@@ -3026,3 +3026,6 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 ### 尚未闭环
 
 真实 C verifier 通过不等于设备 Supercall 认证已通过；仍需确认 Y73s 的 `SyS_truncate.cfi` Hook 收到的 x0、x1 和 x2-x5 与 APatch Manager 调用一致，并在真机收集 Manager UID / SuperKey / Supercall 返回值日志。未进行刷写。AVB 摘要仍不匹配。
+
+
+本轮 SuperKey / Manager 权限相关源码与测试提交：`a92d0fd21568248c0ab339cbded1b3539fe015d4`；其后提交仅更新 CI 文档。
