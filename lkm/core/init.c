@@ -134,19 +134,16 @@ int __init kernelpatch_init(void)
 	if (rc)
 		goto err_unwind;
 
+	/* Establish the trusted manager identity before publishing syscall 45.
+	 * If the manager is installed later, the rename hook refreshes its appid
+	 * when PackageManager atomically replaces packages.list. */
+	kp_manager_init();
+	hook_rename_lsm();
+
 	rc = kp_supercall_install();
 	if (rc)
 		goto err_unwind;
 	supercall_installed = true;
-
-	/* Synchronous manager scan; runs in the caller's (root) context so SELinux
-	 * allows reading /data. The appid may still be invalid if the manager is
-	 * not installed yet; the supercall handler re-checks per call. */
-	kp_manager_init();
-
-	/* Re-derive the manager uid when the package manager swaps in a fresh
-	 * packages.list (e.g. after the manager app is updated/reinstalled). */
-	hook_rename_lsm();
 
 	logki("KernelPatch LKM ready\n");
 	return 0;
@@ -154,6 +151,7 @@ int __init kernelpatch_init(void)
 err_unwind:
 	/* module_init() failure does not invoke module_exit(). Undo every hook
 	 * installed by this init attempt before the loader frees this module. */
+	BUG_ON(hook_rename_lsm_exit());
 	if (supercall_installed)
 		BUG_ON(kp_supercall_uninstall());
 	if (sucompat_installed)
