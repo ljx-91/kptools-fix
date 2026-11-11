@@ -50,7 +50,6 @@ def main():
     relo_ldr = function_body(hook_c, "static __noinline hook_err_t relo_ldr(")
     branch_once = function_body(hook_c, "static uint64_t branch_func_addr_once(")
     hook_prepare = function_body(hook_c, "hook_err_t hook_prepare(")
-    lkm_hook = function_body(hook_c, "hook_err_t hook(void *func,")
     lkm_install = function_body(lkm_supercall, "static int kp_install_inline_supercall(")
 
     checks = {
@@ -83,7 +82,7 @@ def main():
             "return -HOOK_BAD_RELO;" in relo_ldr,
         "LKM aborts initialization when its inline supercall cannot be installed":
             "rc = kp_supercall_install();" in lkm_init and
-            "if (rc)\\n\\t\\tgoto err_unwind;" in lkm_init,
+            "if (rc)\n\t\tgoto err_unwind;" in lkm_init,
         "KPIMG-patched syscall body makes standalone LKM reject rather than stack a second hook":
             "uint64_t ret = addr;" in branch_once and
             "(inst & MASK_B) == INST_B" in branch_once and
@@ -92,12 +91,12 @@ def main():
             "return 4;" in branch_abs and
             "branch_absolute(hook->tramp_insts, hook->replace_addr)" in hook_prepare and
             "for (int i = 0; i < hook->tramp_insts_num; i++)" in hook_prepare and
-            "if (relo_res) {\\n            return -HOOK_BAD_RELO;" in hook_prepare and
+            "if (relo_res) {\n            return -HOOK_BAD_RELO;" in hook_prepare and
             "is_in_tramp(hook, addr) && type != INST_PRFM_LIT" in relo_ldr and
             "return -HOOK_BAD_RELO;" in relo_ldr and
             "hook_rc = hook((void *)addr, handler, backup);" in lkm_install and
             "return -EIO;" in lkm_install and
-            "if (rc)\\n\\t\\tgoto err_unwind;" in lkm_init,
+            "if (rc)\n\t\tgoto err_unwind;" in lkm_init,
 
     }
 
