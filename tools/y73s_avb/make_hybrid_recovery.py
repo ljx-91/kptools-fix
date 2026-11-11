@@ -26,7 +26,7 @@ class ImageError(ValueError):
     pass
 
 
-def parse_footer(data: bytes, label: str) -> tuple[int, int, int, int, bytes]:
+def parse_footer(data: bytes, label: str) -> tuple[int, int, int, int, int, bytes]:
     if len(data) < FOOTER_SIZE:
         raise ImageError(f"{label}: file is smaller than AVB footer")
     footer = data[-FOOTER_SIZE:]
