@@ -105,3 +105,16 @@ Y73s 符号审计结果：
 - PR #225：https://github.com/bmax121/KernelPatch/pull/225
 
 上游 issue 评论中，设备报告者指出旧工具对该内核的函数地址识别错误，并建议使用 #208 的严格符号定位思路、回退 #225；原作者随后强调正确符号位置只是第一步，Vivo 安全模块仍可能引入其他问题。本分支不直接复制上游的盲目固定地址，而是对目标原厂 Image 做版本、长度、指令和调用目标的多重校验。
+
+
+## 9. Y73s CFI slowpath Hook 的静态兼容性复核
+
+对同一份原厂 kernel.Image（SHA-256 `345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`）进一步检查：
+- `__cfi_slowpath` Image offset：`0x002ddc00`；`report_cfi_failure` 与 `__cfi_slowpath_diag` 均不存在。
+- 函数入口前四条指令：`0xd10103ff`、`0xa90157f6`、`0xa9024ff4`、`0xa9037bfd`，是普通栈帧/寄存器保存指令，没有 PC-relative branch、ADR/ADRP 或 literal load。
+- KPIMG 的 `branch_absolute()` 覆盖四条指令；`hook_prepare()` 对覆盖指令逐条执行 relocation；上述普通指令走 `INST_IGNORE -> relo_ignore()` 原样复制路径，因此静态上可安全搬迁这 16-byte prologue。
+- 函数体在 offset `+0x1c` 出现 `0xaa0203f4`（使用 X2），确认该目标实现确实消费第三个参数；KPIMG 的 `replace__cfi_slowpath(uint64_t id, void *ptr, void *diag)` 与备份函数指针保持三参数 ABI。
+- 新增 `scripts/verify_y73s_cfi_slowpath_profile.py` 并接入 Host CI；可选传入原始 Image，验证 Image SHA、函数入口指令和 X2 参数使用。
+- 源码契约日志：Run [43072740995](https://github.com/ljx-91/kptools-fix/actions/runs/43072740995) 的 Audit LKM KPM ELF loader source job 成功，CFI profile 检查全部 PASS。
+
+**边界：**这证明当前目标函数入口适合现有四指令 trampoline，且替换函数参数数目匹配；不证明目标设备上的 hotpatch 写入、缓存同步、并发调用、KPM CFI 旁路或 Wi-Fi 连接后的稳定性。仍需设备运行日志才能关闭上游 #189 的运行时故障。
