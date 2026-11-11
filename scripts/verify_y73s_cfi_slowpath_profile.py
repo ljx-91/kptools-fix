@@ -66,11 +66,14 @@ def main():
     require('get_symbol_offset_zero(kallsym, img_buf, "__cfi_slowpath")' in symbols and
             '"__cfi_slowpath_diag"' in symbols,
             "patch-config resolves the available legacy slowpath and the newer diagnostic variant")
-    require("0x002ddc00" not in symbols or "__cfi_slowpath" in symbols,
-            "CFI address is sourced from KALLSYMS rather than an unguarded hardcoded runtime address")
+    require('symbol->__cfi_slowpath = get_symbol_offset_zero(kallsym, img_buf, "__cfi_slowpath");' in symbols and
+            "if (!__cfi_slowpath_addr)" in secpass and
+            "__cfi_slowpath_addr = patch_config->__cfi_slowpath;" in secpass,
+            "patch-config resolves __cfi_slowpath and secpass selects it when diag is absent")
     require("0x002ddc00 t __cfi_slowpath" in fixture and
-            "__cfi_slowpath_diag" in fixture.split("# ABSENT", 1)[-1],
-            "Y73S profile records __cfi_slowpath present and __cfi_slowpath_diag absent")
+            "__cfi_slowpath_diag" not in fixture and
+            "report_cfi_failure" not in fixture,
+            "Y73S profile records __cfi_slowpath present and newer diagnostic handlers absent")
 
     if len(sys.argv) > 1:
         data = Path(sys.argv[1]).read_bytes()
