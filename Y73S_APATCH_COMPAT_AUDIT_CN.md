@@ -188,3 +188,23 @@ CI：
 
 
 本轮 SuperKey / Manager 权限相关源码与测试提交：`a92d0fd21568248c0ab339cbded1b3539fe015d4`；其后提交仅更新 CI 文档。
+
+
+## 12. KPIMG Supercall Manager 早期授权路径修复
+
+进一步审计发现，KPIMG `before()` 在确认 Manager 身份之前先执行 `get_ap_mod_exclude(uid)`，并且在复制 x0 key 字符串失败时直接 return。两条早退路径都会阻断后续可信 Manager UID 的 `is_authed = 1` 分支：如果 Manager UID 被误加入 per-app exclude，或其 key 参数复制暂时失败，可信 Manager 也无法使用 syscall 45。
+
+已调整顺序：
+- 先识别 `is_trusted_manager_uid(uid)`。
+- per-app exclude 仅拦截非 Manager；可信 Manager 保留管理通道。
+- SuperKey 复制失败时，非 Manager 仍 fail closed；可信 Manager 继续进入既有 Manager 授权分支。
+- 若 key 可复制，仍正常调用 `auth_superkey()`，保留 Root SuperKey 首次验证和迁移逻辑。
+
+另外新增 `scripts/test_y73s_supercall_arg_capture.py`，提取真实 `syscall_args()` / `syscall_argn()` 并按 `hook_fargs8_t` 的真实前缀布局（chain、skip_origin、local、ret、args）编译执行；断言 `hook_fargs6_t` 与该布局兼容，并分别验证 Y73s 4.14 无 wrapper inline 路径及 pt_regs wrapper 路径的 x0-x5。
+
+验证：
+- Linux Host / 源码契约 Run [43080710934](https://github.com/ljx-91/kptools-fix/actions/runs/43080710934)，成功；Manager exclude/key-copy 早期授权检查、真实 SuperKey C fixture、真实 syscall x0-x5 capture fixture 全部 PASS。
+- Y73s GCC 14.2 KPIMG Run [43080712484](https://github.com/ljx-91/kptools-fix/actions/runs/43080712484)，成功；KPIMG 交叉编译和全套回归测试通过。
+- Windows + Android KPIMG Run [43080711483](https://github.com/ljx-91/kptools-fix/actions/runs/43080711483)，Android KPIMG / Linux / 源码契约 job 成功；Windows kptools.exe job 在本段记录时仍在执行。
+
+**边界：**以上仍是离线 C fixture、源码契约和交叉编译，不是目标设备上的 syscall 45 trace。要最终确认 Authentication Failed 是否消失，仍需真实 Manager UID、x0 指针、key-copy 返回值、`auth_superkey` 返回值、命令号和 `args->ret` 的设备日志。
