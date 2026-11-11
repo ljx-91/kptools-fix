@@ -440,18 +440,20 @@ static int32_t resolve_kernel_init_from_rest_init(kallsym_t *kallsym, char *img_
         add_imm = aarch64_insn_decode_immediate(AARCH64_INSN_IMM_12, add_insn);
         if ((add_insn >> 22) & 1) add_imm <<= 12;
         stub_offset = page + (int64_t)add_imm;
-        if (stub_offset < 0 || stub_offset + 4 > imglen) continue;
+        /* A function-pointer CFI target must be an aligned in-image stub. */
+        if (stub_offset < 0 || (stub_offset & 3) || stub_offset + 4 > imglen) continue;
 
         stub_insn = (uint32_t)uint_unpack(img_buf + stub_offset, 4, target_is_be);
-        body_offset = stub_offset;
-        if (aarch64_insn_is_b(stub_insn)) {
-            body_offset += aarch64_get_branch_offset(stub_insn);
-        }
+        /* Do not treat an arbitrary instruction inside rest_init as a function
+         * entry: Y73S uses a CFI B veneer which branches to the local body. */
+        if (!aarch64_insn_is_b(stub_insn)) continue;
+        body_offset = stub_offset + aarch64_get_branch_offset(stub_insn);
 
         /* The Y73S local kernel_init body is embedded in rest_init's
          * KALLSYMS size range; kthreadd's CFI stub branches outside it. */
-        if (body_offset <= rest_init_offset || body_offset >= rest_init_end ||
-            body_offset + 4 > imglen) continue;
+        if (body_offset < 0 || (body_offset & 3) ||
+            body_offset <= rest_init_offset || body_offset >= rest_init_end ||
+            body_offset + 4 > rest_init_end || body_offset + 4 > imglen) continue;
 
         if (resolved && resolved != body_offset) return 0;
         resolved = (int32_t)body_offset;
