@@ -83,8 +83,8 @@ def extract_hash_descriptors(vbmeta: bytes) -> list[dict]:
         name = body[cursor:cursor + name_len]; cursor += name_len
         salt = body[cursor:cursor + salt_len]; cursor += salt_len
         digest = body[cursor:cursor + digest_len]; cursor += digest_len
-        if cursor != n:
-            raise ImageError("AvbHashDescriptor variable fields have inconsistent lengths")
+        if cursor > n or n - cursor > 7 or any(body[cursor:]):
+            raise ImageError("AvbHashDescriptor variable fields/padding are inconsistent")
         found.append({
             "partition": name.decode("utf-8", "strict"),
             "image_size": image_size,
