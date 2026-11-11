@@ -41,11 +41,20 @@ def main():
 
     prefix = r"""
 #include <stdint.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
-typedef struct { uint64_t args[8]; } hook_fargs0_t;
+typedef struct { uint64_t data[8]; } hook_local_t;
+typedef struct {
+    void *chain;
+    int skip_origin;
+    hook_local_t local;
+    uint64_t ret;
+    uint64_t args[8];
+} hook_fargs0_t;
 struct pt_regs { uint64_t regs[31]; };
 static int has_syscall_wrapper;
+_Static_assert(offsetof(hook_fargs0_t, args) == 88, "hook_fargs layout mismatch");
 """
     tests = r"""
 int main(void)
