@@ -148,3 +148,40 @@ Y73s 符号审计结果：
 
 
 本轮源码/测试 CI 提交：`d39cbe92d463ca6a1fb0b2f16affcfad64426b6d`；本轮后续提交仅更新审计文档。
+
+
+## 11. Root SuperKey 校验路径与内存边界修复
+
+### 核对结果
+
+针对原始故障日志中的 `-S testtest123`，重新计算 SHA-256 得到：
+
+`626aa60100e38a2b0a8c9b3512116bfb3ff9db5b986b21b27c2989e011629435`
+
+与原厂 kptools 日志中的 root-superkey verifier 完全一致。故障日志中的哈希本身没有计算错误。
+
+### 源码问题与修复
+
+旧 `auth_superkey()` 按 preset 随机 SuperKey 的长度读取输入 key，却没有先比较输入长度或停止在输入 NUL 处；Root-key 模式下，用户输入可能比随机 preset key 短，旧代码会读取 NUL 后未初始化的栈数据。虽然 Root hash fallback 随后可能成功，但前置比较存在未定义读取，不能保留。
+
+已修改 `kernel/base/predata.c`：
+- 先拒绝 NULL、无 NUL 终止或长度达到 `SUPER_KEY_LEN` 的输入。
+- 先比较输入长度与 preset key 长度，再只读取双方有效字符，消除越过 NUL 的读取。
+- Root hash fallback 只有在 `enable_root_key`、`root_superkey_is_set` 和 verifier 指针均有效时才执行。
+- SHA-256 仅处理已验证的 `key_len` 字节。
+- Root hash 首次验证成功后仍按既有逻辑迁移为 active SuperKey 并关闭 root-key fallback。
+
+### 执行测试
+
+新增 `scripts/verify_y73s_superkey_contract.py`，核验 kptools `-S` 写入哈希与内核读取/验证路径一致；新增 `scripts/test_y73s_root_superkey_auth.py`，抽取真实 `auth_superkey()` 并链接真实 `kernel/base/sha256.c`，在 Host C 编译器执行：
+- `testtest123` 对应已知 root hash 验证成功并迁移。
+- 迁移后精确密钥成功、错误密钥失败。
+- NULL 和无终止符输入失败关闭。
+- 普通 embedded SuperKey 要求长度和内容都完全匹配。
+
+CI：
+- Linux Host + 真实 C 运行测试：Run [43079653529](https://github.com/ljx-91/kptools-fix/actions/runs/43079653529)，成功；Root SuperKey 认证、迁移、错误 key 和异常输入测试全部 PASS。
+- Y73s GCC 14.2 KPIMG：Run [43079653564](https://github.com/ljx-91/kptools-fix/actions/runs/43079653564)，成功；相同真实 C 测试在 KPIMG 构建流水线执行通过。
+- Windows + Android KPIMG：Run [43079653598](https://github.com/ljx-91/kptools-fix/actions/runs/43079653598)，Android KPIMG / Linux Host job 成功；Windows kptools.exe job 在本报告更新时仍在执行。
+
+**限制：**该测试证明 Root SuperKey verifier 的真实 C 函数与 SHA-256 在 Host 环境下符合预期；不证明 Y73s 设备上的 syscall 45 Hook 一定收到 Manager 传入的正确 x0 指针，也不证明 Manager UID 检测、SELinux 域、Supercall 命令传递或 Root 授权完整链路已正常。仍需设备日志闭环。
