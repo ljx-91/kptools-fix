@@ -2698,3 +2698,71 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 - 下一步等待 Windows/KPIMG workflow 完成；然后需要取得原始 `vivo_avb_footer.bin` 和待封装 Recovery 文件的真实字节，运行严格模式并记录实际 descriptor/hash 结果。
 - 本轮没有修改第三方设备树仓库、LK、Boot、vbmeta 或设备分区；没有 Fastboot、刷写或真机启动测试。
 
+
+
+
+## 83. 2026-11-11：用资料库原始镜像复核 Boot AVB，纠正旧审计中的 Footer 长度记录
+
+### 本轮输入与完整性
+
+直接从用户资料库读取原始字节，未重新上传、未修改输入：
+
+- `boot.img`：100,663,296 bytes；SHA-256 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`。
+- `vbmeta.img`：8,192 bytes；SHA-256 `9dea25766afba4fbaf601e80ae73bd69637d15aa40ae13a468312a8bb90aa652`。
+- `vbmeta_system.img`：4,096 bytes；SHA-256 `8463fe5995be29055e9bf35483110e9eeecf80fbfb1af34953631ba883fcfa12`。
+- `lk-verified.img`：1,071,184 bytes；SHA-256 与已固定样本一致：`e44dc34afa12235011331309c3cac1f995cbca65c5e61c9e598984a5539000d4`。
+- 候选 `vivo-y73s-kpimg-test-boot.img`：100,663,296 bytes；SHA-256 `bf6c0daf9da839acb219f2b5cfba2670f7536eacaad0d42164cb08d3765640ca`。
+
+### 原厂 Boot 的 Footer 与 HashDescriptor 复核
+
+从 `boot.img` 文件末尾 64 bytes 直接解析 AVB Footer：
+
+- Footer version：1.0。
+- `original_image_size = 17,618,944`。
+- `vbmeta_offset = 17,620,992`（64-byte aligned）。
+- `vbmeta_size = 1,472`。
+- Footer 指向的区域以 `AVB0` 开始，长度与 vbmeta header 的 auth/aux block 总长度一致。
+
+内嵌 Boot HashDescriptor：
+
+- partition：`boot`。
+- algorithm：`sha256`。
+- `image_size = 17,618,944`，与 Footer `original_image_size` 完全相等。
+- 对实际原始 payload 计算 `SHA256(salt || boot[0:image_size])`，结果为 `36a3d398fc5a5350e1642f54584ebca8d06e20644e622993f9547e057467623c`，与 descriptor digest 逐字节相同。
+
+**因此，当前资料库这份原厂 `boot.img` 的 Footer 长度与 Boot HashDescriptor 一致，原厂 Boot salted hash 通过。** 这纠正了旧审计文件 `vivo-y73s-avb-audit-v2.md` 中对同一 SHA-256 镜像记录的 `original_image_size=17,602,560` 及“长度不一致”结论；后续以本节对原始字节的复核值为准。该旧记录不应再用于描述当前这份 `boot.img`。
+
+### RSA 签名、auth-block hash 与链式 key
+
+对原厂 Boot 内嵌 vbmeta、根 `vbmeta.img`、`vbmeta_system.img` 分别检查：
+
+- AVB algorithm type 均为 SHA256_RSA2048。
+- auth-block 中保存的 SHA-256 与重新计算的 `SHA256(header || auxiliary_block)` 均匹配。
+- 取 AVB public key 中 2048-bit modulus，以 RSA exponent 65537 对 256-byte signature 做 PKCS#1 v1.5 / SHA-256 验证，三份签名均通过。
+- 根 vbmeta 的 `boot` ChainPartitionDescriptor 公钥与原厂 Boot 内嵌 vbmeta 公钥 520 bytes 完全相同。
+- 根 vbmeta 的 `vbmeta_system` ChainPartitionDescriptor 公钥与 `vbmeta_system.img` 内嵌公钥完全相同。
+- 根 vbmeta modulus SHA-256 为 `5de742a4b3a29de2eb6ab8ba999e36a8be07e2f73c3ca5839fb2c1aea42acdba`；在固定 LK 样本中位于偏移 `0xDBBC4`。LK build-id 与固定值匹配，策略行 `0xB0C2C` 的 4 bytes 为 `01 00 03 00`。
+
+这些结果证明三份 vbmeta 的数学签名自洽及所列 child-key 字节链关系；**LK 中 modulus 字节存在仍不等于已证明其实际 OEM key 比较函数使用该地址**。运行时是否使用这份 LK、设备当前 lock state 是否为 `LKS_UNLOCK`，仍未设备级确认。
+
+### 候选 Boot 的差异
+
+对资料库候选 `vivo-y73s-kpimg-test-boot.img`：
+
+- Footer `original_image_size = 17,682,432`，比原厂增加 63,488 bytes。
+- Footer 指向的 1,472-byte embedded vbmeta 与原厂 Boot 内嵌 vbmeta 完全相同，RSA 数学签名仍通过。
+- 原厂 Boot descriptor 仍声明 `image_size = 17,618,944`，候选 payload 对该范围重算的 salted SHA-256 为 `2fc9dd767df46ccdd07d96f5cf441b21cdb2dacb30055eea5f4b1887ed371a52`，不等于 OEM descriptor digest `36a3d398fc5a5350e1642f54584ebca8d06e20644e622993f9547e057467623c`。
+
+所以候选 Boot 的 hash mismatch 是真实、可重复的静态结果；它不能被标记为通过原厂 Boot HashDescriptor。即使 LK 的 unlocked policy 静态字节看似允许某类 verification error，也还不能据此推断当前设备必然接受该候选镜像。
+
+### 对后续工作的影响与边界
+
+1. 原厂 Boot 自身的 Footer、HashDescriptor、auth-block hash、RSA signature 与 root chain key 现已在当前资料库字节上闭环通过。
+2. 候选 Boot 的原厂 HashDescriptor mismatch 仍然成立；本节不改变这一结论。
+3. OEM root key 是否被目标 LK 实际信任、运行时 `LKS_UNLOCK`、LK policy 错误处理的真实控制流仍未完全证明。
+4. Recovery 的 51,257,344-byte `vivo_avb_footer.bin` 仍不在当前 Library 文件列表中；尚未取得真实 Recovery 模板与 TWRP payload，因此混合 Recovery 生成器仍未对真实模板执行。
+5. 没有修改任何镜像、vbmeta 或 LK；没有 Fastboot、刷写、分区写入或真机启动测试。
+
+### 本轮结论
+
+纠正旧报告对原厂 Boot Footer 长度的错误记录；当前原厂 Boot AVB 数学验证与 salted payload digest 均通过。候选 Boot hash mismatch、OEM LK key trust 未确认、Recovery 模板缺失三项仍是独立问题，不能互相混为一谈。
