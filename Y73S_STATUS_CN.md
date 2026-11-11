@@ -2546,7 +2546,7 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 
 参考材料：
 - `BoardConfig.mk`: https://github.com/4accccc/android_device_vivo_pd2031/blob/2d26aff8f878fdb6b0fc2c76c733904b71fc0735/BoardConfig.mk
-- `device.mk`: https://github.com/4accccc/android_device_vivo_pd2031/blob/2d26aff8f878fdb6b6b0fc2c76c733904b71fc0735/device.mk
+- `device.mk`: https://github.com/4accccc/android_device_vivo_pd2031/blob/2d26aff8f878fdb6b0fc2c76c733904b71fc0735/device.mk
 - `fstab.mt6853`: https://github.com/4accccc/android_device_vivo_pd2031/blob/2d26aff8f878fdb6b0fc2c76c733904b71fc0735/recovery/root/system/etc/fstab.mt6853
 
 ### 本轮结论
