@@ -2577,3 +2577,37 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 本轮没有找到可用于直接修改的 Y73s 原厂 LK 源码，也没有修改或重打包 LK/Boot/vbmeta。下一步应转为对现有 LK 样本做只读逆向：确认 AVB key 比较函数、`g_avb_key` 数据引用、policy table 的读取调用链、lock-state provider 和 `load_vfy_boot` 验证错误分支；只有这些控制流与数据流均可交叉验证后，才评估是否存在范围受限的 binary patch。不得把静态分析结果称为设备启动验证。
 
 没有执行 Fastboot、刷写、分区写入、Recovery 写入或真机启动测试。
+
+
+## 80. 2026-11-11：LK 样本 AVB 只读逆向的第一轮定位
+
+### 输入与完整性
+
+- 使用资料库原始 `lk-verified.img`，大小 1,071,184 bytes；未修改原件。
+- 文件 SHA-256 与第 75 节记录一致：`e44dc34afa12235011331309c3cac1f995cbca65c5e61c9e598984a5539000d4`。
+- 样本为 raw data，不是可直接由 `readelf` 读取的 ELF 文件；当前环境未发现可用的 radare2/Ghidra 工具。因此本轮只做字符串/布局定位，不对反汇编函数边界作猜测。
+
+### AVB 相关字符串定位
+
+样本中可重复定位到以下字符串（文件偏移）：
+
+- `avb_hal_verify_public_key`：`0xA2D8C`。
+- `[AVB20] lock_state = 0x%x`：`0xA2DA8`。
+- `oem_avb_key =`：`0xA2DF8`。
+- `vbmeta_avb_key =`：`0xA2E08`。
+- `platform/common/boot/avb20/avb_cmdline.c`：`0xA5D90`。
+- `[avb] Fail to get verification state`：`0xA5F58`。
+- `[avb] img_auth_required = %d`：`0xA5EE4`。
+- `[avb] avb_ret = %d`：`0xA6000`。
+- `avb_slot_verify` 相关错误文本和 `read_is_device_unlocked`、`validate_vbmeta_public_key` 等 libavb 断言字符串存在。
+- `Verified boot is enabled.`：`0x8FDF0`；`unlocked`：`0x966D8`；`unlock`：`0x97B18`。
+
+### 证据边界
+
+- 这些字符串说明样本包含 AVB HAL、libavb slot verify 和 lock-state 相关代码/日志线索；不能仅凭字符串位置断言它们的调用顺序、真实分支条件或 `ALLOW_VERIFICATION_ERROR` flag 是否在此构建中启用。
+- 当前没有取得精确 LK ELF/map/symbols，也没有建立字符串引用的 AArch64 交叉引用；`g_avb_key` 的真实数据地址、被比较的长度和来源仍待定位。
+- `load_vfy_boot.c`、`sec_policy.c` 的公开参考源码路径不能替代对本 LK 样本机器码的控制流证明。
+
+### 下一步
+
+对 raw LK 做只读结构分析，先恢复映像头/加载地址和可执行区间，再定位 AVB 字符串引用及其 ADRP/ADD/LDR/BL 交叉引用；随后分别追踪 `avb_hal_verify_public_key`、lock-state provider、policy table 读取和 `avb_slot_verify` 返回值处理。只有函数边界、数据引用和条件分支可相互印证后，才讨论任何补丁位置。当前没有生成二进制补丁，也没有修改 LK、Boot 或 vbmeta。
