@@ -138,10 +138,13 @@ Y73s 符号审计结果：
 
 - Linux Host + 仓库源码契约：Run [43077994524](https://github.com/ljx-91/kptools-fix/actions/runs/43077994524)，成功；manager-auth contract 全部 PASS。
 - Y73s GCC 14.2 KPIMG：Run [43077994724](https://github.com/ljx-91/kptools-fix/actions/runs/43077994724)，成功；4.14 ABI fixture 明确输出 SU allowlisted non-manager denied KPM、trusted manager KPM dispatch 两项 PASS。
-- Windows kptools / Android KPIMG workflow：Run [43077994511](https://github.com/ljx-91/kptools-fix/actions/runs/43077994511)，Android KPIMG、Linux kptools 与源码契约 job 成功；Windows kptools.exe job 在记录时仍在执行，尚不宣称整条 workflow 成功。
+- Windows kptools / Android KPIMG workflow：Run [43077994511](https://github.com/ljx-91/kptools-fix/actions/runs/43077994511)，整条 workflow 成功；Android KPIMG、Linux kptools、源码契约、Windows kptools.exe、DLL 收集、Smoke Test、ZIP 与 Artifact 上传全部通过。
 
 ### 与 APatch SuperKey 问题的关系及限制
 
 这次修复的是 LKM 的 Manager UID / KPM 管理权限边界，不等于已经解决上游 #189 的 APatch Manager “Authentication Failed”。LKM dispatcher 目前没有实现 `SUPERCALL_SKEY_GET` / `SUPERCALL_SKEY_SET` / `SUPERCALL_SKEY_ROOT_ENABLE`；KPIMG 路径才保留上游 SuperKey 认证分支。Manager APK 证书信任和 SuperKey 认证是两条不同路径，不能混为一谈。
 
 此外，本轮 CI 没有目标 PD2031 4.14.141+ vendor KDIR，因此没有编译/MODPOST 出真实 Y73s LKM .ko；也没有设备端 manager UID 扫描日志、SuperKey syscall trace、KPM load/unload 运行记录。不能据此宣称真机鉴权或 Root 已经工作。
+
+
+当前分支 HEAD（含审计文档更新）：`08b2bb201a9283ad3b348c3792c5fc030f3519db`；本轮源码/测试 CI 提交：`d39cbe92d463ca6a1fb0b2f16affcfad64426b6d`。
