@@ -32,9 +32,10 @@ def make_vbmeta(payload: bytes, partition=b"recovery") -> bytes:
 def make_footered(payload: bytes, vbmeta: bytes, target_size: int) -> bytes:
     footer = bytearray(64)
     footer[:4] = b"AVBf"
-    struct.pack_into(">IIQQQ", footer, 4, 1, 0, len(payload), len(payload), len(vbmeta))
-    padding = target_size - len(payload) - len(vbmeta) - 64
-    return payload + vbmeta + bytes(padding) + footer
+    vbmeta_offset = (len(payload) + 63) & ~63
+    struct.pack_into(">IIQQQ", footer, 4, 1, 0, len(payload), vbmeta_offset, len(vbmeta))
+    padding = target_size - vbmeta_offset - len(vbmeta) - 64
+    return payload + bytes(vbmeta_offset - len(payload)) + vbmeta + bytes(padding) + footer
 
 
 class HybridBuilderTests(unittest.TestCase):
@@ -46,7 +47,8 @@ class HybridBuilderTests(unittest.TestCase):
         self.assertIn("HASH_MATCH", verdict)
         _, _, original_size, offset, size, _ = hybrid.parse_footer(output, "test")
         self.assertEqual(original_size, len(payload))
-        self.assertEqual(offset, len(payload))
+        self.assertEqual(offset, (len(payload) + 63) & ~63)
+        self.assertEqual(offset % 64, 0)
         self.assertEqual(size, len(vbmeta))
         self.assertEqual(output[offset:offset + size], vbmeta)
 
@@ -56,6 +58,13 @@ class HybridBuilderTests(unittest.TestCase):
         vbmeta = make_vbmeta(signed_payload)
         template = make_footered(b"prefix", vbmeta, 2048)
         with self.assertRaisesRegex(hybrid.ImageError, "HashDescriptor mismatch"):
+            hybrid.build_image(payload, template, 2048, "recovery", False)
+
+    def test_rejects_descriptor_size_that_does_not_cover_full_payload(self):
+        payload = b"payload-with-tail"
+        vbmeta = make_vbmeta(payload[:-4])
+        template = make_footered(b"prefix", vbmeta, 2048)
+        with self.assertRaisesRegex(hybrid.ImageError, "does not equal payload size"):
             hybrid.build_image(payload, template, 2048, "recovery", False)
 
     def test_explicit_override_is_marked_research_only(self):
