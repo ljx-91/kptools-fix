@@ -6,6 +6,32 @@ Branch: `y73s-cred-layout-guards-20261108`
 
 Scope: design and source audit only. This document does not claim a production Gate implementation, a Y73S KDIR build, or device validation.
 
+## Superseding current-source correction: Y73S syscall 45 resolver (2026-11-11)
+
+This section describes the current branch source and supersedes the historical sections below that describe KPIMG resolving syscall 45 to the short `sys_truncate` alias as the current behavior.
+
+At branch code/test baseline `2f25b3cab99d3b8c375e63a17d51fbdf62da7829`:
+
+- `kernel/patch/common/syscall.c::syscalln_name_addr()` has a Y73S-only branch for native, no-wrapper syscall 45.
+- That branch resolves `SyS_truncate.cfi` directly, caches the implementation address, and returns it before generic syscall-name fallback.
+- If the implementation symbol is absent, it returns zero and fails closed; it does not fall back to the short `sys_truncate` alias.
+- The supplied Y73S KALLSYMS evidence places `SyS_truncate.cfi` at Image offset `0x003cd6b8`; the short `sys_truncate` alias at `0x019305cc` remains a 4-byte CFI branch entry.
+
+The earlier 16-byte overwrite analysis remains valid as evidence of the **pre-correction** generic resolver behavior: a 16-byte absolute branch placed at `0x019305cc` would span adjacent 4-byte CFI entries. It must not be reported as the current resolver result after this Y73S-specific correction.
+
+Regression coverage is in `scripts/verify_y73s_syscall45_contract.py` (11 source-contract checks). The Linux Host source-contract run [42997233203](https://github.com/ljx-91/kptools-fix/actions/runs/42997233203) and Y73S GCC 14.2 KPIMG run [42997233189](https://github.com/ljx-91/kptools-fix/actions/runs/42997233189) completed successfully at this baseline.
+
+### Remaining independent blocker: KPIMG/LKM ownership
+
+The resolver correction does not create a shared syscall-45 Hook registry or make the two deployments composable. KPIMG and standalone LKM still use independent Hook Engines, registries, locks, and patch backends. Both target the `SyS_truncate.cfi` implementation body. If KPIMG has already installed its absolute branch, the LKM relocation guard rejects the overwritten literal reference and the LKM initialization path unwinds rather than claiming a successful second hook.
+
+The two supercall implementations also have different authentication levels, SU state stores, command surfaces, and KPM registries/symbol namespaces. A one-line symbol rename, handler deletion, or guessed cross-image function pointer is not a valid consolidation.
+
+A single-owner syscall-45 design and a versioned cross-component dispatch/lifetime contract remain unimplemented. The LKM resident Gate described elsewhere in this document is still only a design candidate; no production Gate code or safe ordinary-unload proof exists.
+
+No matching Y73S vendor KDIR/Module.symvers build, device runtime trace, APatch boot test, Fastboot action, or partition write is claimed by this correction.
+
+
 ## Decision
 
 **Architecture correction (2026-11-11): the KPIMG-resident Gate is not a valid host for the standalone LKM deployment.** Y73S KPIMG-patched Boot and standalone LKM are mutually exclusive: when KPIMG has already patched `SyS_truncate.cfi`, the LKM's relocation guard rejects the overlapping hook rather than stacking a second patch. KPIMG's private symbol table and syscall-45 command path are not a supported LKM-to-KPIMG Gate registration ABI. Therefore the earlier KPIMG-hosted Gate proposal is retained below as historical analysis, not the selected implementation.
