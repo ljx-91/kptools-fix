@@ -117,3 +117,31 @@ Y73s 符号审计结果：
 - 源码契约日志：Run [43072740995](https://github.com/ljx-91/kptools-fix/actions/runs/43072740995) 的 Audit LKM KPM ELF loader source job 成功，CFI profile 检查全部 PASS。
 
 **边界：**这证明当前目标函数入口适合现有四指令 trampoline，且替换函数参数数目匹配；不证明目标设备上的 hotpatch 写入、缓存同步、并发调用、KPM CFI 旁路或 Wi-Fi 连接后的稳定性。仍需设备运行日志才能关闭上游 #189 的运行时故障。
+
+
+## 10. LKM Manager 身份与 KPM 管理权限隔离复核
+
+### 发现
+
+对照 KPIMG 的 `kernel/patch/common/supercall.c` 与 standalone LKM 的 `lkm/supercall/supercall.c`，发现 LKM 旧入口只判断“trusted manager UID 或 SU allowlist UID”，随后把所有命令交给同一个 dispatcher。这样普通已获 SU 授权的应用也可能调用 KPM_LOAD / UNLOAD / CONTROL / NUMS / LIST / INFO；这不符合 KPIMG 的 `is_authed` 管理权限边界。
+
+### 已修复
+
+- 新增 `kp_supercall_manager_only()`，明确把六个 KPM 管理命令限定为可信 Manager UID。
+- pt_regs syscall backend 与 Y73s Linux 4.14 六寄存器 legacy backend 均在 dispatcher 前执行同一权限检查；普通 SU allowlist 用户对 KPM 管理命令收到 `-EPERM`。
+- 未授权 UID 仍原样调用原始 `truncate`，不改变普通系统调用行为。
+- 将 Manager APK / packages.list 同步扫描及 packages.list rename refresh hook 移到 syscall 45 发布之前，避免 supercall 已可调用而 manager UID 尚未初始化的窗口。
+- init 失败路径显式移除 manager refresh hook，避免模块释放后残留回调。
+- 新增 `scripts/verify_lkm_manager_auth_contract.py`；更新 `scripts/test_y73s_414_supercall_abi.py`，直接编译执行真实 legacy handler 片段，覆盖：普通未授权 passthrough、普通 Manager 命令、SU allowlist 用户被拒绝 KPM、trusted manager 成功调用 KPM、缺失 trampoline fail-closed。
+
+### 验证
+
+- Linux Host + 仓库源码契约：Run [43077994524](https://github.com/ljx-91/kptools-fix/actions/runs/43077994524)，成功；manager-auth contract 全部 PASS。
+- Y73s GCC 14.2 KPIMG：Run [43077994724](https://github.com/ljx-91/kptools-fix/actions/runs/43077994724)，成功；4.14 ABI fixture 明确输出 SU allowlisted non-manager denied KPM、trusted manager KPM dispatch 两项 PASS。
+- Windows kptools / Android KPIMG workflow：Run [43077994511](https://github.com/ljx-91/kptools-fix/actions/runs/43077994511)，Android KPIMG、Linux kptools 与源码契约 job 成功；Windows kptools.exe job 在记录时仍在执行，尚不宣称整条 workflow 成功。
+
+### 与 APatch SuperKey 问题的关系及限制
+
+这次修复的是 LKM 的 Manager UID / KPM 管理权限边界，不等于已经解决上游 #189 的 APatch Manager “Authentication Failed”。LKM dispatcher 目前没有实现 `SUPERCALL_SKEY_GET` / `SUPERCALL_SKEY_SET` / `SUPERCALL_SKEY_ROOT_ENABLE`；KPIMG 路径才保留上游 SuperKey 认证分支。Manager APK 证书信任和 SuperKey 认证是两条不同路径，不能混为一谈。
+
+此外，本轮 CI 没有目标 PD2031 4.14.141+ vendor KDIR，因此没有编译/MODPOST 出真实 Y73s LKM .ko；也没有设备端 manager UID 扫描日志、SuperKey syscall trace、KPM load/unload 运行记录。不能据此宣称真机鉴权或 Root 已经工作。
