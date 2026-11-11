@@ -75,7 +75,7 @@ def main():
         ("imglen != 47517708", "fallback requires the exact original Image length"),
         ("target_is_be", "fallback rejects big-endian images"),
         ("aarch64_insn_is_bl(caller)", "fallback validates the caller instruction is BL"),
-        ("aarch64_get_branch_offset(caller) != function_offset",
+        ("(int64_t)caller_offset + aarch64_get_branch_offset(caller) != function_offset",
          "fallback validates the caller BL target equals the candidate entry"),
     ]:
         require(token in helper, message)
