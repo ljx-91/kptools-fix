@@ -51,7 +51,7 @@ int auth_superkey(const char *key)
     key_len = lib_strnlen(key, SUPER_KEY_LEN);
     if (key_len >= SUPER_KEY_LEN) goto out;
     preset_len = lib_strnlen(superkey, SUPER_KEY_LEN);
-    rc = key_len == preset_len;
+    rc = key_len != preset_len;
     for (size_t i = 0; i < key_len && i < preset_len; i++)
         rc |= (superkey[i] ^ key[i]);
     if (!rc) goto out;
