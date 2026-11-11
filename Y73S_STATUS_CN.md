@@ -2611,3 +2611,50 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 ### 下一步
 
 对 raw LK 做只读结构分析，先恢复映像头/加载地址和可执行区间，再定位 AVB 字符串引用及其 ADRP/ADD/LDR/BL 交叉引用；随后分别追踪 `avb_hal_verify_public_key`、lock-state provider、policy table 读取和 `avb_slot_verify` 返回值处理。只有函数边界、数据引用和条件分支可相互印证后，才讨论任何补丁位置。当前没有生成二进制补丁，也没有修改 LK、Boot 或 vbmeta。
+
+
+## 81. 2026-11-11：PD2031 混合 Recovery AVB 生成器的安全化实现
+
+### 本轮确认的上游材料
+
+- 公开设备树：`4accccc/android_device_vivo_pd2031`，分支 `twrp-12.1`，HEAD `2d26aff8f878fdb6b0fc2c76c733904b71fc0735`。
+- `BoardConfig.mk` 标识 `k6853v1_64_6360`、`TARGET_BOARD_PLATFORM := mt6853`，Recovery 分区大小为 100,663,296 bytes；设备树设置 `TARGET_NO_BOOTLOADER := true`，仓库中未发现 LK 源码。
+- 上游 `make_hybrid.py` 与 `make_hybrid_fox.py` 均使用 `vivo_data[:vivo_vbmeta_size]` 提取 vbmeta，没有使用 Footer 中解析出的 `vivo_vbmeta_offset`；两者均直接以 `wb` 覆盖输入 recovery 镜像，且没有对输出 Footer/vbmeta 进行回读校验，也没有验证新 payload 是否匹配被保留的 HashDescriptor。
+- 上游 `vivo_avb_footer.bin` 的 Git tree 元数据大小为 51,257,344 bytes，blob SHA 为 `2079bdb8cc12492506712f6491d5d8756899bc99`。当前 GitHub 文件读取接口未返回该二进制 blob 的内容（base64 响应为空），所以本轮不能报告其真实 Footer 偏移、vbmeta 内容、RSA 签名或 HashDescriptor 已通过检查。
+
+### 在本仓库新增的实现
+
+- 新增 `tools/y73s_avb/make_hybrid_recovery.py`：
+  - 严格解析 EOF 处 AVB Footer，检查版本、original_image_size、vbmeta_offset、vbmeta_size 和范围。
+  - 从 Footer 指定的 `vbmeta_offset` 提取 vbmeta，不再假设 vbmeta 位于文件开头。
+  - 解析 AVB HashDescriptor，默认要求指定分区（默认 `recovery`）恰好有一个 SHA-256 描述符，并核对 `SHA256(salt || payload[0:image_size])`。
+  - 默认遇到 HashDescriptor 不匹配就拒绝生成；只有显式传入 `--allow-hash-mismatch` 才能生成研究用途文件，并输出 `HASH_MISMATCH_RESEARCH_ONLY` 警告。该选项不能使镜像成为 AVB 有效镜像。
+  - 将新 Footer 的 `original_image_size`、`vbmeta_offset`、`vbmeta_size` 更新为输出布局；输出写入独立路径，拒绝覆盖输入，并使用临时文件 + 原子替换。
+  - 写出后重新解析 Footer，并逐字节检查输出中 vbmeta 与输入模板提取内容相同。
+- 新增 `tests/test_y73s_hybrid_recovery.py`，覆盖非零 vbmeta offset、HashDescriptor mismatch 默认拒绝、显式研究覆盖标记、Footer 越界和输出容量不足。
+- 更新 `.github/workflows/build-y73s-kptools-host.yml`，加入该脚本的 py_compile 和回归测试。
+- 未向第三方设备树仓库推送修改；实现放在用户指定的 `ljx-91/kptools-fix` 目标分支内，供审查与后续回移。
+
+### 提交与 CI
+
+- 新增生成器：`5c4edeba3bbe16e16c83029f8b7778fd473a7124`。
+- 新增回归测试：`c89084ae853cc5420467f234d020eebc0ba14ab0`。
+- 修正 Footer parser 返回类型：`09fa4defd94f4cb438c4582f1001481ecac3b8ba`。
+- 将回归测试接入 Host CI：`389bf4893f260ef1586f23fc0c5f6e6fa71f513c`。
+- 初始生成器提交 `5c4edeb` 对应 Linux Host 与 Windows workflow 均报告成功；但该运行发生在新增测试接入之前，不能视为本轮回归测试已通过。
+- 最终 HEAD `389bf48` 对应 Linux Host 与 Windows workflow 已触发，检查时均为 in_progress；因此新增测试结果尚未确认。
+
+### 仍然存在的 AVB 限制
+
+- 此生成器只保留原 OEM vbmeta 字节并正确重定位 Footer，不会生成或伪造 OEM RSA 签名。
+- 若 TWRP/Recovery payload 不匹配 OEM vbmeta 的 recovery HashDescriptor，默认会拒绝输出。显式研究覆盖产生的镜像仍然存在 hash mismatch，不能据此宣称能通过 locked AVB，也不能标记为可刷入。
+- 本轮没有从 51 MB 的上游二进制模板中读出真实 vbmeta，因此尚未对实际模板运行生成器；也没有证明上游原脚本的 vbmeta 提取偏移在该具体文件中一定错误（只有代码路径缺陷已确认，实际 offset 值待读 blob 后验证）。
+- 本轮未修改 LK、原厂 Boot、vbmeta、分区或设备；没有 Fastboot、刷写或真机启动测试。
+
+### 下一步
+
+1. 取得并离线解析 `vivo_avb_footer.bin` 的实际字节，确认其 Footer 指定的 vbmeta offset/size、vbmeta 签名、descriptor partition 名称与 digest。
+2. 等待最终 HEAD 的 Host CI，修复任何回归失败并重新运行。
+3. 用真实 TWRP payload 与模板进行只读演练；默认严格模式必须在 hash 不匹配时拒绝，不能使用研究覆盖结果作为生产镜像。
+4. 若要支持不同用途（例如 TEE 仅读取 patchlevel 的恢复环境），需单独证明 LK/TEE 的实际消费路径，不能把该行为等同于 AVB 验证通过。
+
