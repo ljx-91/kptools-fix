@@ -38,6 +38,23 @@ static kp_syscall_fn_t kp_orig_truncate_regs;
 static long (*kp_orig_truncate_args)(long arg0, long arg1);
 static void *kp_supercall_inline_target;
 
+/* KPM management is manager-only. A plain SU allowlist grant must not
+ * authorize loading, unloading, or controlling arbitrary kernel modules. */
+static bool kp_supercall_manager_only(long cmd)
+{
+	switch (cmd) {
+	case SUPERCALL_KPM_LOAD:
+	case SUPERCALL_KPM_UNLOAD:
+	case SUPERCALL_KPM_CONTROL:
+	case SUPERCALL_KPM_NUMS:
+	case SUPERCALL_KPM_LIST:
+	case SUPERCALL_KPM_INFO:
+		return true;
+	default:
+		return false;
+	}
+}
+
 /* Inline-hook backups are generated trampolines and have no kernel CFI
  * shadow entry. Keep only these indirect calls outside the CFI check. */
 __attribute__((no_sanitize("cfi")))
@@ -55,19 +72,23 @@ static long kp_call_original_truncate_args(long arg0, long arg1)
 static long kp_supercall_handler(const struct pt_regs *regs)
 {
 	uid_t uid = from_kuid(current_user_ns(), current_uid());
+	bool is_manager = kp_is_manager_uid(uid);
+	bool is_allowed = kp_is_su_allow_uid(uid);
+	long ver_xx_cmd = regs->regs[1];
+	long cmd = ver_xx_cmd & 0xFFFF;
 
-	/* The manager may grant/revoke allowlist entries; an already-allowed uid
-	 * may use the SU supercalls. Anything else is a plain truncate() call. */
-	if (!kp_is_manager_uid(uid) && !kp_is_su_allow_uid(uid)) {
+	/* Untrusted callers retain the original truncate() semantics. */
+	if (!is_manager && !is_allowed) {
 		logkd("supercall: uid %u not authorized (manager?%d allow?%d)\n", uid,
-		      kp_is_manager_uid(uid), kp_is_su_allow_uid(uid));
+		      is_manager, is_allowed);
 		if (kp_supercall_backend == KP_SUPERCALL_BACKEND_TABLE)
 			return kp_orig_truncate_regs ? kp_orig_truncate_regs(regs) : -ENOSYS;
 		return kp_call_original_regs_inline(regs);
 	}
 
-	long ver_xx_cmd = regs->regs[1];
-	long cmd = ver_xx_cmd & 0xFFFF;
+	/* SU allowlist membership is not manager authentication. */
+	if (kp_supercall_manager_only(cmd) && !is_manager)
+		return -EPERM;
 	if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX) {
 		logkd("bad supercall cmd 0x%lx\n", cmd);
 		if (kp_supercall_backend == KP_SUPERCALL_BACKEND_TABLE)
@@ -91,10 +112,14 @@ static long kp_supercall_handler_legacy(long arg0, long arg1,
 					unsigned long arg4, unsigned long arg5)
 {
 	uid_t uid = from_kuid(current_user_ns(), current_uid());
+	bool is_manager = kp_is_manager_uid(uid);
+	bool is_allowed = kp_is_su_allow_uid(uid);
 	long cmd = (unsigned long)arg1 & 0xFFFF;
 
-	if (!kp_is_manager_uid(uid) && !kp_is_su_allow_uid(uid))
+	if (!is_manager && !is_allowed)
 		return kp_call_original_truncate_args(arg0, arg1);
+	if (kp_supercall_manager_only(cmd) && !is_manager)
+		return -EPERM;
 	if (cmd < SUPERCALL_HELLO || cmd > SUPERCALL_MAX)
 		return kp_call_original_truncate_args(arg0, arg1);
 	return kp_handle_supercall(cmd, arg2, arg3, arg4, arg5);
