@@ -2962,3 +2962,21 @@ Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号
 ### 限制
 
 这些结果证明源码契约和 KPIMG 构建通过，不证明目标 vendor LKM 已经 Kbuild/MODPOST，不证明设备端 map 探测一定成功，也不证明 APatch bootloop 已解决。没有执行设备启动、Fastboot 或分区写入。
+
+
+## 91. 2026-11-12：Y73s APatch / SELinux AVC 隐藏符号适配
+
+- 对资料库原厂 Boot（SHA-256 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`）解压得到 47,517,708-byte kernel.Image（SHA-256 `345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`）。
+- 独立核验历史 Y73s `avc_denied` 指纹：入口 `0x0069141c` 的 31 条指令完全匹配；调用点 `0x00691d74` 的 BL 指令 `0x97fffdaa` 解码后准确指向该入口。
+- `tools/symbol.c` 增加严格设备专用回退：只接受 ARM64 / Linux 4.14.141 / little-endian / 精确 Image 长度，并同时校验完整函数入口指纹和 caller BL 目标；失败即不采用。
+- `tools/patch.c` 不再把 Android 标志硬编码为 false，而是把 KPIMG 实际 `is_android` 传入 patch-config 检查，使 Android 缺失主 AVC Hook 时 fail closed。
+- 新增 `scripts/verify_y73s_avc_denied_fallback.py` 并接入 Linux Host CI；检查 31-word 指纹、版本/长度/架构边界、调用点目标、Android 标志、AVC 主 Hook 和旧 ABI 参数布局。
+- 使用该分支 Host kptools + GCC 14.2 KPIMG 对原厂 Boot 副本离线修补成功。日志确认 `avc_denied=0x0069141c`、`slow_avc_audit=0x01917b34`、`rest_init=0x018f1280`、`kernel_init=0x018f1354`（从 rest_init 调用点恢复）、`__cfi_slowpath=0x002ddc00`。
+- 输出再次 unpack 成功；对解包 kernel 执行 `kptools -d` 成功，108,006 条符号记录，关键符号偏移与原厂基线一致。
+- Linux Host / 源码契约 CI：Run [43071760192](https://github.com/ljx-91/kptools-fix/actions/runs/43071760192)，成功。Y73s GCC 14.2 KPIMG：Run [43071269821](https://github.com/ljx-91/kptools-fix/actions/runs/43071269821)，成功。Windows Run [43071269905](https://github.com/ljx-91/kptools-fix/actions/runs/43071269905) 的构建、DLL 收集、Smoke Test 和 ZIP 步骤已完成，整条 workflow 最终状态需继续核对。
+- 离线输出 SHA-256：`c13992164c1b906d63c38db5888cc1fe543ea85f3cfe52eba7c0b10eafd726d3`。原厂 AVB Hash Descriptor 重算不匹配（输出 digest `8af33870c5e108c134750ced150cffc39fdf4a94b204500081eab99c18599925`），明确禁止将其当作可刷写/已验证镜像。
+- 完整报告见 [Y73S_APATCH_COMPAT_AUDIT_CN.md](Y73S_APATCH_COMPAT_AUDIT_CN.md)。
+
+### 仍未完成
+
+APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、Vivo 安全模块交互、设备端 CFI Hook 和启动测试仍未验证；目标 vendor KDIR / Module.symvers 仍缺失。未执行 Fastboot、刷写、分区写入或真机启动。
