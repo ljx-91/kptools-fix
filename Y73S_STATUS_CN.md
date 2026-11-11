@@ -3029,3 +3029,15 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 
 
 本轮 SuperKey / Manager 权限相关源码与测试提交：`a92d0fd21568248c0ab339cbded1b3539fe015d4`；其后提交仅更新 CI 文档。
+
+
+## 95. 2026-11-12：KPIMG Manager Supercall 早期返回修复
+
+- 发现 KPIMG `before()` 先检查 per-app exclude、再识别 trusted Manager；且 SuperKey 字符串复制失败时对所有 UID 直接 return。这会让可信 Manager 在被误加入 exclude 或 x0 key-copy 失败时无法进入 Manager 授权分支。
+- 现在先识别 trusted Manager；exclude 只拦截非 Manager；key-copy 失败仍拒绝非 Manager，但可信 Manager 可继续走既有 manager auth。正常 key copy 仍执行 Root SuperKey 校验和迁移。
+- 新增 `scripts/test_y73s_supercall_arg_capture.py`：使用真实 `syscall_args()/syscall_argn()`，按真实 `hook_fargs8_t` 前缀布局编译执行，覆盖 Y73s legacy inline 和 pt_regs wrapper 两种 x0-x5 参数读取。
+- Linux Host Run [43080710934](https://github.com/ljx-91/kptools-fix/actions/runs/43080710934) 成功；Manager 早期授权、真实 SHA256 Root SuperKey、syscall x0-x5 参数捕获全部 PASS。
+- Y73s GCC 14.2 KPIMG Run [43080712484](https://github.com/ljx-91/kptools-fix/actions/runs/43080712484) 成功。
+- Windows + Android KPIMG Run [43080711483](https://github.com/ljx-91/kptools-fix/actions/runs/43080711483)：Android KPIMG / Linux / 源码契约成功；Windows job 当时仍执行中。
+
+仍未进行真机 syscall trace、Manager UID 识别实测、Root 授权/KPM load-unload 或 AVB 刷写验证。
