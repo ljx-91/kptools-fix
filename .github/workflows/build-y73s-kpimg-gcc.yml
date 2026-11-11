@@ -8,6 +8,7 @@ name: Build Y73S Android KPIMG (Arm GNU GCC 14.2)
       - y73s-runtime-contract-hardening-20261108
       - y73s-dcache-coherency-20261108
       - y73s-cred-layout-guards-20261108
+      - y73s-cfi-slowpath-required-20261111
     # Exercises the credential-layout guard changes on this isolated branch.
     paths:
       - 'kernel/**'
@@ -68,6 +69,7 @@ jobs:
           python3 scripts/test_y73s_414_accctl_cred.py
           python3 scripts/test_y73s_414_sucompat_fallback.py
           python3 scripts/verify_y73s_414_kallsyms_profile.py
+          python3 scripts/verify_y73s_cfi_slowpath_contract.py
           python3 scripts/verify_y73s_symbol_scan_and_startup_events.py
           cd kernel
           make clean

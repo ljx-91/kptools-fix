@@ -30,11 +30,12 @@ static enum bug_trap_type (*backup_report_cfi_failure)(struct pt_regs *regs, uns
 static enum bug_trap_type replace_report_cfi_failure(struct pt_regs *regs, unsigned long addr, unsigned long *target,
                                                      u32 type)
 {
+    /* A successful hook must always have captured its original target. */
+    if (!target || !backup_report_cfi_failure) return BUG_TRAP_TYPE_BUG;
     if (should_cfi_pass(*target)) {
         return BUG_TRAP_TYPE_WARN;
     }
-    enum bug_trap_type rc = backup_report_cfi_failure(regs, addr, target, type);
-    return rc;
+    return backup_report_cfi_failure(regs, addr, target, type);
 }
 
 typedef void (*cfi_check_fn)(uint64_t id, void *ptr, void *diag);
@@ -43,12 +44,16 @@ static void (*backup__cfi_slowpath)(uint64_t id, void *ptr, void *diag) = 0;
 static void replace__cfi_slowpath(uint64_t id, void *ptr, void *diag)
 {
     if (should_cfi_pass((unsigned long)ptr)) return;
+    /* Never turn a missing trampoline backup into a null indirect call. */
+    if (!backup__cfi_slowpath) __builtin_trap();
     backup__cfi_slowpath(id, ptr, diag);
 }
 
 int bypass_kcfi()
 {
     int rc = 0;
+    bool report_cfi_failure_hooked = false;
+    bool cfi_slowpath_hooked = false;
 
     // 6.1.0
     // todo: Is there more elegant way?
@@ -70,6 +75,12 @@ int bypass_kcfi()
             rc = err;
             goto out;
         }
+        if (!backup_report_cfi_failure) {
+            log_boot("report_cfi_failure hook returned no original target\n");
+            rc = -EFAULT;
+            goto out;
+        }
+        report_cfi_failure_hooked = true;
     }
 
     // todo: direct modify cfi_shadow, __cfi_check?
@@ -87,18 +98,37 @@ int bypass_kcfi()
         hook_err_t err =
             hook((void *)__cfi_slowpath_addr, (void *)replace__cfi_slowpath, (void **)&backup__cfi_slowpath);
         if (err) {
-            log_boot("hook __cfi_slowpath_diag: %llx, error: %d\n", __cfi_slowpath_addr, err);
+            log_boot("hook __cfi_slowpath: %llx, error: %d\n", __cfi_slowpath_addr, err);
             rc = err;
             goto out;
         }
+        if (!backup__cfi_slowpath) {
+            log_boot("__cfi_slowpath hook returned no original target\n");
+            rc = -EFAULT;
+            goto out;
+        }
+        cfi_slowpath_hooked = true;
     }
 
-    if (!report_cfi_failure_addr && !__cfi_slowpath_addr) {
-        // not error on kernels without CFI (<= 5.4); fatal hazard on CFI kernels
-        log_boot("no symbol for pass kcfi (preset and runtime kallsyms both empty)\n");
-        log_boot("if CONFIG_CFI_CLANG is enabled (Android 13+ GKI common), every kCFI mismatch on KP memory will panic -> random reboots\n");
+#if defined(KP_TARGET_Y73S)
+    /*
+     * The exact Y73S 4.14.141 image has CONFIG_CFI_CLANG=y and exposes
+     * __cfi_slowpath (not report_cfi_failure/__cfi_slowpath_diag).
+     * The legacy slowpath is the required enforcement point; resolving or
+     * hooking only the newer report helper is not sufficient.
+     */
+    if (!cfi_slowpath_hooked) {
+        log_boot("Y73S CFI slowpath is required but was not hooked\n");
+        rc = -ENOSYS;
+        goto out;
     }
-    cfi_bypass = 1;
+#endif
+
+    if (!cfi_slowpath_hooked && !report_cfi_failure_hooked) {
+        log_boot("no verified CFI enforcement hook was installed\n");
+    }
+    /* Publish success only after at least one enforcement hook is live. */
+    cfi_bypass = cfi_slowpath_hooked || report_cfi_failure_hooked;
 
 out:
     return rc;
