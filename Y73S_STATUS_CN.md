@@ -2993,3 +2993,6 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 ### 限制
 
 这只是目标原厂二进制上的静态 prologue / ABI 兼容证明，不是设备端 Hook 安装或 CFI 旁路运行证明。Wi-Fi 连接后崩溃、Vivo 安全模块交互、KPM load/unload 和 APatch Manager 鉴权仍未验证。
+
+
+当前分支 HEAD（含本轮报告更新）：`3291b6d3b91a524897df83544eb8f009fa76d73e`；最新 CFI profile 测试源码提交：`491d3aa5ee8d523878f136e4ea0874351678080e`。
