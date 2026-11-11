@@ -3013,3 +3013,16 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 
 
 本轮源码/测试 CI 提交：`d39cbe92d463ca6a1fb0b2f16affcfad64426b6d`；本轮后续提交仅更新审计文档。
+
+
+## 94. 2026-11-12：Root SuperKey 校验与越界读取修复
+
+- 原故障日志中的 `testtest123` SHA-256 为 `626aa60100e38a2b0a8c9b3512116bfb3ff9db5b986b21b27c2989e011629435`，与 kptools `-S` 写入的 root verifier 完全一致；不是 SHA-256 算法/补丁写入错误。
+- 修复 `kernel/base/predata.c:auth_superkey()`：拒绝 NULL/超长/无终止符输入；比较前先检查长度；不再读取用户 key 的 NUL 之后未初始化字节；Root hash fallback 需要启用标志、有效 verifier 标志和有效指针；哈希只覆盖已验证长度。
+- 新增 source contract `scripts/verify_y73s_superkey_contract.py` 和真实 C 执行测试 `scripts/test_y73s_root_superkey_auth.py`；后者直接执行仓库的 `auth_superkey()` 并链接仓库真实 SHA-256 实现。
+- Linux Host Run [43079653529](https://github.com/ljx-91/kptools-fix/actions/runs/43079653529) 成功；Y73s GCC 14.2 KPIMG Run [43079653564](https://github.com/ljx-91/kptools-fix/actions/runs/43079653564) 成功。root-key 验证/迁移、错误密钥拒绝、NULL/unterminated 拒绝、plain key 精确匹配全部 PASS。
+- Windows + Android KPIMG Run [43079653598](https://github.com/ljx-91/kptools-fix/actions/runs/43079653598)：Android KPIMG 与 Linux Host job 成功；Windows job 当时仍在执行。
+
+### 尚未闭环
+
+真实 C verifier 通过不等于设备 Supercall 认证已通过；仍需确认 Y73s 的 `SyS_truncate.cfi` Hook 收到的 x0、x1 和 x2-x5 与 APatch Manager 调用一致，并在真机收集 Manager UID / SuperKey / Supercall 返回值日志。未进行刷写。AVB 摘要仍不匹配。
