@@ -23,6 +23,9 @@ EXPECTED_LK_SHA256 = "e44dc34afa12235011331309c3cac1f995cbca65c5e61c9e598984a553
 POLICY_ROW_OFFSET = 0xB0C18
 POLICY_BYTES_OFFSET = POLICY_ROW_OFFSET + 20
 EXPECTED_POLICY = bytes.fromhex("01 00 03 00")
+EXPECTED_LK_BUILD_ID = b"k6853v1_64_6360-5cfd6cf-20210414212350-20220215124501"
+EXPECTED_LK_ROOT_KEY_OFFSET = 0xDBBC4
+REFERENCE_K6853_AVB_MODULUS_SHA256 = "4ffc881faafb2d1af7dd40cfba4ca90464b4f5689ef7f4ec3a0fe7b741440688"
 SHA256_DER_PREFIX = bytes.fromhex("3031300d060960864801650304020105000420")
 
 
@@ -118,7 +121,7 @@ def parse_boot(path, label):
     if len(data) < 64 or data[-64:-60] != b"AVBf":
         raise AuditError(f"{label}: AVB footer missing")
     major, minor, original_sz, vb_off, vb_sz = struct.unpack_from(">IIQQQ", data, len(data) - 60)
-    if (major, minor) != (1, 0) or vb_off + vb_sz > len(data) - 64 or original_sz > len(data):
+    if (major, minor) != (1, 0) or vb_off < original_sz or vb_off + vb_sz > len(data) - 64 or original_sz > len(data):
         raise AuditError(f"{label}: invalid footer")
     vb_blob = data[vb_off:vb_off + vb_sz]
     vb = parse_vbmeta(vb_blob, label + "/embedded-vbmeta")
@@ -157,6 +160,8 @@ def main():
     lk_sha = hashlib.sha256(lk).hexdigest()
     if lk_sha != EXPECTED_LK_SHA256:
         raise AuditError(f"LK SHA256 mismatch: {lk_sha}")
+    if EXPECTED_LK_BUILD_ID not in lk:
+        raise AuditError("expected LK build-id string not found")
     policy = lk[POLICY_BYTES_OFFSET:POLICY_BYTES_OFFSET + 4]
     if policy != EXPECTED_POLICY:
         raise AuditError(f"LK boot policy row changed: {policy.hex()}")
@@ -182,7 +187,10 @@ def main():
     root_modulus = root["pubkey"][8:264]
     lk_key_offset = lk.find(root_modulus)
     if lk_key_offset < 0:
-        raise AuditError("root vbmeta RSA modulus not found in LK trust-key material")
+        raise AuditError("root vbmeta RSA modulus not found in LK binary")
+    if lk_key_offset != EXPECTED_LK_ROOT_KEY_OFFSET:
+        raise AuditError(f"root modulus found at unexpected LK offset: {lk_key_offset:#x}")
+    root_modulus_sha = hashlib.sha256(root_modulus).hexdigest()
 
     orig_hash = boot_digest(original)
     cand_hash = boot_digest(candidate)
@@ -201,6 +209,10 @@ def main():
         "lk_boot_policy_bytes": policy.hex(),
         "unlocked_verify_bits_sbc_disabled_enabled": unlocked_vfy,
         "lk_root_key_modulus_offset": hex(lk_key_offset),
+        "lk_root_modulus_sha256": root_modulus_sha,
+        "reference_k6853_target_header_key_sha256": REFERENCE_K6853_AVB_MODULUS_SHA256,
+        "reference_target_header_key_matches_root": root_modulus_sha == REFERENCE_K6853_AVB_MODULUS_SHA256,
+        "lk_binary_modulus_presence_proves_trust": False,
         "root_vbmeta_signature": "PASS",
         "vbmeta_system_signature": "PASS",
         "original_embedded_vbmeta_signature": "PASS",
