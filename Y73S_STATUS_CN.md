@@ -1,8 +1,8 @@
 # Vivo Y73s 项目当前状态（唯一状态入口）
 
-> 更新时间：2026-11-10  
+> 更新时间：2026-11-11  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 最近代码修复基线（不含本次状态文档提交）：`980bec8310860927aaf3469a607e1484e79579c0`  
+> 最近代码/测试基线（本次状态文档更新前）：`2f25b3cab99d3b8c375e63a17d51fbdf62da7829`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -2843,4 +2843,51 @@ Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号
 - 这是 ABI 声明精确化；由于 hook_fargs1_t 与 hook_fargs4_t 是同一结构布局别名，且 hook_wrap1() 选择 _transit4，本次不改变底层 transit 寄存器保存类别。
 - 必须等待本次提交触发的 Host source-contract、Host kptools、Y73S KPIMG 和 Windows workflow 完成后，才能报告对应构建状态。
 - 仍未取得与设备完全匹配的 Y73s 4.14.141+ KDIR；未完成目标 .ko / MODPOST、设备级 Hook 安装或启动事件触发验证。
+- 没有执行 Fastboot、刷写、分区写入或真机启动测试。
+
+
+
+## 87. 2026-11-11：修正 KPIMG 在 Y73s syscall 45 的最终目标选择
+
+### 本轮确认的源码修正
+
+此前的 Y73s 原始 Boot 离线反汇编已经证明：普通 `sys_truncate` 符号位于 Image offset `0x019305cc`，它是一个只有 4 bytes 的 CFI 跳转入口；KPIMG 的绝对分支补丁长度为 16 bytes。旧的通用名称解析若回退到这个别名，就会覆盖后面相邻的三个 CFI 入口。这个旧行为属于真实的静态越界问题，不是推测。
+
+当前分支源码已加入 Y73s 专用的 fail-closed 目标选择：
+
+- 只在 `KP_TARGET_Y73S`、native syscall、无 syscall wrapper 且 syscall number 为 45 时进入专用分支。
+- 直接查找 `SyS_truncate.cfi`，不再将 `sys_truncate` 短别名作为后备目标。
+- 找不到实现体符号时返回 0，拒绝安装该 Hook。
+- 找到后先缓存实现体地址，再返回，不进入通用短别名解析。
+- 当前原始 Y73s KALLSYMS 中实现体偏移为 `0x003cd6b8`；危险的普通别名仍为 `0x019305cc`。
+
+因此，旧审计中“当前 KPIMG syscall 45 仍会解析到 `0x019305cc`”的结论只描述修复前源码。对当前 HEAD，应以 `kernel/patch/common/syscall.c` 的 Y73s 专用分支为准。
+
+### 回归检查与 CI
+
+`scripts/verify_y73s_syscall45_contract.py` 包含 11 项源码契约，覆盖目标限定条件、实现体解析、缺失符号 fail-closed、缓存顺序、旧 ABI 保持、LKM 目标、Y73s 构建开关、绝对分支长度、LKM relocation 拒绝与 init unwind。
+
+- Linux Host 源码契约：Run [42997233203](https://github.com/ljx-91/kptools-fix/actions/runs/42997233203)，成功。
+- Y73s GCC 14.2 KPIMG 构建/审计：Run [42997233189](https://github.com/ljx-91/kptools-fix/actions/runs/42997233189)，成功。
+- Windows kptools 构建：Run [42997233238](https://github.com/ljx-91/kptools-fix/actions/runs/42997233238)，成功。该项是构建验证，不是 syscall-45 专项脚本的执行环境。
+
+以上只证明相应源码契约和构建作业通过；不等于目标内核 `.ko` 编译、设备 Hook 运行或真机启动成功。
+
+### 仍未解决的双重所有权问题
+
+修正 KPIMG 的目标地址，并没有把 KPIMG 与 standalone LKM 的 syscall-45 Hook 合并成同一条回调链：
+
+- KPIMG 与 LKM 有各自独立的 Hook Engine、注册表、锁和补丁后端。
+- LKM 也以 `SyS_truncate.cfi` 为目标；若 KPIMG 已先修改该函数入口，LKM 的 relocation 检查会拒绝搬迁其覆盖范围内的 literal 分支，随后 LKM init unwind 会撤销本次加载中已安装的 Hook。
+- 这属于 fail-closed 的拒绝共存，不是双组件成功叠加，也不是共享 dispatcher。
+- 两边的认证等级、SU allowlist、KPM registry 和符号命名空间也不相同。不能只改一个符号名或删掉其中一个 handler 来假定另一边可完全替代。
+
+下一步必须先确定唯一的 syscall-45 owner，并为另一组件定义经过认证级别、命令归属、KPM loader 命名空间和生命周期审计的版本化接口。接口未完成前，不应把 KPIMG 与 standalone LKM 描述为可同时启用。
+
+### 验证边界
+
+- 当前 HEAD：`2f25b3cab99d3b8c375e63a17d51fbdf62da7829`。
+- 与设备完全匹配的 Linux 4.14.141+ KDIR、生成头文件和 `Module.symvers` 仍未取得。
+- 尚无目标 `.ko` 编译/MODPOST、设备端 Hook 调用序列或启动日志闭环。
+- 本节修正不能证明 APatch 早期重启问题已经解决，也不能保证任何候选镜像能够启动。
 - 没有执行 Fastboot、刷写、分区写入或真机启动测试。
