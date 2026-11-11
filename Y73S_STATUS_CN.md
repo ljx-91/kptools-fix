@@ -2821,3 +2821,26 @@ Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号
 ### 验证边界
 
 本轮已推送源码和回归检查。实现提交 `f7cc454` 的 Linux Host workflow run `42991292628` success；回归契约提交 `be825b1` 的 Linux Host workflow run `42991295627` 两个 jobs 均 success，`Run repository-wide source contracts` 和 `Build host kptools` 均通过；同一提交的 Y73S GCC 14.2 KPIMG run `42991295698` success。文档提交 `2082f2d` 的 Windows workflow run `42991444457` 中 Android KPIMG、Linux kptools 和 source contracts 均 success，Windows kptools job 当时仍 queued，不能提前报 Windows 通过。源码契约与 KPIMG/Host 构建通过不等于 Y73S 目标 `.ko` 已构建、Hook 已在设备运行或 KPM 事件已在真机触发。目标 KDIR 缺失，因此暂不宣称设备级验证完成。全程没有 Fastboot、刷写、分区写入或真机启动测试。
+
+
+## 86. 2026-11-11：kernel_init Hook 参数 ABI 收紧为单参数
+
+### 审计发现与源码修正
+
+- Y73s 的 rest_init 调用 kernel_thread 时，按 Linux 4.14 的 kernel_thread(int (*fn)(void *), void *arg, unsigned long flags) 约定传递线程入口；隐藏入口解析到的是 kernel_init(void *unused) 这一单参数函数。
+- 先前使用 hook_wrap4() 虽然落入同一个 _transit4 ABI class（hook_argno_abi_class(1..4) == 4），不会因此改变寄存器保存类别，但把真实函数原型声明成 4 参数，语义不精确，也增加后续同一 origin Hook ABI 冲突时的误判风险。
+- 已将 before_kernel_init / after_kernel_init 的参数类型改为 hook_fargs1_t *，并将安装调用改为 hook_wrap1()。当前框架中 hook_fargs1_t 是 hook_fargs4_t 的布局别名，且 hook_wrap1() 仍使用 _transit4，所以既保持实际寄存器保存布局，也明确表达目标函数只有一个参数。
+- PRE_KERNEL_INIT 和 POST_KERNEL_INIT 的触发位置不变；没有把事件移到 rest_init 或 kernel_thread 调用点。
+
+### 回归检查
+
+- 扩展 scripts/verify_y73s_symbol_scan_and_startup_events.py，要求两个回调声明使用 hook_fargs1_t，并要求 patch() 使用 hook_wrap1(kernel_init_addr, ...)；拒绝回退为 hook_wrap4。
+- 代码提交：7c8d50975a4963575c07def3d4a793330744d83d。
+- 回归契约提交：2e738bf5f04312200641de2311b5eeb58a44253a。
+
+### 验证边界
+
+- 这是 ABI 声明精确化；由于 hook_fargs1_t 与 hook_fargs4_t 是同一结构布局别名，且 hook_wrap1() 选择 _transit4，本次不改变底层 transit 寄存器保存类别。
+- 必须等待本次提交触发的 Host source-contract、Host kptools、Y73S KPIMG 和 Windows workflow 完成后，才能报告对应构建状态。
+- 仍未取得与设备完全匹配的 Y73s 4.14.141+ KDIR；未完成目标 .ko / MODPOST、设备级 Hook 安装或启动事件触发验证。
+- 没有执行 Fastboot、刷写、分区写入或真机启动测试。
