@@ -3038,6 +3038,9 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - 新增 `scripts/test_y73s_supercall_arg_capture.py`：使用真实 `syscall_args()/syscall_argn()`，按真实 `hook_fargs8_t` 前缀布局编译执行，覆盖 Y73s legacy inline 和 pt_regs wrapper 两种 x0-x5 参数读取。
 - Linux Host Run [43080710934](https://github.com/ljx-91/kptools-fix/actions/runs/43080710934) 成功；Manager 早期授权、真实 SHA256 Root SuperKey、syscall x0-x5 参数捕获全部 PASS。
 - Y73s GCC 14.2 KPIMG Run [43080712484](https://github.com/ljx-91/kptools-fix/actions/runs/43080712484) 成功。
-- Windows + Android KPIMG Run [43080711483](https://github.com/ljx-91/kptools-fix/actions/runs/43080711483)：Android KPIMG / Linux / 源码契约成功；Windows job 当时仍执行中。
+- Windows + Android KPIMG Run [43080711483](https://github.com/ljx-91/kptools-fix/actions/runs/43080711483) 整条 workflow 成功；Android KPIMG、Linux kptools、源码契约、Windows kptools.exe、DLL 收集、Smoke Test、ZIP 与 Artifact 上传全部通过。
 
 仍未进行真机 syscall trace、Manager UID 识别实测、Root 授权/KPM load-unload 或 AVB 刷写验证。
+
+
+本轮 Manager / SuperKey / syscall 参数链路源码与测试提交：`d58fc4220fee22ba8ea49ead66a9ee17ad98c119`；其后提交仅更新审计文档。
