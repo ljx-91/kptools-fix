@@ -463,6 +463,50 @@ static int32_t resolve_kernel_init_from_rest_init(kallsym_t *kallsym, char *img_
 }
 
 
+/*
+ * Y73S V2031A / PD2031, Android 10, Linux 4.14.141+ (2022-02-15 build).
+ * avc_denied is a local static function and is omitted from KALLSYMS_ALL=n.
+ * Accept this one image-specific fallback only when the complete entry
+ * fingerprint and its in-image caller BL both match. Never generalize the
+ * offset to other 4.14 kernels or firmware builds.
+ */
+static int32_t resolve_y73s_avc_denied_fingerprint(kallsym_t *kallsym, char *img_buf,
+                                                    int imglen, int32_t target_is_be)
+{
+    static const uint32_t expected[] = {
+        0x37000166, 0xb000ce6b, 0xb948ad6b, 0x2a0203ea,
+        0x2a0103e8, 0x2a0003e9, 0x340000eb, 0x394040eb,
+        0x370000ab, 0x321c77e0, 0xd65f03c0, 0x321c77e0,
+        0xd65f03c0, 0xd10083ff, 0xa9017bfd, 0x910043fd,
+        0xb9400ce7, 0xb9000be6, 0x320003e0, 0x2a0303e1,
+        0x2a0403e2, 0x2a0503e3, 0x2a0903e4, 0x2a0803e5,
+        0x2a0a03e6, 0xf90003ff, 0x97fffecb, 0xa9417bfd,
+        0x2a1f03e0, 0x910083ff, 0xd65f03c0
+    };
+    const int32_t function_offset = 0x0069141c;
+    const int32_t caller_offset = 0x00691d74;
+
+    if (!kallsym || !img_buf || kallsym->arch != ARM64 ||
+        kallsym->version.major != 4 || kallsym->version.minor != 14 ||
+        kallsym->version.patch != 141 || target_is_be ||
+        imglen != 47517708 || imglen < 4 ||
+        function_offset > imglen - (int32_t)sizeof(expected) ||
+        caller_offset > imglen - 4) {
+        return 0;
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(expected); i++) {
+        uint32_t word = (uint32_t)uint_unpack(img_buf + function_offset + i * 4, 4, target_is_be);
+        if (word != expected[i]) return 0;
+    }
+
+    uint32_t caller = (uint32_t)uint_unpack(img_buf + caller_offset, 4, target_is_be);
+    if (!aarch64_insn_is_bl(caller)) return 0;
+    if ((int64_t)caller_offset + aarch64_get_branch_offset(caller) != function_offset) return 0;
+
+    return function_offset;
+}
+
 int fillin_patch_config(kallsym_t *kallsym, char *img_buf, int imglen, patch_config_t *symbol, int32_t target_is_be,
                         bool is_android)
 {
@@ -506,6 +550,13 @@ int fillin_patch_config(kallsym_t *kallsym, char *img_buf, int imglen, patch_con
 
     //  gcc -fipa-sra eg: avc_denied.isra.5
     symbol->avc_denied = try_get_symbol_offset_zero(kallsym, img_buf, "avc_denied");
+    if (!symbol->avc_denied) {
+        symbol->avc_denied = resolve_y73s_avc_denied_fingerprint(kallsym, img_buf, imglen, target_is_be);
+        if (symbol->avc_denied) {
+            tools_logi("vivo Y73s 4.14.141 avc_denied fingerprint verified: 0x%08x\\n",
+                       (unsigned int)symbol->avc_denied);
+        }
+    }
     if (!symbol->avc_denied && is_android) tools_loge_exit("no symbol avc_denied");
 
     symbol->slow_avc_audit = try_get_symbol_offset_zero(kallsym, img_buf, "slow_avc_audit");
