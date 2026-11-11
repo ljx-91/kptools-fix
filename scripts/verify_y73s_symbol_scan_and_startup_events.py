@@ -174,6 +174,14 @@ def verify_hidden_kernel_init():
          "resolver must decode the ADD immediate that completes the entry pointer")
     need(r"aarch64_insn_is_b\(stub_insn\)", resolver,
          "resolver must follow the function-pointer CFI branch stub")
+    need(r"stub_offset\s*&\s*3", resolver,
+         "resolver must reject unaligned CFI stub addresses")
+    need(r"if\s*\(!aarch64_insn_is_b\(stub_insn\)\)\s*continue", resolver,
+         "resolver must reject non-branch CFI targets")
+    need(r"body_offset\s*&\s*3", resolver,
+         "resolver must reject unaligned kernel_init body addresses")
+    need(r"body_offset\s*\+\s*4\s*>\s*rest_init_end", resolver,
+         "resolver must keep the complete kernel_init entry instruction inside rest_init")
     need(r"body_offset\s*<=\s*rest_init_offset\s*\|\|\s*body_offset\s*>=\s*rest_init_end",
          resolver, "resolver must accept only a unique body inside the rest_init symbol span")
     need(r"symbol->kernel_init\s*=\s*resolve_kernel_init_from_rest_init",
