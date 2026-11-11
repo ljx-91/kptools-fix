@@ -2522,3 +2522,33 @@ tools/symbol.c 新增保守解析器：定位 rest_init 范围内对 kernel_thre
 ### 本轮结论
 
 **AVB 当前状态：OEM 签名数学正确、链式 key 一致、候选 Boot hash 不匹配；但根 OEM key 信任和设备实际 unlocked 状态仍未确认。** 不修改任何 vbmeta，不伪造签名，不刷写设备。
+
+
+## 78. 2026-11-11：PD2031 公共设备树交叉检查（不构成 LK OEM key 证明）
+
+### 找到的机型相关公开材料
+
+检查公开仓库 `4accccc/android_device_vivo_pd2031`（提交 `2d26aff8f878fdb6b0fc2c76c733904b71fc0735`）：
+
+- `BoardConfig.mk` 将设备路径和 bootloader board name 指向 `k6853v1_64_6360`，平台为 `mt6853`，并在 kernel cmdline 中包含 `product.version=PD2031_A_5.12.1`。这支持该设备树与 PD2031 / k6853v1_64_6360 家族有关。
+- 同文件 `TARGET_NO_BOOTLOADER := true`，说明这是以预编译内核构建 recovery 的设备树，不包含可供本次核对的 LK 构建产物或 LK 源码。
+- `BOARD_AVB_ENABLE := true` 与 `BOARD_AVB_MAKE_VBMETA_IMAGE_ARGS += --flags 3` 是该 recovery 构建配置；不能将其解释为原厂 LK 的 AVB policy，也不能据此推断原厂 boot/vbmeta 被关闭验证。
+- `BOARD_AVB_RECOVERY_KEY_PATH` 指向 AOSP `external/avb/test/data/testkey_rsa4096.pem`，并指定 recovery 的 SHA256_RSA4096。它是第三方 recovery 构建用的测试密钥配置，不是本次原厂 vbmeta 的 OEM RSA-2048 根密钥证据。
+- `fstab.mt6853` 对 cust、vgc、system、vendor、product 等挂载项配置了 AVB 相关选项；其中 system 使用 `avb=vbmeta_system`。这可用于理解 recovery 环境如何挂载受 AVB 保护的分区，但不证明 LK 根密钥身份或启动时的 lock state。
+- 设备树列出了 `lk`、`lk2` 分区挂载路径，但仓库中没有对应 LK 源码、map、符号表或 AVB 公钥头文件。
+
+### 对现有 AVB 判断的影响
+
+1. 该设备树进一步支持样本属于 PD2031 / k6853v1_64_6360 设备家族，但其 recovery 的测试签名密钥与原厂 AVB OEM 根密钥是两个不同用途的信任域。
+2. 不能使用 `BOARD_AVB_MAKE_VBMETA_IMAGE_ARGS --flags 3` 作为原厂 LK unlocked 容忍策略的证据；第 75 节的 MTK LK policy 参考源码仍需与实际 LK 构建对应后才能升级为目标机结论。
+3. 本次 GitHub 检索没有找到该设备树所用 LK 的源码或 `AVB_PUBK` 配置；也没有找到能证明 LK 中 `0xDBBC4` 数据被作为 `g_avb_key` 使用的交叉引用。
+4. 因此第 77 节结论保持不变：**OEM root key 是否受该 LK 信任未确认；候选 Boot 的 salted HashDescriptor mismatch 已确认；运行时 LKS_UNLOCK 未确认。**
+
+参考材料：
+- `BoardConfig.mk`: https://github.com/4accccc/android_device_vivo_pd2031/blob/2d26aff8f878fdb6b0fc2c76c733904b71fc0735/BoardConfig.mk
+- `device.mk`: https://github.com/4accccc/android_device_vivo_pd2031/blob/2d26aff8f878fdb6b6b0fc2c76c733904b71fc0735/device.mk
+- `fstab.mt6853`: https://github.com/4accccc/android_device_vivo_pd2031/blob/2d26aff8f878fdb6b0fc2c76c733904b71fc0735/recovery/root/system/etc/fstab.mt6853
+
+### 本轮结论
+
+新增了 PD2031 设备树交叉检查，排除了把第三方 recovery 的 AVB test key / flags 误当成原厂 LK 信任配置的风险。没有发现能解决 OEM key 信任疑点的新 LK 证据；不修改任何镜像或签名元数据。
