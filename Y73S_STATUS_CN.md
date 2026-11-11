@@ -2980,3 +2980,16 @@ Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号
 ### 仍未完成
 
 APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、Vivo 安全模块交互、设备端 CFI Hook 和启动测试仍未验证；目标 vendor KDIR / Module.symvers 仍缺失。未执行 Fastboot、刷写、分区写入或真机启动。
+
+
+## 92. 2026-11-12：Y73s CFI slowpath 入口与 Hook ABI 静态核验
+
+- 原厂 Image 的 `__cfi_slowpath` 位于 `0x002ddc00`；前四条指令为 `d10103ff a90157f6 a9024ff4 a9037bfd`，均为可原样搬迁的栈帧/寄存器保存指令，没有 PC-relative 分支、ADR/ADRP 或 literal load。
+- 现有 KPIMG `branch_absolute()` 覆盖四条指令；`hook_prepare()` 会逐条 relocation；普通指令通过 `INST_IGNORE -> relo_ignore()` 原样复制。静态分析认为该 16-byte prologue 与当前 trampoline 机制兼容。
+- 函数体在 `+0x1c` 使用 X2，说明第三个参数确实被消费；KPIMG 的 `replace__cfi_slowpath(id, ptr, diag)` 和 backup 指针均为三参数 ABI。
+- 新增 `scripts/verify_y73s_cfi_slowpath_profile.py`，接入 Host CI，校验 CFI 函数符号、入口指令、四指令 trampoline、copy-through relocation 和三参数 ABI。
+- Linux Host / 源码契约 Run [43072740995](https://github.com/ljx-91/kptools-fix/actions/runs/43072740995) 的 Audit job 成功，CFI profile 检查全部 PASS；同一 run 的 host kptools build 也已成功。
+
+### 限制
+
+这只是目标原厂二进制上的静态 prologue / ABI 兼容证明，不是设备端 Hook 安装或 CFI 旁路运行证明。Wi-Fi 连接后崩溃、Vivo 安全模块交互、KPM load/unload 和 APatch Manager 鉴权仍未验证。
