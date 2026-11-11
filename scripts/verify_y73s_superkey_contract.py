@@ -69,6 +69,14 @@ def main():
          "is_authed = !auth_superkey(key);" in before,
          "supercall authenticates the bounded first syscall argument")
 
+    need("int is_manager = is_trusted_manager_uid(uid);" in before and
+         before.find("is_trusted_manager_uid(uid)") < before.find("get_ap_mod_exclude(uid)") and
+         "get_ap_mod_exclude(uid) && !is_manager" in before,
+         "trusted Manager bypasses the per-app exclude gate")
+    need("if (len <= 0)" in before and "if (!is_manager) return;" in before and
+         "if (is_manager)" in before and "is_authed = 1;" in before,
+         "trusted Manager retains supercall access if optional key copy fails")
+
     known = hashlib.sha256(b"testtest123").hexdigest()
     need(known == "626aa60100e38a2b0a8c9b3512116bfb3ff9db5b986b21b27c2989e011629435",
          "reported Y73s -S testtest123 verifier matches SHA-256 exactly")
