@@ -1020,7 +1020,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     memcpy(setup->header_backup, kallsym_kimg, sizeof(setup->header_backup));
 
     // start symbol
-    fillin_patch_config(&kallsym, kallsym_kimg, ori_kimg_len, &setup->patch_config, kinfo->is_be, 0);
+    fillin_patch_config(&kallsym, kallsym_kimg, ori_kimg_len, &setup->patch_config, kinfo->is_be, is_android);
 
     // superkey
     if (!root_key) {
