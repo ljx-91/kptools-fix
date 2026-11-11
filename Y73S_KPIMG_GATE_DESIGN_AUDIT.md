@@ -1,6 +1,6 @@
 # Y73S Resident Hook Gate design audit
 
-Date: 2026-11-10
+Date: 2026-11-11
 
 Branch: `y73s-cred-layout-guards-20261108`
 
@@ -10,7 +10,7 @@ Scope: design and source audit only. This document does not claim a production G
 
 This section describes the current branch source and supersedes the historical sections below that describe KPIMG resolving syscall 45 to the short `sys_truncate` alias as the current behavior.
 
-At branch code/test baseline `2f25b3cab99d3b8c375e63a17d51fbdf62da7829`:
+At branch resolver/test baseline `2f25b3cab99d3b8c375e63a17d51fbdf62da7829` (the same resolver remains in the newer test baseline `d5df51f08113dba16b9069776add4c4383f6c1a0`):
 
 - `kernel/patch/common/syscall.c::syscalln_name_addr()` has a Y73S-only branch for native, no-wrapper syscall 45.
 - That branch resolves `SyS_truncate.cfi` directly, caches the implementation address, and returns it before generic syscall-name fallback.
