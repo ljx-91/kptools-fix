@@ -2816,8 +2816,8 @@ Y73S 原厂 4.14.141+ 内核的 KALLSYMS 不包含独立的 `kernel_init` 符号
 
 - 实现：`f7cc454842ef91eaa04aa0e5d1b22a775cfb62c1`。
 - 回归契约：`be825b12dd03e7cb477a3e718edcad3da33e8f63`。
-- 当前分支 HEAD：`be825b12dd03e7cb477a3e718edcad3da33e8f63`。
+- 当前分支 HEAD（本节文档提交后）：`2082f2d4257044e5b44f47adf180343b9b5453fa`。
 
 ### 验证边界
 
-本轮已推送源码和回归检查；该提交触发的 GitHub Actions 结果仍需实际查询。源码契约通过也不等于 Y73S 目标 `.ko` 已构建、Hook 已在设备运行或 KPM 事件已在真机触发。目标 KDIR 缺失，因此暂不宣称设备级验证完成。全程没有 Fastboot、刷写、分区写入或真机启动测试。
+本轮已推送源码和回归检查。实现提交 `f7cc454` 的 Linux Host workflow run `42991292628` success；回归契约提交 `be825b1` 的 Linux Host workflow run `42991295627` 两个 jobs 均 success，`Run repository-wide source contracts` 和 `Build host kptools` 均通过；同一提交的 Y73S GCC 14.2 KPIMG run `42991295698` success。文档提交 `2082f2d` 的 Windows workflow run `42991444457` 中 Android KPIMG、Linux kptools 和 source contracts 均 success，Windows kptools job 当时仍 queued，不能提前报 Windows 通过。源码契约与 KPIMG/Host 构建通过不等于 Y73S 目标 `.ko` 已构建、Hook 已在设备运行或 KPM 事件已在真机触发。目标 KDIR 缺失，因此暂不宣称设备级验证完成。全程没有 Fastboot、刷写、分区写入或真机启动测试。
