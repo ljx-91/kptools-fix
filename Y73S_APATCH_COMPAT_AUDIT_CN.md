@@ -185,3 +185,6 @@ CI：
 - Windows + Android KPIMG：Run [43079653598](https://github.com/ljx-91/kptools-fix/actions/runs/43079653598)，Android KPIMG / Linux Host job 成功；Windows kptools.exe job 在本报告更新时仍在执行。
 
 **限制：**该测试证明 Root SuperKey verifier 的真实 C 函数与 SHA-256 在 Host 环境下符合预期；不证明 Y73s 设备上的 syscall 45 Hook 一定收到 Manager 传入的正确 x0 指针，也不证明 Manager UID 检测、SELinux 域、Supercall 命令传递或 Root 授权完整链路已正常。仍需设备日志闭环。
+
+
+本轮 SuperKey / Manager 权限相关源码与测试提交：`a92d0fd21568248c0ab339cbded1b3539fe015d4`；其后提交仅更新 CI 文档。
