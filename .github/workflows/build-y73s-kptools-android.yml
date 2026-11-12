@@ -46,6 +46,7 @@ jobs:
           readelf -l tools/kptools | grep -F '/system/bin/linker64'
           strings tools/kptools | grep -F 'analyze_kallsym_info error'
           strings tools/kptools | grep -F 'strict vector validation'
+          strings tools/kptools | grep -F 'pid_vnr is CFI stub, follow branch to offset'
 
       - name: Package FolkPatch-compatible artifact
         run: |
