@@ -31,6 +31,7 @@ jobs:
           python3 scripts/audit_y73s_avb_chain.py --help >/dev/null
           python3 tests/test_y73s_hybrid_recovery.py
           python3 scripts/test_kptools_extra_terminator.py
+          python3 scripts/test_y73s_kallsym_pid_vnr_cfi.py
           cc -std=gnu11 -Wall -Wextra -Werror -I kernel/include \
             scripts/test_y73s_hook_layout.c -o /tmp/test_y73s_hook_layout
           /tmp/test_y73s_hook_layout
