@@ -44,3 +44,27 @@ Important integration discrepancy: the existing offline APK contains KPIMG SHA-2
 - It verifies the original ARM64 `libkptools.so` and `libapjni.so` hashes, replaces only `assets/kpimg`, re-signs with the user-provided local JKS, then reopens the APK and verifies the KPIMG, native libraries, alignment and signer pin.
 - JKS private key and passwords are intentionally not stored in Git. The JKS file is present in the user's Library bundle; the keystore/key passwords are not available to this build session. The script must be run locally with those credentials supplied through environment variables.
 - The new CI KPIMG has not yet been injected into the APK, and no APK signed with that new payload is being claimed as built.
+
+
+## kptools zero-padding parser fix and fresh offline validation
+
+A real host-side patch/repack/reparse test against the Library original boot.img found a parser defect:
+- The patcher reserves `extra_size=0x80` even when there are no embedded extra records; this area is all zero.
+- `parse_image_patch_info()` previously treated the zero-filled empty slot as a malformed `kpe` record and returned `-ENOEXEC` from `kptools -l`, despite the kernel patch and boot repack having succeeded.
+- Fixed in `tools/patch.c` by accepting an all-zero remaining extra area as padding before attempting to parse an extra record.
+- Source fix commit: `9557f9e99120f2ec8cc5afe5cca9056336e4cdf7`.
+- Host build with the fix passed: https://github.com/ljx-91/kptools-fix/actions/runs/43273501646
+- Android AArch64 build with the fix passed: https://github.com/ljx-91/kptools-fix/actions/runs/43273501436
+
+Fresh host-side validation using the fixed host kptools, the latest CI KPIMG, and the exact Library original boot.img:
+- Original boot SHA-256: `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`.
+- KPIMG SHA-256: `a5d38bd78d3b7e8fdec7e6ba3e65e51d5ef4e4e68b943b5c202764bf1599ac94`.
+- Patched/repacked candidate SHA-256: `f8e2880e153040d9c7bf2e8c251f8c169963a84a27000dd4215f53e0f76aa7ae`.
+- Patch exit code 0; repack exit code 0; fresh extraction succeeded.
+- `kptools -l` now returns 0 and reports `patched=true`, KPIMG version `0xd0a` (0.13.10), ARM64, android/release.
+- KALLSYMS exact count `0x1a5b9`, Token Table `0x01e4bd00`, Token Index `0x01e4c100`, Addresses `0x01c1c700`, vectors index 18/offset `0x2800`, `pid_vnr` SP_EL0 instruction `0xd5384108`, kernel base `0xffffff8008080000`.
+- The patched candidate hash matches the first run with the pre-fix host tool; the parser-only fix does not change patch output bytes.
+
+Updated Android kptools SHA-256: `77bad7aae3c7ca9d51e4092ca6d68c977cfa37fcf9d78c17aa814e4c04789524` (AArch64 PIE, Android API 24, NDK r27c). The local APK re-integration script now replaces both `assets/kpimg` and `lib/arm64-v8a/libkptools.so`, verifies the unchanged `libapjni.so` pin, signs locally, and verifies all final component hashes.
+
+The offline candidate is still **not flash-approved**: `CONFIG_KALLSYMS_ALL` is disabled and the original AVB Boot Hash Descriptor is stale after kernel modification. No device boot test has been done.
