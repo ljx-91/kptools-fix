@@ -8,6 +8,7 @@ name: Build Y73S Android KPIMG (Arm GNU GCC 14.2)
       - y73s-runtime-contract-hardening-20261108
       - y73s-dcache-coherency-20261108
       - y73s-cred-layout-guards-20261108
+      - folkpatch-y73s-android-kptools-20261113
     # Exercises the credential-layout guard changes on this isolated branch.
     paths:
       - 'kernel/**'
