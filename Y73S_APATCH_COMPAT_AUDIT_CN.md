@@ -244,3 +244,31 @@ CI：
 ### 限制
 
 该修复只闭合 KPIMG SuperKey 设置命令的用户态输入边界；不等于真机 Manager 鉴权、Root 授权、KPM 管理或 AVB 已通过。AVB Hash Descriptor 仍不匹配；没有目标设备运行日志，也没有执行刷写。
+
+
+## 97. 2026-11-12：Manager UID refresh 并发发布与读取同步
+
+### 发现与修复
+
+前一轮将 Manager UID refresh 改为 spinlock + generation 后，继续审计发现旧 UID 的撤销/发布已受锁保护，但导出的 is_trusted_manager_uid_android() 与 get_trusted_manager_uid() 仍直接读取全局 UID，和 refresh 写入之间存在未同步的数据竞争。
+
+已完成：
+- is_trusted_manager_uid_android() 和 get_trusted_manager_uid() 现在都在 trusted_manager_refresh_lock 下读取 UID，与刷新路径使用同一把锁。
+- refresh 在扫描前先增加 generation 并撤销旧 UID；APK / packages.list 文件 I/O 不在 spinlock 临界区内执行。
+- 扫描完成后重新加锁；若 generation 已变化，返回 -EAGAIN，不允许旧扫描覆盖较新的刷新结果。
+- 扫描失败保持 UID invalid；只有完整扫描成功才发布新 UID。
+- 按本仓库 KernelPatch 定制接口修正调用方式：spin_lock_irqsave(lock) 返回 flags，不能使用上游常见的双参数形式。KPIMG 交叉编译已验证该接口。
+
+### 回归测试与 CI
+
+- 更新 scripts/test_y73s_manager_uid_refresh.py：从真实源码抽取 refresh、UID reader 和 getter 函数，编译并执行；覆盖成功替换 UID、扫描失败撤销旧 UID、扫描被更新 generation 抢占时返回 -EAGAIN 且不发布 UID，以及两个读路径的锁行为。
+- 更新 scripts/verify_y73s_superkey_contract.py：检查 IRQ-safe spinlock、generation 防旧扫描发布、失败 fail-closed，以及导出读路径锁保护。
+- Linux Host / kptools / 源码契约：Run [43217973860](https://github.com/ljx-91/kptools-fix/actions/runs/43217973860)，成功；Audit job 输出 Manager UID spinlock、读路径同步契约 PASS。
+- Y73s GCC 14.2 KPIMG + Windows kptools：Run [43217973657](https://github.com/ljx-91/kptools-fix/actions/runs/43217973657)，整条 workflow 成功；Android KPIMG 交叉编译成功；Windows kptools.exe 构建、DLL 收集、Smoke Test、ZIP/checksum 打包及 Artifact 上传全部通过。
+- Host runtime fixture 输出：[PASS] superseded scan cannot publish stale UID、[PASS] runtime trusted Manager UID refresh fixture。
+
+### 仍需验证
+
+这些结果证明当前分支在 Host fixture、源码契约、Y73s GCC 14.2 KPIMG 交叉编译和 Windows kptools 工作流中通过；不证明设备运行时 APK 安装/卸载与 packages.list rename 竞争场景全部覆盖，也不证明真机 Manager 身份、SuperKey、Root 或 KPM 操作已成功。仍需检查调用时机和设备日志闭环。
+
+**当前分支提交：** dd891c17c863033bd0f9f3ea09aa6a9baedeb0db。
