@@ -46,10 +46,10 @@ static uid_t refresh_uid;
 static int lock_depth;
 static int supersede_during_scan;
 static int saw_invalid_before_scan;
-static void mock_lock(int *lock, unsigned long *flags) {
-    *flags = 0;
+static unsigned long mock_lock(int *lock) {
     if (*lock || lock_depth++) __builtin_trap();
     *lock = 1;
+    return 0;
 }
 static void mock_unlock(int *lock, unsigned long flags) {
     (void)flags;
@@ -81,8 +81,7 @@ int main(void)
     rc = refresh_trusted_manager_state_from_packages_list(0);
     if (rc || trusted_manager_uid != 10088 || !saw_invalid_before_scan ||
         lock_depth || trusted_manager_refresh_lock) {
-        fprintf(stderr, "successful refresh failed to replace stale UID safely
-");
+        fprintf(stderr, "%s", "successful refresh failed to replace stale UID safely");
         return 1;
     }
     puts("[PASS] successful refresh replaces stale UID");
@@ -93,8 +92,7 @@ int main(void)
     rc = refresh_trusted_manager_state_from_packages_list(1);
     if (rc != -ENOENT || trusted_manager_uid != TRUSTED_MANAGER_UID_INVALID ||
         !saw_invalid_before_scan || lock_depth || trusted_manager_refresh_lock) {
-        fprintf(stderr, "failed refresh retained stale Manager UID or leaked lock
-");
+        fprintf(stderr, "%s", "failed refresh retained stale Manager UID or leaked lock");
         return 1;
     }
     puts("[PASS] failed refresh revokes stale UID");
@@ -105,8 +103,7 @@ int main(void)
     rc = refresh_trusted_manager_state_from_packages_list(0);
     if (rc != -EAGAIN || trusted_manager_uid != TRUSTED_MANAGER_UID_INVALID ||
         lock_depth || trusted_manager_refresh_lock) {
-        fprintf(stderr, "superseded scan published stale UID or leaked lock
-");
+        fprintf(stderr, "%s", "superseded scan published stale UID or leaked lock");
         return 1;
     }
     puts("[PASS] superseded scan cannot publish stale UID");
