@@ -3105,3 +3105,15 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - Host audit Run [43219640474](https://github.com/ljx-91/kptools-fix/actions/runs/43219640474)；KPIMG/Windows workflow Run [43219640512](https://github.com/ljx-91/kptools-fix/actions/runs/43219640512)；generic host build Run [43219640685](https://github.com/ljx-91/kptools-fix/actions/runs/43219640685)。
 
 当前源码/测试基线：fcb9925117c67284f35009918adc8165838aaa30。
+
+
+## 98. 2026-11-12：当前分支 Boot 重建与 AVB 结论更新
+
+- 使用最新通过 CI 的 KPIMG/kptools 离线重建原厂 Boot，候选 SHA-256：2fad01be22261763e6e1ede041fcc64d35784ae5856dfa3a55e48e55e5ebdf56。unpack/dump 重新识别 4.14.141+、kallsyms 数量 0x1a5b9、vectors index 18、pid_vnr SP_EL0 指令。
+- root vbmeta、boot child vbmeta、vbmeta_system 的 auth hash 与 RSA-2048 SHA-256 签名均通过离线验证；root 的 boot / vbmeta_system chain keys 与子 vbmeta 公钥匹配。root 公钥 modulus 在 LK 文件中找到。
+- **Boot HashDescriptor 仍然不匹配：**原厂摘要 36a3d398fc5a5350e1642f54584ebca8d06e20644e622993f9547e057467623c；当前候选摘要 4345bef8e6af2fdc421acf9686033452e476f91ebbca17ac73fcc21b06d4a18a。内嵌 vbmeta 未修改，仍是原签名元数据。
+- 同一份 MT6853/PD2031 LK 的静态策略数据显示 boot 分区在 unlocked 列不要求验证；匹配参考流程会允许 AVB verification error 并归一结果。但只有运行时 get_lock_state() = LKS_UNLOCK 才适用；本机日志尚未证明这一点。此前用户表示 BL 已解锁，不等同于本次 LK 运行时状态记录。
+- 新增 scripts/audit_y73s_avb_chain.py，CI 已通过 py_compile；它用于后续对 boot/vbmeta/vbmeta_system/LK 文件做离线可复核审计。
+- 最新 Host Run 43220664226、KPIMG Run 43220663916、Windows Run 43220663950 均成功。
+
+**当前安全结论：**候选不是 OEM AVB 完整有效镜像；unlocked LK policy 只提供“可能容忍”的静态证据，尚无真机启动证明。不得将其标记为 AVB passed 或刷写就绪。仍需确认设备运行时 LKS_UNLOCK，并完成设备启动/APatch 验证；目标 4.14.141+ vendor KDIR / Module.symvers 的真实 LKM Kbuild/MODPOST 与加载测试仍未完成。
