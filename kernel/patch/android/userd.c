@@ -15,6 +15,7 @@
 #include <linux/uaccess.h>
 #include <linux/string.h>
 #include <linux/slab.h>
+#include <linux/mutex.h>
 #include <taskob.h>
 #include <predata.h>
 #include <accctl.h>
@@ -100,6 +101,8 @@ static const struct trusted_manager_entry trusted_managers[] = {
 };
 
 static uid_t trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;
+/* Serialize package-manager rename and first-app refreshes. */
+static DEFINE_MUTEX(trusted_manager_refresh_lock);
 static int global_pkg_pos = 0;
 
 
@@ -1158,17 +1161,26 @@ int refresh_trusted_manager_uid(void)
 static int refresh_trusted_manager_state_from_packages_list(int use_tmp)
 {
     uid_t uid = TRUSTED_MANAGER_UID_INVALID;
-    int rc = refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp);
+    int rc;
+
+    /*
+     * A failed refresh must revoke the previous UID: packages.list may have
+     * removed/reassigned it. Clear before scanning so no stale UID remains
+     * trusted while the APK certificate and package UID are revalidated.
+     * Serialize refreshes so an older scan cannot overwrite a newer result.
+     */
+    mutex_lock(&trusted_manager_refresh_lock);
+    trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;
+    rc = refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp);
     if (rc) {
-        log_boot("trusted manager refresh failed rc=%d\n", rc);
+        log_boot("trusted manager refresh failed rc=%d; UID trust cleared\n", rc);
+        mutex_unlock(&trusted_manager_refresh_lock);
         return rc;
-    }else{
-        trusted_manager_uid = uid;
-        log_boot("trusted manager refresh success uid=%u\n", uid);
     }
 
-    
-    
+    trusted_manager_uid = uid;
+    log_boot("trusted manager refresh success uid=%u\n", uid);
+    mutex_unlock(&trusted_manager_refresh_lock);
     return 0;
 }
 
