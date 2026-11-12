@@ -3063,3 +3063,21 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 当前代码/测试基线：`79e567c1a24f7e93a7c1665b17a4a3be3b2c60d4`。相关审计详见 [Y73S_APATCH_COMPAT_AUDIT_CN.md](Y73S_APATCH_COMPAT_AUDIT_CN.md) 第 13 节。
 
 仍未完成：Y73s 真机 Manager UID / syscall 45 / SuperKey trace、Root 授权、KPM load/unload、Wi-Fi 稳定性、目标 4.14.141+ vendor KDIR 的 LKM Kbuild/MODPOST，以及 AVB Hash Descriptor 修复。当前离线镜像不可刷写；没有执行 Fastboot、分区写入或真机启动。
+
+
+## 2026-11-12 更新：Manager UID refresh 并发修复
+
+- 已修复 Manager UID refresh 的 stale UID 风险：refresh 开始时撤销旧 UID；扫描不持有 spinlock；通过 generation 阻止过期扫描发布结果。
+- 已修复读取侧数据竞争：is_trusted_manager_uid_android() 与 get_trusted_manager_uid() 现在和写入侧使用同一把 spinlock。
+- 按 KernelPatch 本仓库的实际 API 使用 flags = spin_lock_irqsave(lock)，避免使用不兼容的上游双参数调用形式。
+- Host runtime fixture 覆盖成功替换、扫描失败 fail-closed、过期扫描 -EAGAIN、读路径锁行为；Host 源码契约通过。
+- CI：Linux Host / kptools / audit Run [43217973860](https://github.com/ljx-91/kptools-fix/actions/runs/43217973860) 成功；Y73s GCC 14.2 KPIMG + Windows kptools Run [43217973657](https://github.com/ljx-91/kptools-fix/actions/runs/43217973657) 成功。
+
+当前源码/测试基线：dd891c17c863033bd0f9f3ea09aa6a9baedeb0db。
+
+### 尚未闭环
+
+- 尚无 PD2031 真机 Manager UID 刷新/安装卸载/rename 竞争日志。
+- 尚无 APatch Manager syscall 45 / SuperKey / Root 授权 / KPM load-unload 设备实测。
+- 缺少完整 Y73s 4.14.141+ vendor KDIR 与 Module.symvers，真实 LKM .ko Kbuild/MODPOST 未完成。
+- AVB Hash Descriptor 仍不匹配，当前离线修补 Boot 不可刷写。
