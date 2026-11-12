@@ -50,10 +50,19 @@ typedef unsigned int uid_t;
 #define ANDROID_PACKAGES_LIST_TMP_PATH "/data/system/packages.list.tmp"
 #define __user
 typedef struct {
-    uint64_t arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7;
+    void *chain;
+    int skip_origin;
     struct { uint64_t data0, data1, data2, data3, data4, data5, data6, data7; } local;
     uint64_t ret;
+    union {
+        struct {
+            uint64_t arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7;
+        };
+        uint64_t args[8];
+    };
 } hook_fargs5_t;
+_Static_assert(offsetof(hook_fargs5_t, args) == 88,
+               "hook_fargs5_t must preserve the real KernelPatch prefix");
 static int trusted_manager_refresh_lock;
 static unsigned int trusted_manager_refresh_generation;
 static uid_t trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;
