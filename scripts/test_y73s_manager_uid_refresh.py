@@ -99,7 +99,7 @@ static int refresh_trusted_manager_uid_from_packages_list(uid_t *out, int use_tm
     *out = refresh_uid;
     return 0;
 }
-#define log_boot(...) ((void)0)
+#define log_boot(...) do { if (0) printf(__VA_ARGS__); } while (0)
 #define KP_EXPORT_SYMBOL(symbol)
 """
     tests = r"""
