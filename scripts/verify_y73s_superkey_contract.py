@@ -95,7 +95,7 @@ def main():
          "first successful root-key authentication migrates to the active SuperKey")
 
     need("DEFINE_SPINLOCK(trusted_manager_refresh_lock)" in userd and
-         "spin_lock_irqsave(&trusted_manager_refresh_lock, flags);" in manager_refresh and
+         "flags = spin_lock_irqsave(&trusted_manager_refresh_lock);" in manager_refresh and
          "spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);" in manager_refresh,
          "trusted Manager UID publication uses an IRQ-safe spinlock")
     need("++trusted_manager_refresh_generation" in manager_refresh and
@@ -109,9 +109,9 @@ def main():
          "failed or in-progress Manager refresh revokes stale UID trust before scanning")
     reader = body(userd, "int is_trusted_manager_uid_android(uid_t uid)")
     getter = body(userd, "uid_t get_trusted_manager_uid(void)")
-    need("spin_lock_irqsave(&trusted_manager_refresh_lock, flags);" in reader and
+    need("flags = spin_lock_irqsave(&trusted_manager_refresh_lock);" in reader and
          "spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);" in reader and
-         "spin_lock_irqsave(&trusted_manager_refresh_lock, flags);" in getter and
+         "flags = spin_lock_irqsave(&trusted_manager_refresh_lock);" in getter and
          "spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);" in getter,
          "all exported Manager UID readers synchronize with publication")
 
