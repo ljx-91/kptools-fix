@@ -27,6 +27,8 @@ repacking or modifying the signed APK in place:
 git clone --recurse-submodules https://github.com/LyraVoid/FolkPatch.git
 cd FolkPatch
 git checkout 0f3f42ba02d6441dbbeb247f34c0f5eabc14e393
+# The branch payload is KP 0.13.10 (0xd0a), not the APK's bundled 0.13.9.
+sed -i 's/project.ext.set("kernelPatchVersion", "0.13.9")/project.ext.set("kernelPatchVersion", "0.13.10")/' build.gradle.kts
 ./gradlew assembleDebug -PkernelPatchArtifacts=/absolute/path/to/artifacts
 ```
 
