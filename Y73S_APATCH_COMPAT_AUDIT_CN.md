@@ -3,7 +3,7 @@
 日期：2026-11-12  
 仓库：ljx-91/kptools-fix  
 分支：y73s-cred-layout-guards-20261108  
-本轮最新源码/CI 测试提交：491d3aa5ee8d523878f136e4ea0874351678080e
+本轮最新源码/测试基线：79e567c1a24f7e93a7c1665b17a4a3be3b2c60d4（后续仅文档更新）
 
 ## 1. 范围与结论
 
@@ -211,3 +211,36 @@ CI：
 
 
 本轮 Manager / SuperKey / syscall 参数链路源码与测试提交：`d58fc4220fee22ba8ea49ead66a9ee17ad98c119`；其后提交仅更新审计文档。
+
+
+## 13. 2026-11-12：SuperKey 设置命令的用户态指针二次解引用修复
+
+### 发现
+
+继续审计 KPIMG `kernel/patch/common/supercall.c::call_skey_set()` 时发现：旧实现虽然先用 `compat_strncpy_from_user()` 将 key 复制到内核栈缓冲区，却在最后仍将原始用户态指针 `new_key` 传给 `reset_superkey()`。这使先前的有界复制并没有成为实际写入的数据源；如果用户映射在复制后变化或失效，内核仍会再次解引用用户指针。此外，旧实现没有可靠地拒绝负错误码和空 key。
+
+### 已修复
+
+- 复制失败时返回原始负错误码，不修改当前 SuperKey。
+- 拒绝空 key（`-EINVAL`）。
+- 拒绝长度达到缓冲区容量、无法证明 NUL 终止的输入（`-E2BIG`）。
+- 只将内核栈缓冲区 `buf` 传给 `reset_superkey()`，不再二次读取用户指针。
+- 长度比较显式转换为 `int`，避免 Host 严格编译下 signed/unsigned 比较警告。
+
+### 回归测试
+
+- 更新 `scripts/verify_y73s_superkey_contract.py`，固定上述错误处理和“只提交内核副本”契约。
+- 新增 `scripts/test_y73s_skey_set_input.py`，抽取仓库真实 `call_skey_set()`，在 Host C 编译器下测试正常 key、用户复制错误、空 key、无终止符超长 key；同时确认 `reset_superkey()` 收到的不是原始用户指针。
+- 已将新测试加入 Linux Host 和 Y73s GCC 14.2 KPIMG 两条 CI workflow。
+- 对等价 C fixture 使用 `-std=gnu11 -Wall -Wextra -Werror` 编译执行，四类边界用例通过。GitHub Actions 对最新分支提交的运行结果尚未取得，因此不提前标记 CI 通过。
+
+源码/测试提交序列：
+- `618376b50c2aed47583583793788c0aa06f99077`：修复用户态指针二次解引用和输入边界。
+- `64bde1c916629c6489e8bd40e33895b122c06682`：增加源码契约断言。
+- `124b25d11c42cf11d1e67229b6c2b2152a3c2304`：新增运行时 C fixture。
+- `65c0e68d386ed7c6feea3a0e62200e154f10fdd6`、`78d9d572c466f012388a15d3ef2bd416df41f502`：将测试接入 Host / KPIMG CI。
+- `bc0d646993e2ad6ad3349c3feab615088018d02a`、`7ca03f3ea638a77d6145258a12fa8827ec58f0ed`、`79e567c1a24f7e93a7c1665b17a4a3be3b2c60d4`：修正严格编译下的长度比较及负向指针 fixture 类型。
+
+### 限制
+
+该修复只闭合 KPIMG SuperKey 设置命令的用户态输入边界；不等于真机 Manager 鉴权、Root 授权、KPM 管理或 AVB 已通过。AVB Hash Descriptor 仍不匹配；没有目标设备运行日志，也没有执行刷写。
