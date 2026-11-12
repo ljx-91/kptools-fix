@@ -56,7 +56,7 @@ static void mock_unlock(int *lock, unsigned long flags) {
     if (!*lock || --lock_depth) __builtin_trap();
     *lock = 0;
 }
-#define spin_lock_irqsave(lock, flags) mock_lock((lock), &(flags))
+#define spin_lock_irqsave(lock) mock_lock((lock))
 #define spin_unlock_irqrestore(lock, flags) mock_unlock((lock), (flags))
 static int refresh_trusted_manager_uid_from_packages_list(uid_t *out, int use_tmp)
 {
