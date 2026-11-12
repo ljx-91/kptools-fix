@@ -3117,3 +3117,15 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - 最新 Host Run 43220664226、KPIMG Run 43220663916、Windows Run 43220663950 均成功。
 
 **当前安全结论：**候选不是 OEM AVB 完整有效镜像；unlocked LK policy 只提供“可能容忍”的静态证据，尚无真机启动证明。不得将其标记为 AVB passed 或刷写就绪。仍需确认设备运行时 LKS_UNLOCK，并完成设备启动/APatch 验证；目标 4.14.141+ vendor KDIR / Module.symvers 的真实 LKM Kbuild/MODPOST 与加载测试仍未完成。
+
+
+## 99. 2026-11-12：AVB 审计脚本已对原厂与修补镜像实跑
+
+- scripts/audit_y73s_avb_chain.py 已加入 Host artifact；SHA-256：727f6c5cdc3a7a8c2e61051fd6714b549d958aadd1f1c3f1168bd16699eb5c75。
+- 对原厂 boot 实跑：退出码 0，Boot HashDescriptor 匹配；root / boot child / vbmeta_system 的 RSA 签名、chain key 对应关系均通过，LK 中存在 root 公钥 modulus。
+- 对当前修补候选实跑：退出码 1，且仅 Boot HashDescriptor mismatch；三个 RSA 签名与两个 chain key 对应关系仍通过，LK modulus 仍找到。这确认问题是 payload digest 与旧 descriptor 不一致，不是 vbmeta auth block 或 RSA 签名损坏。
+- Host Run [43221359096](https://github.com/ljx-91/kptools-fix/actions/runs/43221359096) 成功（py_compile、--help、kptools artifact + auditor 打包）。
+- Windows Run [43221359116](https://github.com/ljx-91/kptools-fix/actions/runs/43221359116) 成功。
+- KPIMG GCC 14.2 Run [43220663916](https://github.com/ljx-91/kptools-fix/actions/runs/43220663916) 成功（同一代码基线）。
+
+**最终 AVB 判断不变：**当前候选不是 OEM AVB 完整有效镜像。LK unlocked 策略可能容忍 boot 验证错误，但必须实际确认运行时 LKS_UNLOCK；当前没有设备侧 lock_state/verifiedbootstate 日志，也没有真机启动/APatch 验证。不得刷写或标记为可刷写。
