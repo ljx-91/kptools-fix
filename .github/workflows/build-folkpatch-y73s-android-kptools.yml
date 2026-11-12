@@ -1,0 +1,89 @@
+name: Build Y73S Android kptools for FolkPatch
+
+on:
+  push:
+    branches:
+      - folkpatch-y73s-android-kptools-20261113
+    paths:
+      - 'tools/**'
+      - 'scripts/**'
+      - '.github/workflows/build-folkpatch-y73s-android-kptools.yml'
+      - 'version'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install NDK package
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sdkmanager --install "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      - name: Build native host reference and run source checks
+        shell: bash
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential zlib1g-dev
+          make -C tools clean
+          make -C tools -j"$(nproc)"
+          test -s tools/kptools
+          tools/kptools --version
+          python3 -m py_compile scripts/*.py
+          python3 scripts/verify_y73s_414_kallsyms_profile.py
+          python3 scripts/verify_kptools_patch_bounds.py
+          python3 scripts/verify_bootimg_io_contract.py
+
+      - name: Build Android arm64 kptools executable
+        shell: bash
+        run: |
+          set -euxo pipefail
+          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          CC="$TOOLCHAIN/aarch64-linux-android24-clang"
+          test -x "$CC"
+          make -C tools clean
+          make -C tools -j"$(nproc)" \
+            CC="$CC" \
+            CFLAGS="-std=c11 -Wall -Wextra -Wno-unused -Wno-unused-parameter -I. -I./lib -DBZ_NO_STDIO -DXZ_DEC_ANY_CHECK -fPIE -fvisibility=hidden" \
+            LDFLAGS="-pie -Wl,--build-id=none -lz"
+          test -s tools/kptools
+          file tools/kptools
+          readelf -h tools/kptools | tee /tmp/kptools-elf.txt
+          grep -q 'AArch64' /tmp/kptools-elf.txt
+          readelf -l tools/kptools | grep -q 'INTERP'
+          mkdir -p artifacts
+          cp tools/kptools artifacts/kptools-android
+          cp version artifacts/KERNELPATCH_VERSION.txt
+          sha256sum artifacts/kptools-android > artifacts/SHA256SUMS
+          cat > artifacts/README.txt <<'EOF'
+          FolkPatch Y73S Android kptools
+          Target: vivo Y73s V2031A / MT6853 / ARM64 / Linux 4.14.141+
+          Source branch: folkpatch-y73s-android-kptools-20261113
+          This is an Android arm64 PIE executable named kptools-android.
+          FolkPatch packages it as app/libs/arm64-v8a/libkptools.so and
+          extracts/executes it as /data/adb/ap/bin/kptools.
+          Pair it with the matching Y73S kpimg-android 0.13.10 artifact.
+          Host source checks passed; no device flashing or boot test is implied.
+          EOF
+
+      - name: Upload Android kptools
+        uses: actions/upload-artifact@v4
+        with:
+          name: FolkPatch-Y73S-Android-kptools
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
