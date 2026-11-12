@@ -1178,7 +1178,7 @@ static int refresh_trusted_manager_state_from_packages_list(int use_tmp)
 
     rc = refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp);
 
-    spin_lock_irqsave(&trusted_manager_refresh_lock, flags);
+    flags = spin_lock_irqsave(&trusted_manager_refresh_lock);
     if (generation != trusted_manager_refresh_generation) {
         spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
         log_boot("trusted manager refresh superseded generation=%u\n", generation);
@@ -1207,7 +1207,7 @@ int is_trusted_manager_uid_android(uid_t uid)
     uid_t trusted_uid;
     unsigned long flags;
 
-    spin_lock_irqsave(&trusted_manager_refresh_lock, flags);
+    flags = spin_lock_irqsave(&trusted_manager_refresh_lock);
     trusted_uid = trusted_manager_uid;
     spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
 
@@ -1223,7 +1223,7 @@ uid_t get_trusted_manager_uid(void)
     uid_t trusted_uid;
     unsigned long flags;
 
-    spin_lock_irqsave(&trusted_manager_refresh_lock, flags);
+    flags = spin_lock_irqsave(&trusted_manager_refresh_lock);
     trusted_uid = trusted_manager_uid;
     spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
     return trusted_uid;
