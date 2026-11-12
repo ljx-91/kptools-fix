@@ -2,6 +2,7 @@
 set -euo pipefail
 
 # Repackage FolkPatch with the exact Y73S KPIMG CI artifact.
+# CI note: the host build validates kptools patch/repack behavior; this script only signs APKs locally.
 # Passwords are supplied via environment only; never commit the JKS or passwords.
 # Usage:
 #   KS_PASS='...' KEY_PASS='...' [KEY_ALIAS=folkpatch-y73s] \
