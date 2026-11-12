@@ -46,6 +46,9 @@ def main():
 #include <stddef.h>
 typedef unsigned int uid_t;
 #define TRUSTED_MANAGER_UID_INVALID ((uid_t)-1)
+#define ANDROID_PACKAGES_LIST_PATH "/data/system/packages.list"
+#define ANDROID_PACKAGES_LIST_TMP_PATH "/data/system/packages.list.tmp"
+#define __user
 typedef struct {
     uint64_t arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7;
     struct { uint64_t data0, data1, data2, data3, data4, data5, data6, data7; } local;
