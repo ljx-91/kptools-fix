@@ -27,7 +27,7 @@ jobs:
       - name: Install host dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential make zlib1g-dev python3 binutils xz-utils
+          sudo apt-get install -y build-essential make zlib1g-dev python3 binutils xz-utils zip
 
       - name: Install Android NDK
         uses: android-actions/setup-android@v3
@@ -141,5 +141,71 @@ jobs:
         with:
           name: folkpatch-y73s-kernelpatch-artifacts
           path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  build-patch-only-apk:
+    needs: build
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: LyraVoid/FolkPatch
+          ref: 0f3f42ba02d6441dbbeb247f34c0f5eabc14e393
+          path: FolkPatch
+          fetch-depth: 0
+          submodules: recursive
+
+      - name: Give the source checkout a stable branch name
+        working-directory: FolkPatch
+        run: git switch -c folkpatch-y73s-patcher
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+          cache-dependency-path: FolkPatch/gradle/wrapper/gradle-wrapper.properties
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install FolkPatch Android SDK components
+        run: |
+          set -eux
+          sdkmanager --install \
+            "platforms;android-37" \
+            "build-tools;36.1.0" \
+            "ndk;30.0.15729638" \
+            "cmake;3.31.0"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: folkpatch-y73s-kernelpatch-artifacts
+          path: artifacts
+
+      - name: Configure side-by-side patch-only application
+        run: |
+          set -eux
+          sed -i 's/applicationId = "me.yuki.folk"/applicationId = "me.yuki.folk.y73s.patcher"/' FolkPatch/app/build.gradle.kts
+          sed -i 's/project.ext.set("kernelPatchVersion", "0.13.9")/project.ext.set("kernelPatchVersion", "0.13.10")/' FolkPatch/build.gradle.kts
+          sed -i 's/android:label="FolkPatch"/android:label="FolkPatch Y73s Patcher"/' FolkPatch/app/src/main/AndroidManifest.xml
+          grep -F 'applicationId = "me.yuki.folk.y73s.patcher"' FolkPatch/app/build.gradle.kts
+          grep -F 'kernelPatchVersion", "0.13.10"' FolkPatch/build.gradle.kts
+
+      - name: Build FolkPatch Y73s patcher APK
+        working-directory: FolkPatch
+        run: |
+          set -euxo pipefail
+          ./gradlew --no-daemon assembleDebug -PkernelPatchArtifacts="${GITHUB_WORKSPACE}/artifacts"
+          apk="$(find app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          mkdir -p "${GITHUB_WORKSPACE}/patcher-apk"
+          cp "$apk" "${GITHUB_WORKSPACE}/patcher-apk/FolkPatch-Y73s-Patcher.apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folkpatch-y73s-patcher-apk
+          path: patcher-apk/FolkPatch-Y73s-Patcher.apk
           if-no-files-found: error
           retention-days: 14
