@@ -1,0 +1,76 @@
+name: Build Android kptools for FolkPatch (Y73S)
+
+on:
+  push:
+    branches:
+      - y73s-cred-layout-guards-20261108
+    paths:
+      - 'tools/**'
+      - '.github/workflows/build-y73s-kptools-android.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android-kptools:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install pinned NDK
+        run: |
+          set -eux
+          sdkmanager --install "ndk;30.0.15729638"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.15729638" >> "$GITHUB_ENV"
+
+      - name: Build arm64 Android kptools
+        run: |
+          set -euxo pipefail
+          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$TOOLCHAIN/aarch64-linux-android26-clang"
+          make -C tools clean
+          make -C tools -j"$(nproc)" \
+            CC="$TOOLCHAIN/aarch64-linux-android26-clang" \
+            CPPFLAGS="-D_GNU_SOURCE -fPIE" \
+            LDFLAGS="-pie -Wl,--build-id=sha1 -lz"
+          test -s tools/kptools
+          file tools/kptools
+          readelf -h tools/kptools | grep -E 'Class:.*ELF64|Machine:.*AArch64'
+          readelf -l tools/kptools | grep -F '/system/bin/linker64'
+          strings tools/kptools | grep -F 'analyze_kallsym_info error'
+          strings tools/kptools | grep -F 'strict vector validation'
+
+      - name: Package FolkPatch-compatible artifact
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+          cp tools/kptools artifacts/kptools-android
+          chmod 0755 artifacts/kptools-android
+          cp tools/kptools artifacts/libkptools.so
+          chmod 0755 artifacts/libkptools.so
+          cat > artifacts/README-FOLKPATCH-Y73S.txt <<'EOF'
+          Y73S-specific Android ARM64 kptools for FolkPatch 115404 source.
+          The ELF is an executable (not a JNI shared library) and must be installed
+          as lib/arm64-v8a/libkptools.so because FolkPatch copies it to its private
+          kptools executable path and invokes it as a command.
+          For FolkPatch source builds, place this file at:
+            app/libs/arm64-v8a/libkptools.so
+          Also use the matching kpimg-android artifact from the same KernelPatch
+          source revision. Never mix artifacts from different commits.
+          EOF
+          sha256sum artifacts/kptools-android artifacts/libkptools.so > artifacts/SHA256SUMS
+          (cd artifacts && zip -q FolkPatch-Y73S-kptools-android.zip kptools-android libkptools.so README-FOLKPATCH-Y73S.txt SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folkpatch-y73s-kptools-android
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
