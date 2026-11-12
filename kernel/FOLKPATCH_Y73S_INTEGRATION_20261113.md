@@ -28,10 +28,10 @@ The four APK payload components were extracted and compared byte-for-byte with t
 ## Follow-up CI artifact comparison (2026-11-13)
 
 The newly enabled GCC 14.2 KPIMG workflow completed successfully on this branch:
-- Run: https://github.com/ljx-91/kptools-fix/actions/runs/43270537418
-- Artifact SHA-256: `02d4cac7d3ed22dd3420caba2b7054aba086925ded2e803ed9e850b6d9bf01fe`
-- CI `kpimg-android` SHA-256: `6c3757ccdb679ee403b09eba5bbc717c6a9a32b93262adc2cd8dbab8cff04925`
+- Run: https://github.com/ljx-91/kptools-fix/actions/runs/43270722509
+- Artifact SHA-256: `c197f57d64456eb9c4967c5166716ee6ade0dc940baadd4ae779fe0a0a133c36`
+- CI `kpimg-android` SHA-256: `42922ffc08d4dd5750ff881aac555c5dd9ec75a003bb79c95ad3d1dadb941404`
 - CI source version: 0.13.10.
 
-Important integration discrepancy: the existing offline APK contains KPIMG SHA-256 `0eee6c55ef62b86d7b611f17594f8fa6ad6f5c002f493e723a373b73fc9fc0c4`, which is **not byte-identical** to the latest CI artifact. Both report version 0.13.10, but the binaries differ substantially, not merely in their embedded build-time string. The existing APK must therefore be treated as a previously integrated candidate, not as a package containing the latest branch CI KPIMG. Replacing this asset requires rebuilding/re-signing the APK and keeping its native signer pin consistent; do not silently substitute the binary.
+Important integration discrepancy: the existing offline APK contains KPIMG SHA-256 `0eee6c55ef62b86d7b611f17594f8fa6ad6f5c002f493e723a373b73fc9fc0c4`, which is **not byte-identical** to the latest CI artifact. Both report version 0.13.10, but the binaries differ substantially, not merely in their embedded build-time string. A repeat CI run also produced a different KPIMG hash (the raw image embeds its build time), so archive the exact CI artifact used for any future APK packaging and do not assume bit-for-bit reproducibility. The existing APK must therefore be treated as a previously integrated candidate, not as a package containing the latest branch CI KPIMG. Replacing this asset requires rebuilding/re-signing the APK and keeping its native signer pin consistent; do not silently substitute the binary.
 
