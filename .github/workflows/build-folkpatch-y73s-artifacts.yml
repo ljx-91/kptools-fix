@@ -1,0 +1,145 @@
+name: Build combined Y73s FolkPatch artifacts
+
+on:
+  push:
+    branches:
+      - y73s-cred-layout-guards-20261108
+    paths:
+      - 'tools/**'
+      - 'kernel/**'
+      - 'scripts/**'
+      - 'user/version'
+      - '.github/workflows/build-folkpatch-y73s-artifacts.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential make zlib1g-dev python3 binutils xz-utils
+
+      - name: Install Android NDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install pinned Android NDK
+        run: |
+          set -eux
+          sdkmanager --install "ndk;30.0.15729638"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.15729638" >> "$GITHUB_ENV"
+
+      - name: Install Arm GNU Toolchain 14.2.rel1
+        run: |
+          set -euxo pipefail
+          version=14.2.rel1
+          archive="arm-gnu-toolchain-${version}-x86_64-aarch64-none-elf.tar.xz"
+          url="https://armkeil.blob.core.windows.net/developer/Files/downloads/gnu/${version}/binrel/${archive}"
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 600 -o "$archive" "$url"
+          tar -xJf "$archive"
+          gcc_path="$(find "arm-gnu-toolchain-${version}-x86_64-aarch64-none-elf" -type f -name aarch64-none-elf-gcc -print -quit)"
+          test -n "$gcc_path"
+          gcc_dir="$(cd "$(dirname "$gcc_path")" && pwd)"
+          echo "$gcc_dir" >> "$GITHUB_PATH"
+          "$gcc_path" --version
+
+      - name: Run FolkPatch and Y73s regression tests
+        run: |
+          set -euxo pipefail
+          python3 -m py_compile scripts/*.py
+          python3 scripts/test_kptools_extra_terminator.py
+          python3 scripts/test_y73s_kallsym_pid_vnr_cfi.py
+          python3 scripts/test_folkpatch_trusted_manager.py
+          python3 scripts/test_y73s_manager_uid_refresh.py
+          python3 scripts/verify_userd_file_contract.py
+          python3 scripts/verify_y73s_414_kallsyms_profile.py
+          python3 scripts/verify_y73s_symbol_scan_and_startup_events.py
+          python3 scripts/test_aarch64_relocations.py
+          python3 scripts/test_kpm_elf_headers.py
+          python3 scripts/test_kpm_rela_transaction.py
+          python3 scripts/test_kpm_setup_load_info.py
+          python3 scripts/test_kpm_simplify_symbols.py
+          python3 scripts/test_kpm_layout_copy.py
+          python3 scripts/test_kpimg_kpm_loader.py
+
+      - name: Build and verify host kptools
+        run: |
+          set -euxo pipefail
+          make -C tools clean
+          make -C tools -j"$(nproc)"
+          tools/kptools --version
+          python3 scripts/verify_bootimg_io_contract.py
+          python3 scripts/verify_kptools_patch_bounds.py
+
+      - name: Build Android ARM64 kptools
+        run: |
+          set -euxo pipefail
+          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          test -x "$TOOLCHAIN/aarch64-linux-android26-clang"
+          make -C tools clean
+          make -C tools -j"$(nproc)" \
+            CC="$TOOLCHAIN/aarch64-linux-android26-clang" \
+            CPPFLAGS="-D_GNU_SOURCE -fPIE" \
+            LDFLAGS="-pie -Wl,--build-id=sha1 -lz"
+          test -s tools/kptools
+          file tools/kptools
+          readelf -h tools/kptools | grep -E 'Class:.*ELF64|Machine:.*AArch64'
+          readelf -l tools/kptools | grep -F '/system/bin/linker64'
+          strings tools/kptools | grep -F 'pid_vnr is CFI stub, follow branch to offset'
+          strings tools/kptools | grep -F 'strict vector validation'
+
+      - name: Build Y73s KPIMG
+        env:
+          TARGET_COMPILE: aarch64-none-elf-
+          ANDROID: '1'
+          Y73S_TARGET: '1'
+        run: |
+          set -euxo pipefail
+          cd kernel
+          make clean
+          make -j"$(nproc)" hdr kpimg
+          test -s kpimg
+          test -s kpimg.elf
+          aarch64-none-elf-readelf -h kpimg.elf
+          aarch64-none-elf-objdump -d --disassemble=_paging_init kpimg.elf
+          aarch64-none-elf-objdump -d --disassemble=start kpimg.elf
+          python3 ../scripts/verify_kpimg_elf_stack_frame.py kpimg.elf
+          python3 ../scripts/verify_kpimg_map_relocation.py kpimg.elf
+
+      - name: Package one-revision FolkPatch artifacts
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+          cp tools/kptools artifacts/kptools-android
+          chmod 0755 artifacts/kptools-android
+          cp kernel/kpimg artifacts/kpimg-android
+          cp kernel/kpimg.elf artifacts/kpimg-android.elf
+          cp tools/preset.h artifacts/preset.h
+          cp user/version artifacts/version
+          cat > artifacts/README-FOLKPATCH-Y73S.txt <<'EOF'
+          Y73S-specific FolkPatch 115404 KernelPatch artifacts.
+          kptools-android is an Android ARM64 PIE executable. FolkPatch stores it
+          as app/libs/arm64-v8a/libkptools.so, then copies and executes it.
+          kpimg-android is the matching Y73S KP payload. Both files were built
+          from the same repository commit; do not mix with artifacts from another run.
+          The trusted manager is the official me.yuki.folk package signed by the
+          certificate in FolkPatch_0f3f42ba.apk.
+          EOF
+          sha256sum artifacts/kptools-android artifacts/kpimg-android artifacts/kpimg-android.elf artifacts/preset.h artifacts/version > artifacts/SHA256SUMS
+          (cd artifacts && zip -q FolkPatch-Y73S-artifacts.zip kptools-android kpimg-android kpimg-android.elf preset.h version SHA256SUMS README-FOLKPATCH-Y73S.txt)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folkpatch-y73s-kernelpatch-artifacts
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
