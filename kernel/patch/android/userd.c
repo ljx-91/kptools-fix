@@ -1204,7 +1204,13 @@ KP_EXPORT_SYMBOL(refresh_trusted_manager_uid);
 
 int is_trusted_manager_uid_android(uid_t uid)
 {
-    uid_t trusted_uid = trusted_manager_uid;
+    uid_t trusted_uid;
+    unsigned long flags;
+
+    spin_lock_irqsave(&trusted_manager_refresh_lock, flags);
+    trusted_uid = trusted_manager_uid;
+    spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
+
     if (trusted_uid == TRUSTED_MANAGER_UID_INVALID) {
         return 0;
     }
@@ -1214,7 +1220,13 @@ KP_EXPORT_SYMBOL(is_trusted_manager_uid_android);
 
 uid_t get_trusted_manager_uid(void)
 {
-    return trusted_manager_uid;
+    uid_t trusted_uid;
+    unsigned long flags;
+
+    spin_lock_irqsave(&trusted_manager_refresh_lock, flags);
+    trusted_uid = trusted_manager_uid;
+    spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
+    return trusted_uid;
 }
 KP_EXPORT_SYMBOL(get_trusted_manager_uid);
 
