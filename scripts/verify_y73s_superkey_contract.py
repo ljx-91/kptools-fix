@@ -113,6 +113,18 @@ def main():
          "uid_t get_trusted_manager_uid(void)" in userd,
          "all exported Manager UID readers synchronize with publication")
 
+    need('kallsyms_lookup_name("sys_renameat2")' in userd and
+         "hook_wrap5((void *)addr, before_sys_renameat2, after_sys_renameat2, 0)" in userd and
+         "args->local.data0 = 1;" in userd and
+         "if (args->local.data0 && (long)args->ret == 0)" in userd and
+         "refresh_trusted_manager_state_from_packages_list(0)" in userd,
+         "Manager UID refresh runs only after successful sys_renameat2 completion")
+    need("security_path_rename" not in userd and
+         "security_inode_rename" not in userd and
+         "ANDROID_PACKAGES_LIST_TMP_PATH" in userd and
+         "ANDROID_PACKAGES_LIST_PATH" in userd,
+         "pre-VFS LSM authorization hooks are not used as rename completion signals")
+
     print("[PASS] APatch root-SuperKey source contract complete")
 
 
