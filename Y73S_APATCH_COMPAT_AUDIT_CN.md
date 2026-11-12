@@ -272,3 +272,31 @@ CI：
 这些结果证明当前分支在 Host fixture、源码契约、Y73s GCC 14.2 KPIMG 交叉编译和 Windows kptools 工作流中通过；不证明设备运行时 APK 安装/卸载与 packages.list rename 竞争场景全部覆盖，也不证明真机 Manager 身份、SuperKey、Root 或 KPM 操作已成功。仍需检查调用时机和设备日志闭环。
 
 **当前分支提交：** dd891c17c863033bd0f9f3ea09aa6a9baedeb0db。
+
+
+## 14. 2026-11-12：Trusted Manager UID 刷新竞态与读取同步
+
+### 风险与修复
+
+审计发现，Manager UID 刷新失败时若保留旧 UID，会让已经卸载或替换的 Manager UID 继续拥有可信身份；并发扫描还可能出现较早启动的扫描晚完成、覆盖较新扫描结果的竞态。
+
+当前实现已调整为：
+
+- 使用仓库自带的 spinlock.h 单参数 spin_lock_irqsave(lock) API；保存返回的 IRQ flags，并在所有路径配对 spin_unlock_irqrestore()。
+- 进入刷新时先在锁内递增 trusted_manager_refresh_generation 并撤销旧 UID；锁外完成 APK 证书和 packages.list I/O，避免在 spinlock 临界区内执行可能阻塞的文件操作。
+- 扫描结束重新加锁；generation 已变化则返回 -EAGAIN，不发布旧扫描结果；失败时继续保持 UID invalid，只有当前 generation 的成功扫描才能发布 UID。
+- is_trusted_manager_uid_android() 和 get_trusted_manager_uid() 均在同一 spinlock 下读取 UID 快照，避免读写并发数据竞争。
+
+### 回归测试与 CI
+
+- 更新 scripts/verify_y73s_superkey_contract.py，检查仓库真实单参数 spinlock API、generation stale-scan 拒绝逻辑、刷新前撤销旧 UID，以及所有导出 UID 读取路径的同步。
+- 更新 scripts/test_y73s_manager_uid_refresh.py，抽取真实刷新函数并编译执行，覆盖成功替换 UID、失败刷新撤销 UID、被新一轮刷新抢占时旧扫描返回 -EAGAIN 且不发布，以及锁正确释放。
+- Y73s GCC 14.2 KPIMG Run [43217973570](https://github.com/ljx-91/kptools-fix/actions/runs/43217973570)：成功；源码契约、Manager UID runtime fixture、SuperKey runtime fixture 和 KPIMG 交叉编译均通过。
+- Linux Host Run [43217973860](https://github.com/ljx-91/kptools-fix/actions/runs/43217973860)：成功；Host kptools 构建与仓库源码审计通过。
+- Windows Build Run [43217973657](https://github.com/ljx-91/kptools-fix/actions/runs/43217973657)：成功；Android KPIMG/Linux kptools 阶段、Windows kptools.exe 构建、打包与 Smoke Test 均通过。
+
+当前验证基线：dd891c17c863033bd0f9f3ea09aa6a9baedeb0db。
+
+### 限制
+
+这些结果证明源码契约、Host runtime fixture 和构建流程通过，不等于 Y73s 真机 Manager UID 更新时序已验证。仍需设备侧确认 packages.list 替换时机、APK 证书校验、并发刷新日志和 APatch Manager syscall 45 鉴权结果。AVB Hash Descriptor 仍未匹配，当前修补 boot 仍不可刷写；目标 4.14.141+ vendor KDIR / Module.symvers 的真实 LKM 构建与 MODPOST、真机 Root/KPM/Wi-Fi 测试均未完成。
