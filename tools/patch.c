@@ -266,6 +266,18 @@ static void sanitize_legacy_extra_item(patch_extra_item_t *item)
     }
 }
 
+/*
+ * patch_update_img_buf() writes an all-zero EXTRA_TYPE_NONE terminator.
+ * Accept only that exact zeroed record; ordinary records still require
+ * EXTRA_HDR_MAGIC. This keeps patched images readable/updatable without
+ * weakening validation of embedded extra records.
+ */
+static bool is_empty_extra_terminator(const patch_extra_item_t *item)
+{
+    static const patch_extra_item_t empty_item = { 0 };
+    return item && !memcmp(item, &empty_item, sizeof(*item));
+}
+
 static bool is_legacy_kconfig_extra(const patch_extra_item_t *item)
 {
     return extra_item_header_version(item) == PATCH_EXTRA_HEADER_VERSION_LEGACY &&
@@ -347,8 +359,7 @@ int print_kp_image_info_path(const char *kpimg_path)
     read_file(kpimg_path, &kpimg, &len);
     preset_t *preset = (preset_t *)kpimg;
     if (get_preset(kpimg, len) != preset) {
-        rc = -ENOENT;
-    } else {
+        rc = -ENOENT;    } else {
         uint32_t ver_num = preset_version_num(preset);
         size_t required = offsetof(preset_t, setup) +
                           (ver_num <= VERSION(0, 10, 4)
@@ -470,11 +481,15 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
     size_t remaining = (size_t)extra_size;
     while (remaining >= sizeof(patch_extra_item_t)) {
         patch_extra_item_t *item = (patch_extra_item_t *)item_pos;
-        if (memcmp(item->magic, EXTRA_HDR_MAGIC, sizeof(item->magic))) return -ENOEXEC;
         if (item->type == EXTRA_TYPE_NONE) {
+            if (!is_empty_extra_terminator(item)) return -ENOEXEC;
+            /* Reject non-zero trailing bytes after the zeroed terminator. */
+            for (size_t i = sizeof(*item); i < remaining; i++)
+                if (item_pos[i]) return -ENOEXEC;
             remaining = 0;
             break;
         }
+        if (memcmp(item->magic, EXTRA_HDR_MAGIC, sizeof(item->magic))) return -ENOEXEC;
         if (item->args_size < 0 || item->con_size < 0 ||
             (size_t)item->args_size > remaining - sizeof(*item) ||
             (size_t)item->con_size > remaining - sizeof(*item) - (size_t)item->args_size ||
@@ -697,8 +712,7 @@ static int patch_update_x86(const char *kimg_path, const char *kpimg_path, const
         strncpy((char *)setup->superkey, superkey, SUPER_KEY_LEN - 1);
     } else if (superkey && superkey[0]) {
         BYTE digest[SHA256_BLOCK_SIZE];
-        SHA256_CTX ctx;
-        sha256_init(&ctx);
+        SHA256_CTX ctx;        sha256_init(&ctx);
         sha256_update(&ctx, (const BYTE *)superkey, strnlen(superkey, SUPER_KEY_LEN));
         sha256_final(&ctx, digest);
         memcpy(setup->root_superkey, digest, ROOT_SUPER_KEY_HASH_LEN);
@@ -1047,8 +1061,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
         tools_loge_exit("KPIMG start image offset is invalid\n");
     int text_offset = align_kimg_len + SZ_4K;
     if (b((uint32_t *)(out_kernel_file.kimg + kinfo->b_stext_insn_offset),
-          kinfo->b_stext_insn_offset, (uint64_t)text_offset) != 4)
-        tools_loge_exit("kernel entry branch is out of range or unaligned\n");
+          kinfo->b_stext_insn_offset, (uint64_t)text_offset) != 4)        tools_loge_exit("kernel entry branch is out of range or unaligned\n");
 
     // additional [len key=value] set
     char *addition_pos = setup->additional;
