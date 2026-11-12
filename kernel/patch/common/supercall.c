@@ -167,7 +167,7 @@ static long call_skey_set(char *__user new_key)
     int len = compat_strncpy_from_user(buf, new_key, sizeof(buf));
     if (len < 0) return len;
     if (!len) return -EINVAL;
-    if (len >= sizeof(buf)) return -E2BIG;
+    if (len >= (int)sizeof(buf)) return -E2BIG;
 
     /* Never re-read the user pointer after the bounded copy. */
     reset_superkey(buf);
