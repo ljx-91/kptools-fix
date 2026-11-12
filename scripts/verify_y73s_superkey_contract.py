@@ -42,6 +42,8 @@ def main():
     patch_buf = body(patch, "int patch_update_img_buf(")
     supercall = read("kernel/patch/common/supercall.c")
     before = body(supercall, "static void before(")
+    userd = read("kernel/patch/android/userd.c")
+    manager_refresh = body(userd, "static int refresh_trusted_manager_state_from_packages_list(")
     skey_set = body(supercall, "static long call_skey_set(")
 
     need("if (!key || !superkey)" in auth,
@@ -91,6 +93,16 @@ def main():
     need(re.search(r"if \(!rc && first_time\).*?reset_superkey\(key\).*?enable_root_key = false;",
                    auth, re.S) is not None,
          "first successful root-key authentication migrates to the active SuperKey")
+
+    need("DEFINE_MUTEX(trusted_manager_refresh_lock)" in userd and
+         "mutex_lock(&trusted_manager_refresh_lock);" in manager_refresh and
+         "mutex_unlock(&trusted_manager_refresh_lock);" in manager_refresh,
+         "trusted Manager UID refreshes are serialized")
+    need("trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;" in manager_refresh and
+         manager_refresh.find("trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;") <
+         manager_refresh.find("refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp)") and
+         "trusted manager refresh failed rc=%d; UID trust cleared" in manager_refresh,
+         "failed or in-progress Manager refresh revokes stale UID trust before scanning")
 
     print("[PASS] APatch root-SuperKey source contract complete")
 
