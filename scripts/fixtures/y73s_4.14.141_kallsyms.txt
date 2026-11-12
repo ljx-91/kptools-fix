@@ -27,3 +27,4 @@
 0x0193e9fc t kthreadd
 0x018f1280 t rest_init
 0x019430f8 t cgroup_init
+0x003f4414 t SyS_renameat2.cfi
