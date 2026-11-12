@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT = ROOT / "scripts/fixtures/y73s_4.14.141_kallsyms.txt"
 REQUIRED = {
     "module_alloc", "module_memfree", "vmalloc_to_page",
-    "SyS_truncate.cfi", "sys_truncate", "__cfi_slowpath",
+    "SyS_truncate.cfi", "sys_truncate", "SyS_renameat2.cfi", "__cfi_slowpath",
     "kallsyms_lookup_name", "kallsyms_on_each_symbol",
     "__flush_dcache_area", "flush_icache_range", "stop_machine",
     "security_secctx_to_secid", "prepare_binprm", "prepare_binprm.cfi",
