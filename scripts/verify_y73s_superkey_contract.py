@@ -72,7 +72,7 @@ def main():
 
     need("if (len < 0) return len;" in skey_set and
          "if (!len) return -EINVAL;" in skey_set and
-         "if (len >= sizeof(buf)) return -E2BIG;" in skey_set,
+         "if (len >= (int)sizeof(buf)) return -E2BIG;" in skey_set,
          "SuperKey update rejects copy faults, empty keys, and unterminated oversized input")
     need("reset_superkey(buf);" in skey_set and "reset_superkey(new_key);" not in skey_set,
          "SuperKey update commits only the bounded kernel copy, never re-reads a user pointer")
