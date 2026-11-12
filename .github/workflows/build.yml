@@ -262,9 +262,17 @@ jobs:
           ldd tools/kptools.exe | tee artifacts/DEPENDENCIES.txt
           while IFS= read -r line; do
             dep="$(printf '%s\n' "$line" | sed -n 's/.*=> \([^ ]*\) .*/\1/p')"
-            if [ -n "$dep" ] && [ -f "$dep" ]; then
-              cp -n "$dep" artifacts/
-            fi
+            # Bundle only application dependencies installed in the MSYS2
+            # UCRT64 prefix. Never copy Windows inbox/system DLLs (for example
+            # KERNEL32, KERNELBASE, NTDLL or UCRTBASE) beside the executable.
+            case "$dep" in
+              /ucrt64/bin/*)
+                if [ -f "$dep" ]; then cp -n "$dep" artifacts/; fi
+                ;;
+              *)
+                echo "Not bundling Windows/system dependency: $dep"
+                ;;
+            esac
           done < <(ldd tools/kptools.exe)
 
           test -f artifacts/libz-1.dll
