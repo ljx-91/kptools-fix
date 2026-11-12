@@ -3129,3 +3129,16 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - KPIMG GCC 14.2 Run [43220663916](https://github.com/ljx-91/kptools-fix/actions/runs/43220663916) 成功（同一代码基线）。
 
 **最终 AVB 判断不变：**当前候选不是 OEM AVB 完整有效镜像。LK unlocked 策略可能容忍 boot 验证错误，但必须实际确认运行时 LKS_UNLOCK；当前没有设备侧 lock_state/verifiedbootstate 日志，也没有真机启动/APatch 验证。不得刷写或标记为可刷写。
+
+
+## 100. 2026-11-12：用最新 KPIMG 重建当前分支候选
+
+之前 SHA 2fad01be... 使用较早的 KPIMG artifact，已被最新产物覆盖。当前分支最新离线候选：
+
+- KPIMG Run 43220663916：304,976 bytes，SHA-256 046d38c66e32ad7756b81306687e8052386188d64fce2e6258dca9bce19caead。
+- Linux kptools SHA-256 1481dfb04eb0eaad97282578497f81aabb047a98dc336aa8b7b831a173d398a8。
+- 候选 boot SHA-256 216d79e5407a7484a00c6ea192e3069975adad1056ddcc132f12045643ef442c。
+- unpack/dump exit 0；Linux 4.14.141、kallsyms_num_syms=0x1a5b9、vectors index 18 / offset 0x2800、pid_vnr SP_EL0 0xd5384108。
+- AVB auditor 对原厂 boot exit 0；对最新候选 exit 1，唯一失败是 boot HashDescriptor digest（expected 36a3d398...，actual a16a5073...）。三个 vbmeta RSA 签名、两个 chain key 和 LK modulus 检查通过。
+
+**当前结论：**最新候选仍不是 OEM AVB HashDescriptor 通过的镜像；LK unlocked-policy 可能容忍验证错误，但必须确认本机运行时 LKS_UNLOCK。当前没有真机启动日志，不得刷写。
