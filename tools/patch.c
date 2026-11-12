@@ -469,6 +469,22 @@ int parse_image_patch_info(const char *kimg, int kimg_len, patched_kimg_t *pimg)
     const char *item_pos = kimg + extra_offset;
     size_t remaining = (size_t)extra_size;
     while (remaining >= sizeof(patch_extra_item_t)) {
+        // The patcher reserves a fixed, zero-filled extra area even when no
+        // extra records are embedded. Treat an all-zero tail as padding;
+        // otherwise the first empty slot is misparsed as a corrupt "kpe"
+        // record and -l reports -ENOEXEC for a successfully patched image.
+        bool zero_padding = true;
+        for (size_t i = 0; i < remaining; i++) {
+            if (item_pos[i]) {
+                zero_padding = false;
+                break;
+            }
+        }
+        if (zero_padding) {
+            remaining = 0;
+            break;
+        }
+
         patch_extra_item_t *item = (patch_extra_item_t *)item_pos;
         if (memcmp(item->magic, EXTRA_HDR_MAGIC, sizeof(item->magic))) return -ENOEXEC;
         if (item->type == EXTRA_TYPE_NONE) {
