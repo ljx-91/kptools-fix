@@ -1,8 +1,8 @@
 # Vivo Y73s 项目当前状态（唯一状态入口）
 
-> 更新时间：2026-11-11  
+> 更新时间：2026-11-12  
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 最近代码/测试基线（本次状态文档更新前）：`d65f3d77eb46d35ef5082a06491c1242e79ad388`  
+> 最近代码/测试基线（本次状态文档更新前）：`79e567c1a24f7e93a7c1665b17a4a3be3b2c60d4`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -3044,3 +3044,22 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 
 
 本轮 Manager / SuperKey / syscall 参数链路源码与测试提交：`d58fc4220fee22ba8ea49ead66a9ee17ad98c119`；其后提交仅更新审计文档。
+
+
+## 96. 2026-11-12：修复 KPIMG SuperKey 设置时重复解引用用户指针
+
+继续审计 `kernel/patch/common/supercall.c::call_skey_set()` 时发现，旧实现先将用户 key 复制到内核栈缓冲区，却仍把原始用户指针传给 `reset_superkey()`；复制结果没有真正作为写入源，且复制失败/空 key 的处理不完整。
+
+已修复：
+- 复制错误直接返回，当前 SuperKey 保持不变。
+- 空 key 返回 `-EINVAL`；无 NUL 终止或长度达到缓冲区上限的 key 返回 `-E2BIG`。
+- `reset_superkey()` 现在只接收已验证的内核栈副本，不会再次解引用用户态指针。
+- 增加 `scripts/verify_y73s_superkey_contract.py` 的源码契约检查。
+- 新增 `scripts/test_y73s_skey_set_input.py`，抽取真实 C 函数执行正常输入、复制失败、空输入和超长未终止输入测试；测试也确认写入函数收到的是内核副本。
+- 新测试已接入 Linux Host 和 Y73s GCC 14.2 KPIMG workflows。
+
+本地等价 C fixture 使用 `-Wall -Wextra -Werror` 编译并通过四类边界用例。最新 GitHub Actions 运行结果尚未读取，不把该项写成 CI 已通过。
+
+当前代码/测试基线：`79e567c1a24f7e93a7c1665b17a4a3be3b2c60d4`。相关审计详见 [Y73S_APATCH_COMPAT_AUDIT_CN.md](Y73S_APATCH_COMPAT_AUDIT_CN.md) 第 13 节。
+
+仍未完成：Y73s 真机 Manager UID / syscall 45 / SuperKey trace、Root 授权、KPM load/unload、Wi-Fi 稳定性、目标 4.14.141+ vendor KDIR 的 LKM Kbuild/MODPOST，以及 AVB Hash Descriptor 修复。当前离线镜像不可刷写；没有执行 Fastboot、分区写入或真机启动。
