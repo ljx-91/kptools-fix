@@ -499,7 +499,7 @@ static int try_find_arm64_relo_table(kallsym_t *info, char *img, int32_t imglen)
         memcpy(img + offset, &relocated_value, sizeof(relocated_value));
         apply_num++;
     }
-    if (apply_num) apply_num--;
+    /* Report the exact number of relocation targets modified above. */
     tools_logi("apply 0x%08x relocation entries\n", apply_num);
 
     if (apply_num) info->relo_applied = 1;
