@@ -3101,7 +3101,7 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - 移除 security_path_rename / security_inode_rename pre-VFS 授权回调监听；它们成功不代表 rename 最终成功。
 - 改为 Hook 原厂 KALLSYMS 中的 SyS_renameat2.cfi（offset 0x003f4414），仅在 exact packages.list.tmp -> packages.list 且 flags=0、syscall 返回 0 时刷新。
 - 刷新读取已提交的 packages.list，而不是临时文件；回调在 sys_renameat2 清理返回路径上执行，避免在 rename 的目录锁持有期间进行文件/APK I/O。
-- Host runtime fixture、源码契约和 Y73s GCC 14.2 KPIMG build 已通过；Windows kptools job仍在运行，尚未把整条跨平台 workflow 标记成功。
+- Host runtime fixture、源码契约、Y73s GCC 14.2 KPIMG build、Windows kptools.exe 构建、DLL 收集、Smoke Test、ZIP/checksum 打包和 Artifact 上传全部通过。
 - Host audit Run [43219640474](https://github.com/ljx-91/kptools-fix/actions/runs/43219640474)；KPIMG/Windows workflow Run [43219640512](https://github.com/ljx-91/kptools-fix/actions/runs/43219640512)；generic host build Run [43219640685](https://github.com/ljx-91/kptools-fix/actions/runs/43219640685)。
 
 当前源码/测试基线：fcb9925117c67284f35009918adc8165838aaa30。
