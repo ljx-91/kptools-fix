@@ -107,12 +107,10 @@ def main():
          manager_refresh.find("refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp)") and
          "trusted manager refresh failed rc=%d; UID trust cleared" in manager_refresh,
          "failed or in-progress Manager refresh revokes stale UID trust before scanning")
-    reader = body(userd, "int is_trusted_manager_uid_android(uid_t uid)")
-    getter = body(userd, "uid_t get_trusted_manager_uid(void)")
-    need("flags = spin_lock_irqsave(&trusted_manager_refresh_lock);" in reader and
-         "spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);" in reader and
-         "flags = spin_lock_irqsave(&trusted_manager_refresh_lock);" in getter and
-         "spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);" in getter,
+    need(userd.count("flags = spin_lock_irqsave(&trusted_manager_refresh_lock);") >= 3 and
+         userd.count("spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);") >= 4 and
+         "int is_trusted_manager_uid_android(uid_t uid)" in userd and
+         "uid_t get_trusted_manager_uid(void)" in userd,
          "all exported Manager UID readers synchronize with publication")
 
     print("[PASS] APatch root-SuperKey source contract complete")
