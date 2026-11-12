@@ -94,15 +94,26 @@ def main():
                    auth, re.S) is not None,
          "first successful root-key authentication migrates to the active SuperKey")
 
-    need("DEFINE_MUTEX(trusted_manager_refresh_lock)" in userd and
-         "mutex_lock(&trusted_manager_refresh_lock);" in manager_refresh and
-         "mutex_unlock(&trusted_manager_refresh_lock);" in manager_refresh,
-         "trusted Manager UID refreshes are serialized")
+    need("DEFINE_SPINLOCK(trusted_manager_refresh_lock)" in userd and
+         "spin_lock_irqsave(&trusted_manager_refresh_lock, flags);" in manager_refresh and
+         "spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);" in manager_refresh,
+         "trusted Manager UID publication uses an IRQ-safe spinlock")
+    need("++trusted_manager_refresh_generation" in manager_refresh and
+         "generation != trusted_manager_refresh_generation" in manager_refresh and
+         "return -EAGAIN;" in manager_refresh,
+         "superseded Manager UID scans cannot publish stale results")
     need("trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;" in manager_refresh and
          manager_refresh.find("trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;") <
          manager_refresh.find("refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp)") and
          "trusted manager refresh failed rc=%d; UID trust cleared" in manager_refresh,
          "failed or in-progress Manager refresh revokes stale UID trust before scanning")
+    reader = body(userd, "int is_trusted_manager_uid_android(uid_t uid)")
+    getter = body(userd, "uid_t get_trusted_manager_uid(void)")
+    need("spin_lock_irqsave(&trusted_manager_refresh_lock, flags);" in reader and
+         "spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);" in reader and
+         "spin_lock_irqsave(&trusted_manager_refresh_lock, flags);" in getter and
+         "spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);" in getter,
+         "all exported Manager UID readers synchronize with publication")
 
     print("[PASS] APatch root-SuperKey source contract complete")
 
