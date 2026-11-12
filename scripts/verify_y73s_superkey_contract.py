@@ -42,6 +42,7 @@ def main():
     patch_buf = body(patch, "int patch_update_img_buf(")
     supercall = read("kernel/patch/common/supercall.c")
     before = body(supercall, "static void before(")
+    skey_set = body(supercall, "static long call_skey_set(")
 
     need("if (!key || !superkey)" in auth,
          "SuperKey verifier rejects NULL input and missing preset")
@@ -68,6 +69,13 @@ def main():
          "compat_strncpy_from_user(key, key_user, MAX_KEY_LEN)" in before and
          "is_authed = !auth_superkey(key);" in before,
          "supercall authenticates the bounded first syscall argument")
+
+    need("if (len < 0) return len;" in skey_set and
+         "if (!len) return -EINVAL;" in skey_set and
+         "if (len >= sizeof(buf)) return -E2BIG;" in skey_set,
+         "SuperKey update rejects copy faults, empty keys, and unterminated oversized input")
+    need("reset_superkey(buf);" in skey_set and "reset_superkey(new_key);" not in skey_set,
+         "SuperKey update commits only the bounded kernel copy, never re-reads a user pointer")
 
     need("int is_manager = is_trusted_manager_uid(uid);" in before and
          before.find("is_trusted_manager_uid(uid)") < before.find("get_ap_mod_exclude(uid)") and
