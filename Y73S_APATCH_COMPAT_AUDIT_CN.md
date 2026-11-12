@@ -321,7 +321,7 @@ CI：
 - Fixture 现在模拟真实 KernelPatch hook_fargs5_t 前缀布局，并用 _Static_assert 检查 args 偏移为 88 bytes。
 - scripts/verify_y73s_414_kallsyms_profile.py 将 SyS_renameat2.cfi 纳入目标设备必需符号；符号地址来自已保存的原厂 KALLSYMS 记录。
 - Linux Host / 源码审计与 runtime fixture：Run [43219640474](https://github.com/ljx-91/kptools-fix/actions/runs/43219640474)，成功；rename 成功/失败/无关路径/flags 用例及 Manager UID generation 测试 PASS。
-- Y73s GCC 14.2 KPIMG：Run [43219640512](https://github.com/ljx-91/kptools-fix/actions/runs/43219640512)，KPIMG build job 成功；同一 workflow 的 Windows kptools job 在本节更新时仍处于 MSYS2 setup 阶段，整条 workflow 尚未完成。
+- Y73s GCC 14.2 KPIMG：Run [43219640512](https://github.com/ljx-91/kptools-fix/actions/runs/43219640512)，整条 workflow 最终成功；Android KPIMG、Windows kptools.exe 构建、DLL 收集、Smoke Test、ZIP/checksum 打包和 Artifact 上传全部通过。
 - Linux Host / kptools generic build：Run [43219640685](https://github.com/ljx-91/kptools-fix/actions/runs/43219640685)，成功。
 
 ### 限制
