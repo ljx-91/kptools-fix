@@ -300,3 +300,32 @@ CI：
 ### 限制
 
 这些结果证明源码契约、Host runtime fixture 和构建流程通过，不等于 Y73s 真机 Manager UID 更新时序已验证。仍需设备侧确认 packages.list 替换时机、APK 证书校验、并发刷新日志和 APatch Manager syscall 45 鉴权结果。AVB Hash Descriptor 仍未匹配，当前修补 boot 仍不可刷写；目标 4.14.141+ vendor KDIR / Module.symvers 的真实 LKM 构建与 MODPOST、真机 Root/KPM/Wi-Fi 测试均未完成。
+
+
+## 98. 2026-11-12：将 packages.list refresh 移至真实 rename 完成点
+
+### 发现与修复
+
+此前 packages.list 更新监听使用 security_path_rename / security_inode_rename 的 after 回调，但它们只是 LSM 授权检查，执行时 VFS rename 尚未完成；LSM 返回成功不代表最终文件重命名成功。若后续 VFS rename 失败，旧实现仍可能提前读取 packages.list.tmp 并发布不对应已提交文件的 Manager UID。
+
+已修复：
+- 删除 pre-VFS LSM rename 监听，不再把授权检查结果当作 rename 成功。
+- 目标设备 Linux 4.14.141 的原厂 KALLSYMS 记录确认 SyS_renameat2.cfi 存在（Image offset 0x003f4414），并且 sys_renameat2 是同一 syscall 的别名；Hook 改为精确的 CFI 函数体，不挂普通别名。
+- before 回调只接受 flags=0 且旧路径精确为 /data/system/packages.list.tmp、新路径精确为 /data/system/packages.list 的调用，并把匹配状态保存在本次 hook local 中。
+- after 回调只有在真实 syscall 返回 0 时才刷新，并读取已提交的 packages.list（use_tmp=0），不再读临时文件。
+- Linux 4.14 的 rename / renameat 包装路径最终汇入 sys_renameat2；Hook 其 CFI 函数体后，回调发生在 syscall 完成清理、目录锁释放之后，避免在 VFS rename 持锁期间执行 APK / 文件 I/O。
+
+### 回归验证
+
+- 扩展 scripts/test_y73s_manager_uid_refresh.py，抽取真实 before/after 回调并编译执行：精确成功 rename 会刷新最终 packages.list；rename 失败、目标路径不匹配、非零 flags 均不会刷新。
+- Fixture 现在模拟真实 KernelPatch hook_fargs5_t 前缀布局，并用 _Static_assert 检查 args 偏移为 88 bytes。
+- scripts/verify_y73s_414_kallsyms_profile.py 将 SyS_renameat2.cfi 纳入目标设备必需符号；符号地址来自已保存的原厂 KALLSYMS 记录。
+- Linux Host / 源码审计与 runtime fixture：Run [43219640474](https://github.com/ljx-91/kptools-fix/actions/runs/43219640474)，成功；rename 成功/失败/无关路径/flags 用例及 Manager UID generation 测试 PASS。
+- Y73s GCC 14.2 KPIMG：Run [43219640512](https://github.com/ljx-91/kptools-fix/actions/runs/43219640512)，KPIMG build job 成功；同一 workflow 的 Windows kptools job 在本节更新时仍处于 MSYS2 setup 阶段，整条 workflow 尚未完成。
+- Linux Host / kptools generic build：Run [43219640685](https://github.com/ljx-91/kptools-fix/actions/runs/43219640685)，成功。
+
+### 限制
+
+静态 KALLSYMS + Host fixture + KPIMG 交叉编译证明 Hook 目标和调用约定符合已保存的 Y73s 4.14.141 基线，但尚无真机 rename 事件日志。绝对路径精确匹配只覆盖 Android PackageManager 使用的该绝对路径替换形式；非零 rename flags 和其他路径故意不触发刷新。仍需设备日志确认实际 PackageManager 调用确实走该路径。
+
+**当前源码/测试提交：** fcb9925117c67284f35009918adc8165838aaa30。
