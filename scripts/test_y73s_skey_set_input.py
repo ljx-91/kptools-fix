@@ -72,7 +72,7 @@ int main(void)
 
     strcpy(committed, "unchanged");
     committed_source = 0;
-    if (call_skey_set((const char *)-1) != -EFAULT ||
+    if (call_skey_set((char *)-1) != -EFAULT ||
         strcmp(committed, "unchanged") || committed_source) {
         fprintf(stderr, "copy fault modified the active SuperKey\n");
         return 1;
