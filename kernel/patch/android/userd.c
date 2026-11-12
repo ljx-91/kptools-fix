@@ -1888,6 +1888,7 @@ static void after_openat(hook_fargs4_t *args, void *udata)
 
 static void before_sys_renameat2(hook_fargs5_t *args, void *udata)
 {
+    (void)udata;
     char old_path[sizeof(ANDROID_PACKAGES_LIST_TMP_PATH)];
     char new_path[sizeof(ANDROID_PACKAGES_LIST_PATH)];
     long old_len;
@@ -1920,6 +1921,7 @@ static void before_sys_renameat2(hook_fargs5_t *args, void *udata)
 
 static void after_sys_renameat2(hook_fargs5_t *args, void *udata)
 {
+    (void)udata;
     if (args->local.data0 && (long)args->ret == 0) {
         int rc;
 
