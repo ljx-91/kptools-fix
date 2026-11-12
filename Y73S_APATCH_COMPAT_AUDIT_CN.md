@@ -399,3 +399,14 @@ VFY_BIT=1，因此四个 policy byte 的 verify 位依次为 0、0、1、0；两
 ### 刷写边界
 
 在取得本机运行时 LKS_UNLOCK 证据、完成实际启动路径验证及 kernel/APatch 早期启动验证前，不把该候选标记为可刷写版本。绝不能把 unlocked-policy tolerance 写成 AVB signature/hash 已通过。
+
+
+### 15.1 AVB auditor 实际运行结果（补充）
+
+新增的 scripts/audit_y73s_avb_chain.py 已通过 Host CI 的 py_compile 和 --help 启动检查，并被打包进 Host artifact。脚本 SHA-256：727f6c5cdc3a7a8c2e61051fd6714b549d958aadd1f1c3f1168bd16699eb5c75。
+
+将该 artifact 中的脚本实际运行于资料库原厂镜像和本轮重建候选：
+- 原厂 boot：退出码 0；Boot HashDescriptor matches=true；root vbmeta、boot child vbmeta、vbmeta_system 的 auth hash / RSA 签名均通过；boot 与 vbmeta_system chain keys 均匹配；LK 中找到 root 公钥 modulus（offset 0xDBBC4）。
+- 当前修补候选：退出码 1（预期，唯一失败项是 Boot HashDescriptor matches=false）；三个 vbmeta RSA 签名仍通过、两个 chain key 匹配仍通过、LK modulus 仍找到。实际 digest 为 4345bef8e6af2fdc421acf9686033452e476f91ebbca17ac73fcc21b06d4a18a。
+
+Host CI Run 43221359096 成功，且 artifact 已包含 kptools 与 AVB auditor；Windows Run 43221359116 成功。KPIMG GCC 14.2 Run 43220663916 成功（同一代码基线；后续仅更新审计文档/Host workflow 打包步骤）。
