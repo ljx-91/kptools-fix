@@ -410,3 +410,18 @@ VFY_BIT=1，因此四个 policy byte 的 verify 位依次为 0、0、1、0；两
 - 当前修补候选：退出码 1（预期，唯一失败项是 Boot HashDescriptor matches=false）；三个 vbmeta RSA 签名仍通过、两个 chain key 匹配仍通过、LK modulus 仍找到。实际 digest 为 4345bef8e6af2fdc421acf9686033452e476f91ebbca17ac73fcc21b06d4a18a。
 
 Host CI Run 43221359096 成功，且 artifact 已包含 kptools 与 AVB auditor；Windows Run 43221359116 成功。KPIMG GCC 14.2 Run 43220663916 成功（同一代码基线；后续仅更新审计文档/Host workflow 打包步骤）。
+
+
+### 15.2 最新 KPIMG 产物重建（覆盖 15 / 15.1 的旧候选 SHA）
+
+进一步对比发现，之前 SHA 2fad01be... 的候选使用的是较早的 KPIMG artifact（304,992 bytes）。为避免拿旧 KPIMG 代表当前分支，已改用后续成功的 Y73s GCC 14.2 Run 43220663916 产物重新注入：
+
+- 当前 KPIMG：304,976 bytes，SHA-256 046d38c66e32ad7756b81306687e8052386188d64fce2e6258dca9bce19caead。
+- 当前 Linux kptools：SHA-256 1481dfb04eb0eaad97282578497f81aabb047a98dc336aa8b7b831a173d398a8。
+- 最新候选 boot SHA-256：216d79e5407a7484a00c6ea192e3069975adad1056ddcc132f12045643ef442c。
+- unpack 后内核 47,826,896 bytes；Linux 4.14.141；kallsyms_num_syms=0x1a5b9；pid_vnr SP_EL0 指令 0xd5384108；vectors index 18 / offset 0x2800。kptools dump exit 0。
+- AVB auditor 实跑退出码 1，唯一失败仍为 boot HashDescriptor：expected 36a3d398fc5a5350e1642f54584ebca8d06e20644e622993f9547e057467623c，actual a16a507391dbe3be37fa18319366d406ee2942a922c9ce8c03b6ee11fbfe03a6。
+- root vbmeta、boot child vbmeta、vbmeta_system 的 auth hash / RSA 签名均通过；boot 和 vbmeta_system chain key 均匹配；LK 中仍找到 root modulus，偏移 0xDBBC4。
+- 最新候选 footer：original_image_size=17,688,576，vbmeta_offset=17,690,624，vbmeta_size=1,472；内嵌 vbmeta SHA-256 仍为 5374b5d334a275eb682ec80f87345468e0994e0fa1c0c611d37196e062b6ed85。
+
+因此，后续所有讨论均以 216d79e... 作为当前分支最新离线候选；2fad01be... 仅保留为较早产物记录，不再作为当前候选。
