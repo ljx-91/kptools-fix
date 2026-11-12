@@ -5,6 +5,7 @@ on:
     branches:
       - y73s-cred-layout-guards-20261108
       - y73s-dcache-coherency-20261108
+      - folkpatch-y73s-android-kptools-20261113
     paths:
       - 'tools/**'
       - 'scripts/**'
