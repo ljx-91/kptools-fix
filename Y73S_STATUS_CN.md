@@ -3081,3 +3081,16 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - 尚无 APatch Manager syscall 45 / SuperKey / Root 授权 / KPM load-unload 设备实测。
 - 缺少完整 Y73s 4.14.141+ vendor KDIR 与 Module.symvers，真实 LKM .ko Kbuild/MODPOST 未完成。
 - AVB Hash Descriptor 仍不匹配，当前离线修补 Boot 不可刷写。
+
+
+## 97. 2026-11-12：Manager UID 刷新竞态修复已通过离线 CI
+
+- Manager UID 刷新改为 IRQ-safe spinlock + generation；刷新开始先撤销旧 UID，I/O 在锁外进行，旧扫描若被新扫描抢占则返回 -EAGAIN，不能发布陈旧 UID。
+- 导出的 Manager UID 判断和读取函数现在都通过同一把 spinlock 获取快照。
+- 新增/更新真实 C 函数 runtime fixture：成功替换、失败撤销、旧扫描被抢占三类场景均通过。
+- Y73s GCC 14.2 KPIMG：Run [43217973570](https://github.com/ljx-91/kptools-fix/actions/runs/43217973570) 成功。
+- Linux Host kptools + 源码审计：Run [43217973860](https://github.com/ljx-91/kptools-fix/actions/runs/43217973860) 成功。
+- Windows kptools.exe + Android KPIMG 构建、Smoke Test、打包：Run [43217973657](https://github.com/ljx-91/kptools-fix/actions/runs/43217973657) 成功。
+- 验证基线：dd891c17c863033bd0f9f3ea09aa6a9baedeb0db。
+
+**未完成/不可刷写：**AVB Hash Descriptor 仍不匹配；没有 Y73s 真机日志验证 Manager UID 刷新和 syscall 45 授权；缺少目标 4.14.141+ vendor KDIR 与 Module.symvers，LKM 真正 Kbuild/MODPOST 和加载验证未完成。Root 授权、KPM load/unload、Wi-Fi 稳定性也未在真机验证。当前 boot 不得刷入。
