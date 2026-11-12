@@ -1171,7 +1171,7 @@ static int refresh_trusted_manager_state_from_packages_list(int use_tmp)
      * packages.list I/O. A generation check below prevents a slower older
      * scan from publishing after a newer package-manager refresh has started.
      */
-    spin_lock_irqsave(&trusted_manager_refresh_lock, flags);
+    flags = spin_lock_irqsave(&trusted_manager_refresh_lock);
     generation = ++trusted_manager_refresh_generation;
     trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;
     spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
