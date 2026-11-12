@@ -15,7 +15,7 @@
 #include <linux/uaccess.h>
 #include <linux/string.h>
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/spinlock.h>
 #include <taskob.h>
 #include <predata.h>
 #include <accctl.h>
@@ -101,8 +101,9 @@ static const struct trusted_manager_entry trusted_managers[] = {
 };
 
 static uid_t trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;
-/* Serialize package-manager rename and first-app refreshes. */
-static DEFINE_MUTEX(trusted_manager_refresh_lock);
+/* Serialize only the trust-state publication; APK/file I/O must not hold a spinlock. */
+static DEFINE_SPINLOCK(trusted_manager_refresh_lock);
+static unsigned int trusted_manager_refresh_generation;
 static int global_pkg_pos = 0;
 
 
@@ -1161,27 +1162,37 @@ int refresh_trusted_manager_uid(void)
 static int refresh_trusted_manager_state_from_packages_list(int use_tmp)
 {
     uid_t uid = TRUSTED_MANAGER_UID_INVALID;
+    unsigned int generation;
+    unsigned long flags;
     int rc;
 
     /*
-     * A failed refresh must revoke the previous UID: packages.list may have
-     * removed/reassigned it. Clear before scanning so no stale UID remains
-     * trusted while the APK certificate and package UID are revalidated.
-     * Serialize refreshes so an older scan cannot overwrite a newer result.
+     * Revoke the old UID immediately. Do not hold the spinlock during APK or
+     * packages.list I/O. A generation check below prevents a slower older
+     * scan from publishing after a newer package-manager refresh has started.
      */
-    mutex_lock(&trusted_manager_refresh_lock);
+    spin_lock_irqsave(&trusted_manager_refresh_lock, flags);
+    generation = ++trusted_manager_refresh_generation;
     trusted_manager_uid = TRUSTED_MANAGER_UID_INVALID;
+    spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
+
     rc = refresh_trusted_manager_uid_from_packages_list(&uid, use_tmp);
-    if (rc) {
-        log_boot("trusted manager refresh failed rc=%d; UID trust cleared\n", rc);
-        mutex_unlock(&trusted_manager_refresh_lock);
-        return rc;
+
+    spin_lock_irqsave(&trusted_manager_refresh_lock, flags);
+    if (generation != trusted_manager_refresh_generation) {
+        spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
+        log_boot("trusted manager refresh superseded generation=%u\n", generation);
+        return -EAGAIN;
     }
 
-    trusted_manager_uid = uid;
-    log_boot("trusted manager refresh success uid=%u\n", uid);
-    mutex_unlock(&trusted_manager_refresh_lock);
-    return 0;
+    if (rc) {
+        log_boot("trusted manager refresh failed rc=%d; UID trust cleared\n", rc);
+    } else {
+        trusted_manager_uid = uid;
+        log_boot("trusted manager refresh success uid=%u\n", uid);
+    }
+    spin_unlock_irqrestore(&trusted_manager_refresh_lock, flags);
+    return rc;
 }
 
 int refresh_trusted_manager_state(void)
