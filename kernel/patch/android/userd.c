@@ -1940,12 +1940,12 @@ static void hook_packages_list_rename(void)
     hook_err_t rc;
 
     /*
-     * In Linux 4.14, renameat/rename route through sys_renameat2. Hook its
+     * In Y73s 4.14.141, renameat/rename route through the CFI body SyS_renameat2.cfi. Hook its
      * completed return path instead of the earlier LSM authorization hooks.
      */
-    addr = kallsyms_lookup_name("sys_renameat2");
+    addr = kallsyms_lookup_name("SyS_renameat2.cfi");
     if (!addr) {
-        log_boot("no symbol: sys_renameat2; packages.list refresh hook unavailable\n");
+        log_boot("no symbol: SyS_renameat2.cfi; packages.list refresh hook unavailable\n");
         return;
     }
 
