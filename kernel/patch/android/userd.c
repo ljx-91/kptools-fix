@@ -231,11 +231,6 @@ static int path_has_suffix(const char *path, const char *suffix)
     return strcmp(path + path_len - suffix_len, suffix) == 0;
 }
 
-static int is_packages_list_tmp_dentry_path(const char *path)
-{
-    return path_has_suffix(path, "/system/packages.list.tmp");
-}
-
 /* bounds-checked read: fails if [*pos, *pos+size) would fall outside [*pos, end) */
 static int read_exact(struct file *fp, void *buf, size_t size, loff_t *pos, loff_t end)
 {
@@ -1891,73 +1886,69 @@ static void after_openat(hook_fargs4_t *args, void *udata)
     }
 }
 
-typedef char *(*kp_dentry_path_raw_t)(struct dentry *dentry, char *buf, int buflen);
-
-static kp_dentry_path_raw_t kp_dentry_path_raw;
-
-static void refresh_packages_list_tmp_rename(struct dentry *tmp_dentry)
+static void before_sys_renameat2(hook_fargs5_t *args, void *udata)
 {
-    char path[128];
-    char *buf;
+    char old_path[sizeof(ANDROID_PACKAGES_LIST_TMP_PATH)];
+    char new_path[sizeof(ANDROID_PACKAGES_LIST_PATH)];
+    long old_len;
+    long new_len;
 
-    if (!tmp_dentry || !kp_dentry_path_raw) {
+    args->local.data0 = 0;
+
+    /* Only track the exact absolute packages.list replacement operation. */
+    if ((unsigned int)args->arg4 != 0) {
         return;
     }
 
-    buf = kp_dentry_path_raw(tmp_dentry, path, sizeof(path));
-    if (IS_ERR(buf)) {
-        log_boot("packages.list rename: dentry_path_raw failed\n");
+    old_len = compat_strncpy_from_user(
+        old_path, (const char __user *)args->arg1, sizeof(old_path));
+    if (old_len != (long)(sizeof(old_path) - 1)) {
         return;
     }
 
-    if (is_packages_list_tmp_dentry_path(buf)) {
+    new_len = compat_strncpy_from_user(
+        new_path, (const char __user *)args->arg3, sizeof(new_path));
+    if (new_len != (long)(sizeof(new_path) - 1)) {
+        return;
+    }
+
+    if (!strcmp(old_path, ANDROID_PACKAGES_LIST_TMP_PATH) &&
+        !strcmp(new_path, ANDROID_PACKAGES_LIST_PATH)) {
+        args->local.data0 = 1;
+    }
+}
+
+static void after_sys_renameat2(hook_fargs5_t *args, void *udata)
+{
+    if (args->local.data0 && (long)args->ret == 0) {
         int rc;
-        log_boot("packages.list rename matched: %s\n", buf);
-        rc = refresh_trusted_manager_state_from_packages_list(1);
-        log_boot("packages.list rename refresh trusted manager rc=%d\n", rc);
+
+        /*
+         * sys_renameat2 returns only after VFS rename and its directory locks
+         * have completed. Read the committed packages.list, never the temp file.
+         */
+        rc = refresh_trusted_manager_state_from_packages_list(0);
+        log_boot("packages.list committed rename refresh trusted manager rc=%d\n", rc);
     }
 }
 
-static void after_security_path_rename(hook_fargs5_t *args, void *udata)
-{
-    if ((long)args->ret >= 0) {
-        refresh_packages_list_tmp_rename((struct dentry *)args->arg1);
-    }
-}
-
-static void after_security_inode_rename(hook_fargs5_t *args, void *udata)
-{
-    if ((long)args->ret >= 0) {
-        refresh_packages_list_tmp_rename((struct dentry *)args->arg1);
-    }
-}
-
-static void hook_rename_lsm(void)
+static void hook_packages_list_rename(void)
 {
     unsigned long addr;
     hook_err_t rc;
 
-    kp_dentry_path_raw = (kp_dentry_path_raw_t)kallsyms_lookup_name("dentry_path_raw");
-    if (!kp_dentry_path_raw) {
-        log_boot("no symbol: dentry_path_raw\n");
+    /*
+     * In Linux 4.14, renameat/rename route through sys_renameat2. Hook its
+     * completed return path instead of the earlier LSM authorization hooks.
+     */
+    addr = kallsyms_lookup_name("sys_renameat2");
+    if (!addr) {
+        log_boot("no symbol: sys_renameat2; packages.list refresh hook unavailable\n");
         return;
     }
 
-    addr = kallsyms_lookup_name("security_path_rename");
-    if (addr) {
-        rc = hook_wrap5((void *)addr, 0, after_security_path_rename, 0);
-        log_boot("hook security_path_rename rc: %d\n", rc);
-        return;
-    }
-
-    addr = kallsyms_lookup_name("security_inode_rename");
-    if (addr) {
-        rc = hook_wrap5((void *)addr, 0, after_security_inode_rename, 0);
-        log_boot("hook security_inode_rename rc: %d\n", rc);
-        return;
-    }
-
-    log_boot("no symbol: security_path_rename/security_inode_rename\n");
+    rc = hook_wrap5((void *)addr, before_sys_renameat2, after_sys_renameat2, 0);
+    log_boot("hook sys_renameat2 packages.list refresh rc: %d\n", rc);
 }
 
 #define EV_KEY 0x01
@@ -1999,7 +1990,7 @@ int android_user_init()
     log_boot("hook __NR_openat rc: %d\n", rc);
     ret |= rc;
 
-    hook_rename_lsm();
+    hook_packages_list_rename();
 
     unsigned long input_handle_event_addr = patch_config->input_handle_event;
     if (input_handle_event_addr) {
