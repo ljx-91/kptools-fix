@@ -329,3 +329,73 @@ CI：
 静态 KALLSYMS + Host fixture + KPIMG 交叉编译证明 Hook 目标和调用约定符合已保存的 Y73s 4.14.141 基线，但尚无真机 rename 事件日志。绝对路径精确匹配只覆盖 Android PackageManager 使用的该绝对路径替换形式；非零 rename flags 和其他路径故意不触发刷新。仍需设备日志确认实际 PackageManager 调用确实走该路径。
 
 **当前源码/测试提交：** fcb9925117c67284f35009918adc8165838aaa30。
+
+
+## 15. 2026-11-12：用当前分支重建 Boot，并完成 AVB 签名链复核
+
+### 本轮实际输入与重建
+
+从资料库取回并重新计算 SHA-256：
+
+- 原厂 boot.img：100,663,296 bytes，SHA-256 c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5。
+- root vbmeta.img：SHA-256 9dea25766afba4fbaf601e80ae73bd69637d15aa40ae13a468312a8bb90aa652。
+- vbmeta_system.img：SHA-256 8463fe5995be29055e9bf35483110e9eeecf80fbfb1af34953631ba883fcfa12。
+- lk-verified.img：1,071,184 bytes，SHA-256 e44dc34afa12235011331309c3cac1f995cbca65c5e61c9e598984a5539000d4。
+
+使用当前分支成功构建的 KPIMG 与 Linux kptools 离线重建：
+- KPIMG artifact：Run 43217973570，kpimg-android SHA-256 a7a3440fafb47174e0fb1ccafae39cf00aa9527fee27a8b545e4d933b70800f8。
+- Linux kptools artifact：Run 43217973860，SHA-256 1481dfb04eb0eaad97282578497f81aabb047a98dc336aa8b7b831a173d398a8。
+- 当前重建候选 boot：100,663,296 bytes，SHA-256 2fad01be22261763e6e1ede041fcc64d35784ae5856dfa3a55e48e55e5ebdf56。
+- kptools patch 成功；再次 unpack 成功。解压内核 47,826,912 bytes，识别 Linux 4.14.141+；严格 kallsyms 数量 0x1a5b9、vectors index 18 / offset 0x2800、pid_vnr SP_EL0 指令 0xd5384108 均通过。
+- 以上仅为离线重建与结构验证，没有写入设备。
+
+### AVB 元数据与签名链
+
+原厂与当前候选的内嵌 boot vbmeta 都是 1,472 bytes，SHA-256 均为 5374b5d334a275eb682ec80f87345468e0994e0fa1c0c611d37196e062b6ed85；当前工具只移动了原有元数据，没有重新签名。
+
+独立按 AVB 1.0 / SHA256_RSA2048 结构复核：
+- root vbmeta、boot 内嵌 vbmeta、vbmeta_system 的 auth hash block 均与重新计算的 SHA-256 一致。
+- 三者 RSA-2048 PKCS#1 v1.5 / SHA-256 签名均使用各自 AVB header 公钥验证通过。
+- root vbmeta 的 boot 与 vbmeta_system chain descriptor 公钥分别与对应 child vbmeta header 公钥逐字节一致。
+- root AVB 公钥的 256-byte RSA modulus 在 lk-verified.img 中以相同字节序列出现，文件偏移 0xDBBC4。这是二进制内的 key-material 对应证据；不把它扩大解释为已验证设备运行时的完整 AVB callback 行为。
+
+### Boot HashDescriptor：仍然不匹配
+
+当前候选 footer：
+- original_image_size = 17,688,576
+- vbmeta_offset = 17,690,624
+- vbmeta_size = 1,472
+
+但内嵌 boot HashDescriptor 仍然要求：
+- image_size = 17,618,944
+- salt = aee087a5be3b982978c923f566a94613496b417f2af592639bc80d141e34dfe7
+- 预期 digest = 36a3d398fc5a5350e1642f54584ebca8d06e20644e622993f9547e057467623c
+
+计算 SHA256(salt || image[0:image_size])：
+- 原厂 boot：36a3d398fc5a5350e1642f54584ebca8d06e20644e622993f9547e057467623c，匹配。
+- 当前候选：4345bef8e6af2fdc421acf9686033452e476f91ebbca17ac73fcc21b06d4a18a，不匹配。
+
+结论：候选不是 OEM AVB HashDescriptor 通过的镜像。修改 descriptor 会改变 vbmeta 认证数据，缺少 vivo 对应私钥时不能生成 OEM 信任的签名。
+
+### LK unlocked 策略复核
+
+此前对同一份 lk-verified.img 的静态取证记录：MT6853 / PD2031 平台指纹与 LK 字符串吻合；boot policy row 解码为 01 00 03 00。对应 MT6853 参考结构字段顺序为：
+1. SBC disabled + locked
+2. SBC disabled + unlocked
+3. SBC enabled + locked
+4. SBC enabled + unlocked
+
+VFY_BIT=1，因此四个 policy byte 的 verify 位依次为 0、0、1、0；两个 unlocked 列均不要求 boot image verification。匹配的 MTK load_vfy_boot.c 流程在 boot_authentication() 返回 0 时设置 AVB_SLOT_VERIFY_FLAGS_ALLOW_VERIFICATION_ERROR，并在 avb_slot_verify() 后将该路径的结果归一为 OK。get_sec_state() 对无效/未知 lock state 会归一到 locked；只有实际 LKS_UNLOCK 才能选择 unlocked 列。
+
+因此当前结论需要分开表述：
+- **OEM AVB cryptographic validity：未通过。**
+- **若该设备本次启动时 LK 的 get_lock_state() 确实返回 LKS_UNLOCK：静态策略强烈表明 boot HashDescriptor 错误可能被容忍。**
+- 这不是设备启动保证；没有本机 LK lock_state / verifiedbootstate 日志，也没有本次候选的真机启动验证。用户此前说过 BL 已解锁，但这不能替代本次 LK 运行时状态证据。
+
+新增 scripts/audit_y73s_avb_chain.py，用于离线复核 AVB footer、root/child vbmeta RSA 签名、chain key equality、boot HashDescriptor 与 LK modulus presence。当前 CI 对该脚本完成 py_compile；本轮实际镜像数值由独立离线解析复核，尚未把用户二进制输入加入 CI。
+
+最新提交基线：3e9368c68135d8bbf71f752f93378ca30735aa2a。Host Run 43220664226、Y73s GCC 14.2 KPIMG Run 43220663916、Windows Run 43220663950 均成功。
+
+### 刷写边界
+
+在取得本机运行时 LKS_UNLOCK 证据、完成实际启动路径验证及 kernel/APatch 早期启动验证前，不把该候选标记为可刷写版本。绝不能把 unlocked-policy tolerance 写成 AVB signature/hash 已通过。
