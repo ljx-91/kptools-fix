@@ -28,9 +28,9 @@ The four APK payload components were extracted and compared byte-for-byte with t
 ## Follow-up CI artifact comparison (2026-11-13)
 
 The newly enabled GCC 14.2 KPIMG workflow completed successfully on this branch:
-- Run: https://github.com/ljx-91/kptools-fix/actions/runs/43271136525
-- Artifact SHA-256: `059e2a3a687622c6b8a2526851a488ddec8b6972a5bf569b2582524be9d8d094`
-- CI `kpimg-android` SHA-256: `a5d38bd78d3b7e8fdec7e6ba3e65e51d5ef4e4e68b943b5c202764bf1599ac94`
+- Run: https://github.com/ljx-91/kptools-fix/actions/runs/43274091949
+- Artifact SHA-256: `e94c9f8355e62b7f03f5136cc550aaaa67b47d4dbc2868a36f4bcf74809c2552`
+- CI `kpimg-android` SHA-256: `c8ea50bf24d9e32e01d2c4adc81f7b1c34b79a635057879690449928af3efa51`
 - CI source version: 0.13.10.
 
 Important integration discrepancy: the existing offline APK contains KPIMG SHA-256 `0eee6c55ef62b86d7b611f17594f8fa6ad6f5c002f493e723a373b73fc9fc0c4`, which is **not byte-identical** to the latest CI artifact. Both report version 0.13.10, but the binaries differ substantially, not merely in their embedded build-time string. A repeat CI run also produced a different KPIMG hash (the raw image embeds its build time), so archive the exact CI artifact used for any future APK packaging and do not assume bit-for-bit reproducibility. The existing APK must therefore be treated as a previously integrated candidate, not as a package containing the latest branch CI KPIMG. Replacing this asset requires rebuilding/re-signing the APK and keeping its native signer pin consistent; do not silently substitute the binary.
@@ -40,10 +40,10 @@ Important integration discrepancy: the existing offline APK contains KPIMG SHA-2
 ## Local APK re-integration script
 
 - Added `scripts/rebuild-folkpatch-apk-with-ci-kpimg.sh`.
-- It refuses a base APK whose signing certificate does not match the native `libapjni.so` pin (`dd7fa45abc401b4ec89124538fcb55db593928e82bdb36496beb84318e7ef0be)).
-- It verifies the original ARM64 `libkptools.so` and `libapjni.so` hashes, replaces only `assets/kpimg`, re-signs with the user-provided local JKS, then reopens the APK and verifies the KPIMG, native libraries, alignment and signer pin.
+- It refuses a base APK whose signing certificate does not match the native `libapjni.so` pin (`dd7fa45abc401b4ec89124538fcb55db593928e82bdb36496beb84318e7ef0be`).
+- It verifies the base APK signer and `libapjni.so`, replaces both `assets/kpimg` and `lib/arm64-v8a/libkptools.so` with the pinned CI artifacts, re-signs with the user-provided local JKS, then reopens the APK and verifies KPIMG, kptools, libapjni, alignment and signer pin.
 - JKS private key and passwords are intentionally not stored in Git. The JKS file is present in the user's Library bundle; the keystore/key passwords are not available to this build session. The script must be run locally with those credentials supplied through environment variables.
-- The new CI KPIMG has not yet been injected into the APK, and no APK signed with that new payload is being claimed as built.
+- The latest CI KPIMG and parser-fixed Android kptools have not yet been injected into the APK because the local JKS passwords are not available in this build session. No newly signed APK is being claimed as built.
 
 
 ## kptools zero-padding parser fix and fresh offline validation
@@ -68,3 +68,11 @@ Fresh host-side validation using the fixed host kptools, the latest CI KPIMG, an
 Updated Android kptools SHA-256: `77bad7aae3c7ca9d51e4092ca6d68c977cfa37fcf9d78c17aa814e4c04789524` (AArch64 PIE, Android API 24, NDK r27c). The local APK re-integration script now replaces both `assets/kpimg` and `lib/arm64-v8a/libkptools.so`, verifies the unchanged `libapjni.so` pin, signs locally, and verifies all final component hashes.
 
 The offline candidate is still **not flash-approved**: `CONFIG_KALLSYMS_ALL` is disabled and the original AVB Boot Hash Descriptor is stale after kernel modification. No device boot test has been done.
+
+
+## Latest exact artifact set (2026-11-13)
+
+- Latest KPIMG run: https://github.com/ljx-91/kptools-fix/actions/runs/43274091949; artifact archive SHA-256 `e94c9f8355e62b7f03f5136cc550aaaa67b47d4dbc2868a36f4bcf74809c2552`; `kpimg-android` SHA-256 `c8ea50bf24d9e32e01d2c4adc81f7b1c34b79a635057879690449928af3efa51`.
+- Latest Android kptools run: https://github.com/ljx-91/kptools-fix/actions/runs/43274013821; executable SHA-256 remains `77bad7aae3c7ca9d51e4092ca6d68c977cfa37fcf9d78c17aa814e4c04789524`.
+- Latest offline candidate using these exact binaries: `f2b5000b9da900fec4fa6f4d32255ec2cc03077c6e13784891901a2560d37937`; re-unpack and `patched=true` verification passed.
+- The local reintegration script accepts five inputs: base APK, CI KPIMG, CI Android kptools, local JKS, output APK. It replaces both binaries and keeps `libapjni.so` pinned.
