@@ -3286,3 +3286,25 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - 本次构建产物来自 commit `57da94a`，包含 map restore 溢出保护、paging_init veneer bounds 检查及修复后的 CFI 测试。
 
 结论：**本轮 Host kptools 和 ARM64 KPIMG 构建均已通过 CI。** 这只证明工具和 KPIMG 源码能按当前 workflow 编译并通过已有静态检查；artifact 不是对原厂 boot.img 的完整修补结果，也没有证明设备启动、Hook 运行或 root 功能有效。真机刷入仍然禁止作为下一步默认动作，必须先用新构建的 host kptools 对原厂 boot 做离线修补和二进制差异审计。
+
+
+## 109. CI 产物本地完整性核验与原厂输入检查（2026-11-14）
+
+已通过 GitHub artifact 下载并在工作容器中核验：
+
+### KPIMG artifact（run 43493827790 / commit 57da94a）
+- `kpimg-android` SHA-256: `523ff17fd0474659d74d58fce3115591c5ce3c3a917b19c22c763ab604507e2c`
+- `kpimg-android.elf` SHA-256: `d4ac88ad7c64fc9f8583fec8289a5553236291e9e8c2257d6350d75b8dbec94a`
+- ELF 类型：64-bit little-endian AArch64，静态链接，含 debug_info。
+- 使用同一 artifact 的 host kptools 执行 `-l -k kpimg-android`，识别结果：version `0xd0a`、`android,release`、`arm64`。
+- KPIMG ZIP 内 `SHA256SUMS.txt` 与本地重新计算的 4 个文件哈希全部一致。
+
+### Host kptools artifact（run 43493828006 / commit 57da94a）
+- `kptools-linux-x86_64` SHA-256: `0185603100f0cc7f97ea27fe9f85bb6f9d7504e3368c8f7a311c16b62065b927`
+- 版本：`d0a)。
+- Host ZIP 内 `SHA256SUMS` 与本地重新计算哈希一致。
+
+### 原厂输入限制
+当前 Library 可直接读取的 `vivo-y73s-kpimg-test-boot.img` SHA-256 为 `bf6c0daf9da839acb219f2b5cfba2670f7536eacaad0d42164cb08d3765640ca`，与已审计原厂 boot 的 SHA-256 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5` 不同。使用新 Host kptools 检查该 test 文件时，工具报 `kernel image magic error`，kallsyms 分析也失败。因此没有把它冒充成原厂输入，也没有用它生成候选 boot。
+
+下一步若要完成本轮新版本的原厂离线修补，需要重新提供 SHA-256 为 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96f1d975c9fe7cd5` 的原厂 `boot.img`。在该输入到位前，已完成 Host/KPIMG 构建与 artifact 完整性核验；未完成新版本对原厂 boot 的端到端 patch/repack 比对，更未进行设备刷入。
