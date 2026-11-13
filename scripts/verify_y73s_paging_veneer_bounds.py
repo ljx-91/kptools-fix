@@ -32,4 +32,6 @@ if "relo_branch_func(kallsym_kimg, ori_kimg_len, paging_init_offset)" not in pat
     raise SystemExit("[FAIL] paging_init call does not pass image bounds")
 if "if (setup->paging_init_offset < 0)" not in patch:
     raise SystemExit("[FAIL] invalid veneer target is not rejected")
+if "\\\\n" in body or "\\\\n" in patch:
+    raise SystemExit("[FAIL] diagnostics contain a double-escaped newline")
 print("[PASS] paging_init B-veneer resolution is image-bounded")
