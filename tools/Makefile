@@ -29,9 +29,9 @@ kptools.o: ../version
 
 .PHONY: clean
 clean:
-	rm -rf kptools
-	rm *.o
-	rm lib/bz2/*.o
-	rm lib/lz4/*.o
-	rm lib/sha/*.o
-	rm lib/xz/*.o
+	rm -f kptools
+	rm -f *.o
+	rm -f lib/bz2/*.o
+	rm -f lib/lz4/*.o
+	rm -f lib/sha/*.o
+	rm -f lib/xz/*.o
