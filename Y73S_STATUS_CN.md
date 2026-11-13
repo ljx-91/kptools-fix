@@ -3365,3 +3365,14 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 提交：`61663793777cb1e76c9f552d4502702c09225a20`。
 
 验证限制：修复提交已写入分支，但尚未取得该提交对应的 FolkPatch workflow 新 run 结果。后续必须确认 workflow 被 GitHub 正常识别并创建 build / build-patch-only-apk 两个 jobs，再检查完整日志和 artifact。不得把旧失败 run 标记为构建失败，也不得提前声称 APK 构建成功。
+
+
+## 113. FolkPatch workflow 第二阶段环境问题定位（2026-11-14）
+
+修复第 112 节重复 YAML key 后，GitHub 已正常创建 FolkPatch workflow jobs（run `43496949800`），证明 workflow 解析问题已解决。该 run 随后在 `Install Android NDK` 前置的 `android-actions/setup-android@v3` 步骤失败，日志明确显示该 action 调用了 `sdkmanager tools`，但当前 Android SDK 仓库已不存在名为 `tools` 的 package（`Warning: Failed to find package 'tools'`），因此 NDK 安装及后续构建均未执行。
+
+已移除两处 `android-actions/setup-android@v3`，改为使用 Ubuntu runner 预装的 Android SDK command-line tools 16.0，显式设置 `ANDROID_HOME` / `PATH` 并接受 licenses；原有 pinned NDK、platform、build-tools 和 CMake 安装步骤保留。
+
+提交：`1f9029330891041f479b3474c2a043fbc8b1872b`。
+
+当前状态：修复提交已触发新 Actions，必须继续检查新的 FolkPatch run；尚不能声称 Android kptools、KPIMG 或 APK 已构建成功。
