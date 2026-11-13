@@ -3179,3 +3179,24 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - 新增 `scripts/verify_y73s_paging_init_bounds.py`，并将其接入 KPIMG GCC 14.2 workflow。
 - 提交：`fba52b76a62824a0059dbae5d59357870fb1d41a`（汇编边界修复）、`f8077e6b8b885415aaa566669ef97fc3e8624301`（回归契约）、`ffea75b0780a63a6c794feb30f5f0457afc6521e`（CI 接入）。
 - **验证边界：**本次未实际运行 Arm GNU GCC 14.2 构建；需由 KPIMG workflow 验证汇编器接受指令、链接与新契约通过。此修改是 fail-closed 防护，不证明原厂 preset 地址或真机运行时一定正确。
+
+
+## 104. map anchor 恢复路径的边界审计（2026-11-14）
+
+本轮复核 `kernel/base/start.c::restore_map()` 时发现，原实现按 8 字节写回备份：
+`for (...; j += 8) *(uint64_t *)j = *(uint64_t *)(map_backup + (j-start));`
+但循环仅以备份末尾作为边界，没有处理非 8 字节对齐的尾部。若 `map_backup_len` 不是 8 的倍数，最后一次读写最多越界 7 字节。当前常规构建通常由 `MAP_MAX_SIZE=0x1000` 覆盖，且链接脚本限制 map section 小于 0x1000，因此不能据此认定当前镜像必然触发；仍应让恢复函数自身对异常/变体输入安全。
+
+已修改：
+- 恢复前检查备份长度为正且不超过固定数组 `MAP_MAX_SIZE`。
+- 检查 map_offset 非负，且 offset + backup_len 不超出记录的 kernel_size。
+- 检查 kernel_va 加法溢出、page_size 为正的 2 次幂。
+- 按字节精确恢复，避免尾部宽写越界。
+- 新增 `scripts/verify_y73s_restore_map_bounds.py`，并纳入 KPIMG GCC workflow。
+
+提交：
+- `38c36ab4558f8cefd86218c1c0f7c11bbd98b57e` restore_map 边界和字节恢复
+- `20bc72a987ab426adb7f64e5da732cb121e57215` 新增静态契约测试
+- `529ee237110fe641d286f493badb17336a730371` workflow 集成测试
+
+验证边界：目前是源码静态修改和 CI 脚本接入；尚未有本轮 GCC 实际编译、Actions 运行成功或 Y73s 真机启动验证。不得据此宣称启动问题已解决。
