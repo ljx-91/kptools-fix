@@ -38,3 +38,4 @@ Commits:
 - 755e550f27d4614e4191f5d5e4f32c356cbca6c5 — add source regression assertions.
 
 This closes a static source-level mismatch hazard. It does not prove that the requested VA range is free of block descriptors or that the live TTBR1 hierarchy and physical RAM layout match the assumptions.
+The leaf output-address guard also rejects requested PAs with any bits above bit 47, because the current descriptor OA mask and implementation support at most a 48-bit output address. The regression verifier checks this bound. Latest verifier adjustment: 228502831a208e0f82773f52119506f57b79c6cb.
