@@ -1058,7 +1058,7 @@ int patch_update_img_buf(const char *kimg, int kimg_len, const char *kpimg_path,
     int paging_init_offset = get_symbol_offset_exit(&kallsym, kallsym_kimg, "paging_init");
     setup->paging_init_offset = relo_branch_func(kallsym_kimg, ori_kimg_len, paging_init_offset);
     if (setup->paging_init_offset < 0) {
-        tools_loge_exit("paging_init entry/veneer target is outside the kernel image\\n");
+        tools_loge_exit("paging_init entry/veneer target is outside the kernel image\n");
     }
     if (kpimg_len <= SZ_4K || align_kimg_len > 0x7fffffff - SZ_4K)
         tools_loge_exit("KPIMG start image offset is invalid\n");
