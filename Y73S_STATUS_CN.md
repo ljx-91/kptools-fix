@@ -3411,3 +3411,35 @@ run `43498617767` 日志明确显示 `setup-android@v3` 在 JDK 11 下运行 cmd
 
 ### 下一步
 从 artifact `14073705656` 取出同 revision 的 Android kptools / KPIMG，针对 Library 中已核验的 stock `boot.img` 执行离线修补、解包和二进制差异检查。AVB 明确不纳入本轮验收；重点是 Kernel/ramdisk/DTB 不被意外改写、KPIMG 写入边界、函数入口和分支目标、备份恢复范围及重新解包一致性。不得将构建成功等同于真机可启动。
+
+
+## 116. Android kptools 独立 workflow 修复成功；Boot 组件级差异审计（2026-11-14）
+
+### Android kptools workflow
+提交 `9c0d1ad6eb39c4930a431a8a03306607197febbc` 移除了失效的 `android-actions/setup-android@v3`（其内部仍尝试安装已下架的 SDK `tools` 包），改为直接下载 Google command-line tools 11076708，接受 SDK licenses，并安装固定 NDK `30.0.15729638`。
+
+Run `43499913123`：所有步骤成功，包括 JDK17、SDK command-line tools、NDK、Android ARM64 kptools 编译、ELF 验证和 artifact 上传。
+Artifact：`folkpatch-y73s-kptools-android`，ID `14074260126`，digest `sha256:553f4dde006494cc68a79657572dbf23023aa511315b53b6fcaeb7c4fb38f11c`。
+
+### Stock boot 组件级差异复核
+对 Library 原厂镜像 `boot_2.img`（100,663,296 bytes，SHA-256 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`）与离线修补镜像 `boot-y73s-kpimg-d0a-test.img` 解析 Android boot header v2 的组件偏移，并逐字节比较组件内容。
+
+原厂/修补后的字段：
+- kernel_size：16,678,904 / 16,747,191 bytes
+- ramdisk_size：777,508 / 777,508 bytes
+- dtb_size：158,376 / 158,376 bytes
+- kernel 起始偏移：均为 2,048
+- ramdisk 起始偏移：16,680,960 / 16,750,592
+- DTB 起始偏移：17,459,200 / 17,528,832
+
+组件 SHA-256：
+- Ramdisk 两边均为 `f14df852dfc9d2dc7fe17edfbceedb564d616b19e2ace7ef0f633d94798065dc`，逐字节相同。
+- DTB 两边均为 `a285f5057385bede3f52698bdc6de34fdbc6edae485f311ee1ab4484279654a5`，逐字节相同。
+- Kernel 解压后原厂 47,517,708 bytes；修补后 47,826,896 bytes。共同长度区域仅 4 bytes 不同，分别在偏移 `0x1-0x2` 和 `0x11-0x12`，位于 ARM64 Image 头字段；内核主体样本位置（如 `0x1000`、`0x800000`）保持一致。额外增长 309,188 bytes 是 KPIMG/patch 数据区域。
+
+Boot Header 的 kernel_size 和 image ID 随内核改变而更新。AVB footer 中两个偏移字段也随组件后移而变化；AVB descriptor/链一致性依用户明确要求不作为本轮验收项。整个镜像尾部仍保持 96 MiB 长度。
+
+### 结论和边界
+- 已验证：新构建产物、Android 专项 workflow、Boot v2 组件边界、Ramdisk/DTB 完全一致、修补内核重新解包成功。
+- 尚未验证：真机启动；KPIMG 所有运行时 Hook 在目标 ROM 的实际执行；修补镜像的 AVB 验证链。
+- 当前不建议刷机。后续应进一步审计 kernel Image header 字段、KPIMG 注入范围与入口/分支目标，以及 AVB footer 之外的镜像尾部空洞是否有意保留。
