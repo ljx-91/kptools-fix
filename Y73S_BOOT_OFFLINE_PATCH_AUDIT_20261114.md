@@ -19,9 +19,10 @@
 | kptools host | Linux x86_64，version `d0a`（0.13.10） |
 | kptools host SHA-256 | `0185603100f0cc7f97ea27fe9f85bb6f9d7504e3368c8f7a311c16b62065b927` |
 | KPIMG | 0.13.10，Android / ARM64 / release |
-| KPIMG SHA-256 | `297b2432acc4aa1108720cae2667f75a121fd5dd459b41795d041618ad382a21` |
+| KPIMG SHA-256 | `a7ac08f0bec60508bc9ad1e60e3cbff10cf79a7d617300861bf7b9faaf2f45d8` |
 | Android kptools SHA-256 | `c6007cee6e813717309731c83f73ee20acd5147a58bc844e572dabc76f483177` |
-| KPIMG/APK 构建提交 | `cdfc3fde652076951e55361f6cd1c0a3c918b29e` |
+| KPIMG 源码提交 | `46da4883f8e97b62212a2d72fd82677dfc9ee221` |
+| APK 工作流提交 | `ca67a8c35337d04d5ac0b45f681857b23950545f` |
 | Linux host kptools 工作流提交 | `6133b31f57a6a72e8bcc442d1c1e23e8c8b7f628` |
 
 host 工具提交相对 KPIMG/APK 提交只新增了 host 构建 workflow 文件，工具源码树没有变化。
@@ -67,7 +68,7 @@ host 工具提交相对 KPIMG/APK 提交只新增了 host 构建 workflow 文件
 | Boot 文件大小 | 100,663,296 | 100,663,296 |
 | Header version | 2 | 2 |
 | Page size | 2048 | 2048 |
-| 压缩 kernel size | 16,678,904 | 16,747,274 |
+| 压缩 kernel size | 16,678,904 | 16,747,419 |
 | 解压 kernel size | 47,517,708 | 47,826,896 |
 | ramdisk size | 777,508 | 777,508 |
 | DTB size | 158,376 | 158,376 |
@@ -75,8 +76,21 @@ host 工具提交相对 KPIMG/APK 提交只新增了 host 构建 workflow 文件
 - ramdisk SHA-256 两边一致：`f14df852dfc9d2dc7fe17edfbceedb564d616b19e2ace7ef0f633d94798065dc`。
 - DTB SHA-256 两边一致：`a285f5057385bede3f52698bdc6de34fdbc6edae485f311ee1ab4484279654a5`。
 - 原厂解压 kernel 的共同前缀中，实际只有 4 个字节不同：offset `0x1`、`0x2`（Image code0 指令立即数）及 `0x11`、`0x12`（image_size 字段）；其余共同前缀字节相同。
-- 修补后 Boot SHA-256：`21488cadb09b99e49d6a33ff13ef1e0644ee779d72a1db70e0cbb4a8f8428a9a`。
+- 修补后 Boot SHA-256：`c76a7b96cae1326ae45d45b1be7950435b3be1160f9a58c3362e3352f74fd187`。
 - 对修补后 Boot 再次执行 `kptools unpack` 成功，解压 kernel 为 47,826,896 bytes；`kptools -i kernel -l` 识别 `patched=true`、KPIMG version `0xd0a`。
+
+## setup1.S 早期 preset 预检
+
+在本次构建中，`start_prepare` 增加了早期 fail-closed 检查，执行顺序早于第一次从 kernel 区域备份或复制数据：
+
+- `kpimg_size` 必须覆盖 `_kp_start - _link_base` 的 setup 前缀。
+- 派生的 `start_img_size` 必须非零、16 字节对齐，并且不超过 `_kp_end - _kp_start`。
+- `extra_size` 必须非负且 16 字节对齐；`start_img_size + extra_size` 检查溢出并确保 4 字节对齐，满足 `rmemcpy32` 的复制约束。
+- `start_offset` 必须按 4 KiB 对齐，且整个 start/extra 复制范围必须落在扩展后的 kernel Image 大小内。
+- map backup 长度不得超过固定 `MAP_MAX_SIZE`，其源区间必须位于 kernel Image 范围内。
+- 所有不满足条件的分支统一跳转到 `.bad_paging_init`（`brk #0`），原有 `_paging_init` C 层大小保护仍保留。
+
+新增的 `scripts/verify_y73s_setup_preset_bounds.py` 已在 combined workflow 的 regression-test 步骤通过。使用带该预检的 KPIMG 对原厂 Boot 再次离线修补、二次解包和 Patch-only 手动流程复现均成功；手动流程输出与直接 patch 输出逐字节一致。
 
 ## 与 FolkPatch 默认 Patch-only 流程对照
 
