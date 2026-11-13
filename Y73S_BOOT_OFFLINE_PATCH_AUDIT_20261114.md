@@ -78,6 +78,14 @@ host 工具提交相对 KPIMG/APK 提交只新增了 host 构建 workflow 文件
 - 修补后 Boot SHA-256：`21488cadb09b99e49d6a33ff13ef1e0644ee779d72a1db70e0cbb4a8f8428a9a`。
 - 对修补后 Boot 再次执行 `kptools unpack` 成功，解压 kernel 为 47,826,896 bytes；`kptools -i kernel -l` 识别 `patched=true`、KPIMG version `0xd0a`。
 
+## 与 FolkPatch 默认 Patch-only 流程对照
+
+- FolkPatch 115404 的 `PatchesViewModel` 默认 SuperKey 为 `su`；`boot_patch.sh` 对 `su` 不添加 `-S`。本次离线测试同样未传 `-S`，与默认签名管理器路径一致。
+- 按 APK 脚本的实际顺序执行 `unpack -> kptools -p -i kernel.ori -k kpimg -o kernel -> repack`，生成的 `new-boot.img` 与直接对 Android Boot 执行 `kptools --patch -i boot.img -k kpimg -o output` 的 SHA-256 完全相同：`21488cadb09b99e49d6a33ff13ef1e0644ee779d72a1db70e0cbb4a8f8428a9a`。
+- FolkPatch 的 Patch-only 模式不传 `FLASH_TO_DEVICE=true`，不会执行脚本中的刷写分支。
+- 因 `CONFIG_KALLSYMS_ALL=n`，APK 内上游脚本会显示通用风险提示；本次 kptools 的 Y73s 严格 vector / 指纹解析成功，但不能因此消除运行时启动风险。
+- KPIMG 的可信管理器 pin 指向官方 `me.yuki.folk` 签名。Y73s patcher APK 使用并列包名 `me.yuki.folk.y73s.patcher`，不能替代官方管理器；需要保留官方 FolkPatch 管理器安装。
+
 ## AVB 与安全限制
 
 - 原厂 footer：`original_image_size=17,618,944`，`vbmeta_offset=17,620,992`，`vbmeta_size=1,472`。
