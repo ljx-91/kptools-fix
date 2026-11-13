@@ -3262,3 +3262,27 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - `57da94a6f2577677436120086c7be7bd8eea1617` 修复 CFI 测试函数提取
 
 注意：这些是对失败原因的针对性修复，尚需等待上述提交触发的最新 Actions 结果，不能提前宣布通过。
+
+
+## 108. 修复后的 Host 与 KPIMG 构建验证（2026-11-14）
+
+针对第 107 节两个失败原因修复后，GitHub Actions 已在 commit `57da94a6f2577677436120086c7be7bd8eea1617` 上完成验证：
+
+### Host kptools
+- Run: `43493828006`
+- 结果：**success**
+- `build-kptools`：成功编译、打包、上传 Linux x86_64 kptools artifact。
+- `Audit LKM KPM ELF loader source`：成功；包括修复后的 `test_y73s_kallsym_pid_vnr_cfi.py`、`verify_y73s_paging_veneer_bounds.py`、`verify_y73s_restore_map_bounds.py` 以及仓库其他 source contract。
+
+### Android KPIMG (Arm GNU GCC 14.2)
+- Run: `43493827790`
+- 结果：**success**
+- `Build and audit Y73S KPIMG`：成功。
+- Arm GNU GCC 14.2 编译 KPIMG、链接 ELF、执行所有纳入 workflow 的静态审计，并成功上传 artifact。
+- Artifact: `y73s-kpimg-arm-gnu-gcc14-audit`
+- Artifact ID: `14071545764`
+- ZIP SHA-256: `614391035cc765e1582eb3a45c82d148a657aef5cdf8b707d46a9df12f378a1c`
+- 下载入口：https://github.com/ljx-91/kptools-fix/actions/runs/43493827790/artifacts/14071545764
+- 本次构建产物来自 commit `57da94a`，包含 map restore 溢出保护、paging_init veneer bounds 检查及修复后的 CFI 测试。
+
+结论：**本轮 Host kptools 和 ARM64 KPIMG 构建均已通过 CI。** 这只证明工具和 KPIMG 源码能按当前 workflow 编译并通过已有静态检查；artifact 不是对原厂 boot.img 的完整修补结果，也没有证明设备启动、Hook 运行或 root 功能有效。真机刷入仍然禁止作为下一步默认动作，必须先用新构建的 host kptools 对原厂 boot 做离线修补和二进制差异审计。
