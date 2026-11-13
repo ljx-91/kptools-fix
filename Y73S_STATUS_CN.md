@@ -3387,3 +3387,27 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 修复提交：`5b986b45ad548b3f14755835b5eb3f7dfc8d1a9e`。
 
 待验证：该提交触发的 FolkPatch workflow 是否通过 Host kptools、Android ARM64 kptools、KPIMG 构建及 artifact packaging。当前未声称新产物已生成。下一步使用该提交对应的构建产物对上述已确认原厂 Boot 做离线修补和二进制差异审计。 
+
+
+## 115. FolkPatch 核心产物首次全绿；Android 专项 workflow 修复（2026-11-14）
+
+### 综合 FolkPatch 构建（run 43498618158，commit `5b986b45ad548b3f14755835b5eb3f7dfc8d1a9e`）
+`build` job 全部成功：
+- FolkPatch / Y73s regression tests
+- Host Linux kptools 编译与契约验证
+- Android ARM64 kptools 编译与 ELF 验证
+- Y73s KPIMG 编译
+- 同一源码 revision 的 artifact 打包与上传
+
+artifact：`folkpatch-y73s-kernelpatch-artifacts`，ID `14073705656`，SHA-256 `1d506e4875de1525560d8e963726f969298883cec3d0dfefbe4255e208c01105`。这是本项目首次在综合 workflow 中完成 host kptools、Android ARM64 kptools 和 KPIMG 三项核心构建。它尚未被用于 stock boot 的本地重打包差异验证。
+
+### APK sidecar job
+同一 workflow 的 `build-patch-only-apk` 单独失败：SDK license 接受成功，但 Google SDK repository 找不到 `platforms;android-37`。这是 FolkPatch APK job 的 SDK 平台包名/可用性问题，不影响上述核心产物 job 的成功。
+
+### Android 专项 kptools workflow
+run `43498617767` 日志明确显示 `setup-android@v3` 在 JDK 11 下运行 cmdline-tools 16.0，因工具要求 JDK 17 而失败。已在 `.github/workflows/build-y73s-kptools-android.yml` 的 checkout 后、Android SDK 初始化前加入 Temurin JDK 17。
+
+修复提交：`a7d4c32c1217a298f4eb4527e63b1863fc73095e`。待确认此提交触发的 Android 专项 workflow 是否成功。
+
+### 下一步
+从 artifact `14073705656` 取出同 revision 的 Android kptools / KPIMG，针对 Library 中已核验的 stock `boot.img` 执行离线修补、解包和二进制差异检查。AVB 明确不纳入本轮验收；重点是 Kernel/ramdisk/DTB 不被意外改写、KPIMG 写入边界、函数入口和分支目标、备份恢复范围及重新解包一致性。不得将构建成功等同于真机可启动。
