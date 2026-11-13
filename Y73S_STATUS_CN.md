@@ -3308,3 +3308,30 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 当前 Library 可直接读取的 `vivo-y73s-kpimg-test-boot.img` SHA-256 为 `bf6c0daf9da839acb219f2b5cfba2670f7536eacaad0d42164cb08d3765640ca`，与已审计原厂 boot 的 SHA-256 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5` 不同。使用新 Host kptools 检查该 test 文件时，工具报 `kernel image magic error`，kallsyms 分析也失败。因此没有把它冒充成原厂输入，也没有用它生成候选 boot。
 
 下一步若要完成本轮新版本的原厂离线修补，需要重新提供 SHA-256 为 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96f1d975c9fe7cd5` 的原厂 `boot.img`。在该输入到位前，已完成 Host/KPIMG 构建与 artifact 完整性核验；未完成新版本对原厂 boot 的端到端 patch/repack 比对，更未进行设备刷入。
+
+
+## 110. SELinux 决策 Hook 与审计 Hook 的成功状态修正（2026-11-14）
+
+根据“函数定位后再打补丁”的原则，继续审计实际 Hook 安装结果。发现 `kernel/patch/common/accctl.c::bypass_selinux()` 有一个状态语义错误：
+
+- 主 Hook `avc_denied` 成功时，正确返回成功。
+- 主 Hook 缺失或安装失败时，会尝试 `slow_avc_audit`。
+- 旧逻辑在 `slow_avc_audit` 安装成功后也返回 0。
+- 但 `slow_avc_audit` 在 SELinux 决策之后执行，只能改变审计路径，不能替代 `avc_denied` 的权限决策 Hook。返回 0 会把“审计 Hook 安装成功”误报为“SELinux 决策绕过成功”。
+
+已修复：
+- 仍允许尝试安装 `slow_avc_audit`，便于保留诊断/审计路径。
+- 不再把次级审计 Hook 安装成功当作 SELinux bypass 成功。
+- 主决策 Hook 缺失或失败时，最终返回原始 `primary_rc`，由上层早期初始化 fail-closed。
+- 更新 `scripts/verify_y73s_avc_denied_fallback.py`，检查该状态语义。
+
+提交：
+- `71c3ea1ac5d86de665dc68403d9be690ad151b91` 修正 accctl Hook 状态返回
+- `e97f848a19c8111982b8ee4de0f0dda7aac651c6` 增加静态回归检查
+
+影响评估：
+- 对本机型预期路径：已由原厂 Image 指纹恢复 `avc_denied`，主 Hook 正常安装时仍按原路径返回成功；该修改只改变主 Hook 缺失/失败的路径。
+- 对其他内核：如果仅能 Hook `slow_avc_audit`，现在会明确初始化失败，而不是静默宣称 SELinux bypass 已完成。这是有意的安全性修正。
+- 尚未在真机验证主 Hook 是否能成功安装；CI 通过也不证明运行时 Hook 可用。
+
+验证状态：源码和静态测试已提交；等待新 Actions 运行。没有重新生成 Boot，没有刷机。
