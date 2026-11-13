@@ -327,7 +327,8 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
     if ((leaf_desc & 0x3ull) != 0x3ull) __builtin_trap();
     if (pa) {
         uint64_t pa_mask = ((1ull << (48 - page_shift)) - 1) << page_shift;
-        if ((pa & (page_size - 1)) || (pa & pa_mask) != (leaf_desc & pa_mask))
+        if ((pa & (page_size - 1)) || (pa >> 48) ||
+            (pa & pa_mask) != (leaf_desc & pa_mask))
             __builtin_trap();
     }
     return pxd_entry_va;
