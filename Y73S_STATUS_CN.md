@@ -3335,3 +3335,22 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - 尚未在真机验证主 Hook 是否能成功安装；CI 通过也不证明运行时 Hook 可用。
 
 验证状态：源码和静态测试已提交；等待新 Actions 运行。没有重新生成 Boot，没有刷机。
+
+
+## 111. SELinux Hook fail-closed 修复后的 CI 结果（2026-11-14）
+
+针对第 110 节修改，已检查对应 commit `202f849fe583403d61fd16c34c00e2410f5716d5` 的实际 Actions：
+
+### 已通过
+- Host Linux kptools / source audit：run `43495905295`，success。编译、打包和全量 source contracts 均通过。
+- Y73S KPIMG Arm GNU GCC 14.2：run `43495905369`，success。KPIMG 构建、链接、静态审计及 artifact 上传均通过。
+- Windows kptools workflow：run `43495958241`，success。Android KPIMG、Linux kptools、Windows `kptools.exe`、运行时 DLL 收集、Smoke test、ZIP 和校验文件均成功。
+- Windows workflow 产物：
+  - `kpimg-and-headers` artifact ID `14072395190`，ZIP SHA-256 `3e323c4fe7ac5d5bfaa2c96d7af2aacc65c4642e6fe7f71409dc7bcdad977d79`
+  - `KernelPatch-Windows-Y73S` artifact ID `14070179902`，ZIP SHA-256 `01966fb64a31e5b54f425f82ae335735c71d8d76637177eccc44576d9e070377`
+
+### 未通过/未确认
+- FolkPatch Android artifact workflow run `43495955667` 为 failure，但 GitHub job 列表返回空，没有可读取的 job 日志；当前无法把失败归因于源码或构建环境。该结果不影响上述 KPIMG 与 Host kptools 的成功结论。
+- CI 仅验证构建和静态源代码合同；未证明 Y73s 真机运行时 avc_denied Hook 能安装、SELinux 权限行为正确，也未完成原厂 boot.img 的新版本端到端修补。
+
+结论：第 110 节 fail-closed 修改已通过 Host/KPIMG/Windows 构建流水线。下一阶段继续审计 Y73s 函数指纹和运行时 Hook 目标，仍不得据此直接刷机。
