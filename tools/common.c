@@ -29,7 +29,7 @@ int32_t relo_branch_func(const char *img, int32_t imglen, int32_t func_offset)
 {
     if (!img || imglen < 4 || func_offset < 0 || func_offset > imglen - 4 ||
         (func_offset & 3)) {
-        tools_loge("invalid function entry offset 0x%x for image size 0x%x\\n",
+        tools_loge("invalid function entry offset 0x%x for image size 0x%x\n",
                    func_offset, imglen);
         return -1;
     }
@@ -42,11 +42,11 @@ int32_t relo_branch_func(const char *img, int32_t imglen, int32_t func_offset)
         int64_t displacement = (int64_t)sign64_extend(imm26 << 2u, 28u);
         target += displacement;
         if ((target & 3) || target < 0 || target > (int64_t)imglen - 4) {
-            tools_loge("function branch target 0x%llx is outside image\\n",
+            tools_loge("function branch target 0x%llx is outside image\n",
                        (unsigned long long)target);
             return -1;
         }
-        tools_logi("relocate branch function 0x%x to 0x%llx\\n",
+        tools_logi("relocate branch function 0x%x to 0x%llx\n",
                    func_offset, (unsigned long long)target);
     }
     return (int32_t)target;
