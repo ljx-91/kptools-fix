@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 source = (ROOT / "tools/kallsym.c").read_text()
 
 def extract_function(text: str, signature: str) -> str:
-    start = text.index(signature)
+    start = text.rindex(signature)
     brace = text.index("{", start)
     depth = 0
     for i in range(brace, len(text)):
