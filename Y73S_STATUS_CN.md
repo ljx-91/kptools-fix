@@ -3242,3 +3242,23 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - `8070b06dc8d895a573e57a14a6765f973baadc21` 静态测试检查双重转义
 
 复核确认 `tools/common.h` 已包含 `string.h`，`memcpy` 声明可见；Host Makefile 使用 C11，新增函数原型与调用参数一致。仍未执行实际 GCC 编译/Actions，不能宣称构建通过。
+
+
+## 107. Actions 实际编译失败修复（2026-11-14）
+
+本轮读取了 GitHub Actions 的实际 job 日志，而非仅看 run 总状态。确认：
+- Host workflow 的 `build-kptools` job 在 commit `8070b06` 上 **成功**：Linux kptools 已编译、打包并上传 artifact。
+- Host workflow 的 `Audit LKM KPM ELF loader source` job 失败在旧测试 `test_y73s_kallsym_pid_vnr_cfi.py`：测试函数提取器用 `text.index(signature)` 命中了前置声明，导致后续抽取到错误函数体；并非 CFI resolver 代码丢失。
+- KPIMG GCC workflow 失败在 `kernel/base/start.c:527`：本仓库自带的内核头文件环境未定义 `UINT64_MAX`，导致编译错误。此前静态契约测试通过，但真实 GCC 构建暴露了该头文件兼容问题。
+
+已修复：
+1. `restore_map()` 将 `UINT64_MAX` 改为不依赖宏定义的 `(~(uint64_t)0)`，保留溢出检查。
+2. `verify_y73s_restore_map_bounds.py` 同步更新对应源码契约。
+3. `test_y73s_kallsym_pid_vnr_cfi.py` 使用 `rindex` 定位函数定义，避开前置声明。
+
+提交：
+- `d6b1cf0d62c56a5857d34e2b3c9a7fef0f56a5ed` 修复 UINT64_MAX 编译问题
+- `c070739cf72ebc0742fa64772d52a9483ed2cef5` 更新 restore_map 契约
+- `57da94a6f2577677436120086c7be7bd8eea1617` 修复 CFI 测试函数提取
+
+注意：这些是对失败原因的针对性修复，尚需等待上述提交触发的最新 Actions 结果，不能提前宣布通过。
