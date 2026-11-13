@@ -25,17 +25,31 @@ int b(uint32_t *buf, uint64_t from, uint64_t to)
     return 0;
 }
 
-int32_t relo_branch_func(const char *img, int32_t func_offset)
+int32_t relo_branch_func(const char *img, int32_t imglen, int32_t func_offset)
 {
-    uint32_t inst = *(uint32_t *)(img + func_offset);
-    int32_t relo_offset = func_offset;
+    if (!img || imglen < 4 || func_offset < 0 || func_offset > imglen - 4 ||
+        (func_offset & 3)) {
+        tools_loge("invalid function entry offset 0x%x for image size 0x%x\\n",
+                   func_offset, imglen);
+        return -1;
+    }
+
+    uint32_t inst;
+    memcpy(&inst, img + func_offset, sizeof(inst));
+    int64_t target = func_offset;
     if (INSN_IS_B(inst)) {
         uint64_t imm26 = bits32(inst, 25, 0);
-        uint64_t imm64 = sign64_extend(imm26 << 2u, 28u);
-        relo_offset = func_offset + (int32_t)imm64;
-        tools_logi("relocate branch function 0x%x to 0x%x\n", func_offset, relo_offset);
+        int64_t displacement = (int64_t)sign64_extend(imm26 << 2u, 28u);
+        target += displacement;
+        if ((target & 3) || target < 0 || target > (int64_t)imglen - 4) {
+            tools_loge("function branch target 0x%llx is outside image\\n",
+                       (unsigned long long)target);
+            return -1;
+        }
+        tools_logi("relocate branch function 0x%x to 0x%llx\\n",
+                   func_offset, (unsigned long long)target);
     }
-    return relo_offset;
+    return (int32_t)target;
 }
 
 void read_file_align(const char *path, char **con, int *out_len, int align)
