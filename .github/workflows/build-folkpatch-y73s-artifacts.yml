@@ -1,6 +1,7 @@
 name: Build combined Y73s FolkPatch artifacts
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - y73s-cred-layout-guards-20261108
@@ -28,6 +29,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential make zlib1g-dev python3 binutils xz-utils zip
+
+      # sdkmanager 16.x requires JDK 17+; ubuntu-22.04 may expose JDK 11 by default.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
 
       - name: Install Android NDK
         uses: android-actions/setup-android@v3
