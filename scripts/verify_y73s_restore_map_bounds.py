@@ -14,7 +14,7 @@ checks = {
     "backup length fits fixed field": "start_preset.map_backup_len > MAP_MAX_SIZE",
     "map offset is nonnegative": "start_preset.map_offset < 0",
     "map offset and length fit kernel image": "start_preset.map_offset > start_preset.kernel_size - start_preset.map_backup_len",
-    "kernel VA addition is checked": "UINT64_MAX - kernel_va",
+    "kernel VA addition is checked": "(~(uint64_t)0) - kernel_va",
     "page size is validated": "page_size <= 0 || (page_size & (page_size - 1))",
     "restore uses byte stores": "*(uint8_t *)j = start_preset.map_backup[j - start]",
 }
