@@ -128,15 +128,15 @@ def main():
     require(r"if\s*\(block_flag\)\s*\{[\s\S]*?__builtin_trap\(\);",
             pte, "existing block mappings must fail closed rather than be overwritten as page descriptors")
 
-    require(r"uint64_t leaf_desc = \\*\\(uint64_t \\*\\)pxd_entry_va;", pte,
+    require(r"uint64_t leaf_desc = \*\(uint64_t \*\)pxd_entry_va;", pte,
             "final leaf descriptor must be re-read before returning its PTE")
-    require(r"\\(leaf_desc \\& 0x3ull\\) != 0x3ull", pte,
+    require(r"\(leaf_desc \& 0x3ull\) != 0x3ull", pte,
             "final PTE lookup must reject non-page descriptors")
-    require(r"if \\(pa\\) \\{[\\s\\S]*?\\(pa \\& pa_mask\\) != \\(leaf_desc \\& pa_mask\\)[\\s\\S]*?__builtin_trap\\(\\);", pte,
+    require(r"if \(pa\) \{[\s\S]*?\(pa \& pa_mask\) != \(leaf_desc \& pa_mask\)[\s\S]*?__builtin_trap\(\);", pte,
             "existing leaf mappings must match the requested destination PA")
-    require(r"if \\(pa\\)", pte,
+    require(r"if \(pa\)", pte,
             "lookup-only PTE requests must preserve the kernel text AttrIndx path")
-    require(r"pa \\>\\> 48", pte,
+    require(r"pa \>\> 48", pte,
             "leaf PTE validation must reject physical addresses outside the supported 48-bit OA range")
 
     # Y73S KALLSYMS lacks cpu_online_mask/nr_cpu_ids. The callback must
