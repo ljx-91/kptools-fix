@@ -3354,3 +3354,14 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - CI 仅验证构建和静态源代码合同；未证明 Y73s 真机运行时 avc_denied Hook 能安装、SELinux 权限行为正确，也未完成原厂 boot.img 的新版本端到端修补。
 
 结论：第 110 节 fail-closed 修改已通过 Host/KPIMG/Windows 构建流水线。下一阶段继续审计 Y73s 函数指纹和运行时 Hook 目标，仍不得据此直接刷机。
+
+
+## 112. FolkPatch artifact workflow YAML 失败根因修复（2026-11-14）
+
+进一步检查最新失败 run `43496339829`（commit `49bc06d`）时发现，GitHub Actions 没有创建任何 job，失败发生在 workflow 解析/调度阶段。直接检查 `.github/workflows/build-folkpatch-y73s-artifacts.yml`，确认 `on:` 下重复声明了两次 `workflow_dispatch:`。重复 YAML key 会导致 workflow 文件无效，因而不是 Android/NDK/Java/源码编译错误。
+
+已删除第二个重复 `workflow_dispatch:`，保留一个手动触发入口及原有 push path filters。
+
+提交：`61663793777cb1e76c9f552d4502702c09225a20`。
+
+验证限制：修复提交已写入分支，但尚未取得该提交对应的 FolkPatch workflow 新 run 结果。后续必须确认 workflow 被 GitHub 正常识别并创建 build / build-patch-only-apk 两个 jobs，再检查完整日志和 artifact。不得把旧失败 run 标记为构建失败，也不得提前声称 APK 构建成功。
