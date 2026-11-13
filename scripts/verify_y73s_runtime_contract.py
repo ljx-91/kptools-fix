@@ -87,6 +87,8 @@ def main():
             probe, "probe reservation release failure must be detected")
 
     paging = function_body(map_c, "void __noinline _paging_init(")
+    require(r"if\s*\(\(uint64_t\)data->start_img_size\s*>\s*\(uint64_t\)data->start_size\)\s*__builtin_trap\(\);",
+            paging, "start image must not overlap the extra-data destination range")
     before(paging, "((paging_init_f)(paging_init_va))();",
            "detect_y73s_linear_voffset(data);",
            "linear-map probe must run after the original paging_init returns")
