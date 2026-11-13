@@ -61,6 +61,15 @@ jobs:
           sdkmanager --install "ndk;30.0.15729638"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.15729638" >> "$GITHUB_ENV"
 
+      - name: Install Rust and cargo-ndk
+        run: |
+          set -euxo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustc" --version
+          "$HOME/.cargo/bin/cargo" install cargo-ndk --locked
+          "$HOME/.cargo/bin/cargo" ndk --version
+
       - name: Install Arm GNU Toolchain 14.2.rel1
         run: |
           set -euxo pipefail
