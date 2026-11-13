@@ -3376,3 +3376,14 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 提交：`1f9029330891041f479b3474c2a043fbc8b1872b`。
 
 当前状态：修复提交已触发新 Actions，必须继续检查新的 FolkPatch run；尚不能声称 Android kptools、KPIMG 或 APK 已构建成功。
+
+
+## 114. 原厂 Boot 重新确认及 Host kptools clean 修复（2026-11-14）
+
+用户确认原厂 Boot 位于资料库。重新从 Library materialize `boot.img`，实际文件路径为 `/mnt/data/files/boot_2.img`，大小 100,663,296 bytes；本地 `sha256sum` 为 `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`。识别为 Android boot image，kernel load address `0x40080000`，ramdisk load address `0x47c80000`，page size 2048，cmdline 含 `PD2031_A_5.12.1`。本轮忽略 AVB，不将 AVB 状态作为阻塞条件。
+
+检查 FolkPatch run `43498276916`：SDK、NDK、Arm GNU Toolchain 和所有 Y73s regression tests 均成功；Host kptools 构建阶段失败在 `make -C tools clean`，原因是干净 checkout 下没有 `*.o`，Makefile 的 `rm *.o` 返回错误。已将 clean 目标所有删除命令改为 `rm -f`。
+
+修复提交：`5b986b45ad548b3f14755835b5eb3f7dfc8d1a9e`。
+
+待验证：该提交触发的 FolkPatch workflow 是否通过 Host kptools、Android ARM64 kptools、KPIMG 构建及 artifact packaging。当前未声称新产物已生成。下一步使用该提交对应的构建产物对上述已确认原厂 Boot 做离线修补和二进制差异审计。 
