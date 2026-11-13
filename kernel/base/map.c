@@ -292,7 +292,11 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
             } else {
                 pxd_pa = pa;
             }
-            pxd_desc = (pxd_pa) | attr_prot;
+            /*
+             * Intermediate levels require a table descriptor, not leaf-page
+             * attributes. Keep the descriptor type explicit at each level.
+             */
+            pxd_desc = pxd_pa | (lv == 3 ? attr_prot : 0x3ull);
             *((uint64_t *)pxd_entry_va) = pxd_desc;
         }
         pxd_va = phys_to_lm(data, pxd_pa);
@@ -302,7 +306,13 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
             }
         }
         if (block_flag) {
-            break;
+            /*
+             * The caller updates a leaf page descriptor. Returning a block
+             * descriptor here would overwrite a larger mapping with a page
+             * descriptor and corrupt neighboring translations. Splitting a
+             * block requires preserving its attributes and is not implemented.
+             */
+            __builtin_trap();
         }
     }
     return pxd_entry_va;
