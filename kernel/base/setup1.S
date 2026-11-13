@@ -62,6 +62,56 @@ start_prepare:
     adrp x12, header
     add x12, x12, :lo12:header
 
+    // Validate the untrusted preset lengths before the first kernel-memory
+    // backup or relocation copy. start_prepare runs before _paging_init's C
+    // guards, so a malformed kpimg_size/extra_size must fail here.
+    ldr x22, [x10, #setup_kpimg_size_offset]
+    adrp x23, _kp_start
+    add x23, x23, :lo12:_kp_start
+    adrp x24, _link_base
+    add x24, x24, :lo12:_link_base
+    sub x23, x23, x24
+    cmp x22, x23
+    b.lo .bad_paging_init
+    sub x22, x22, x23
+    cbz x22, .bad_paging_init
+    tst x22, #0xf
+    b.ne .bad_paging_init
+
+    // The relocated start payload must fit its linker-reserved destination.
+    adrp x23, _kp_end
+    add x23, x23, :lo12:_kp_end
+    adrp x24, _kp_start
+    add x24, x24, :lo12:_kp_start
+    sub x23, x23, x24
+    cmp x22, x23
+    b.hi .bad_paging_init
+
+    // The backward word-copy helper requires a nonnegative, 4-byte-aligned
+    // total length. The patcher emits 16-byte-aligned extra records.
+    ldr x3, [x10, #setup_extra_size_offset]
+    tbnz x3, #63, .bad_paging_init
+    tst x3, #0xf
+    b.ne .bad_paging_init
+    adds x4, x22, x3
+    b.cs .bad_paging_init
+    tst x4, #3
+    b.ne .bad_paging_init
+
+    // The destination range must remain inside the enlarged Image footprint.
+    ldr x21, [x10, #setup_start_offset_offset]
+    tst x21, #0xfff
+    b.ne .bad_paging_init
+    ldr x5, [x10, #setup_kernel_size_offset]
+    tbnz x5, #63, .bad_paging_init
+    cmp x21, x5
+    b.hi .bad_paging_init
+    sub x5, x5, x21
+    cmp x4, x5
+    b.hi .bad_paging_init
+    adds x5, x19, x21
+    b.cs .bad_paging_init
+
     // start_preset.kernel_version = setup_preset.kernel_version;
     ldr w13, [x10, #setup_kernel_version_offset]
     str w13, [x11, #start_kernel_version_offset]
@@ -150,21 +200,27 @@ start_prepare:
     b.hs 91f
     mov x2, x3
 91:
+    // map_backup is a fixed-size field in start_preset. Validate both its
+    // capacity and the source range before copying bytes from the kernel.
+    cmp x2, #MAP_MAX_SIZE
+    b.hi .bad_paging_init
+    ldr x4, [x10, #setup_kernel_size_offset]
+    tbnz x4, #63, .bad_paging_init
+    cmp x20, x4
+    b.hi .bad_paging_init
+    sub x4, x4, x20
+    cmp x2, x4
+    b.hi .bad_paging_init
+    adds x4, x19, x20
+    b.cs .bad_paging_init
+
     // start_preset.map_backup_len = backup_len
     str x2, [x11, #start_map_backup_len_offset]
     add x0, x11, #start_map_backup_offset
     add x1, x19, x20
     bl memcpy8
 
-    // uint64_t start_img_size = setup_preset.kpimg_size - (_kp_start - _link_base)
-    ldr x22, [x10, #setup_kpimg_size_offset]
-    adrp x23, _kp_start
-    add x23, x23, :lo12:_kp_start
-    adrp x24, _link_base
-    add x24, x24, :lo12:_link_base
-    sub x23, x23, x24
-    sub x22, x22, x23
-
+    // start_img_size was preflighted before any kernel-memory access.
     // map_data.start_img_size = start_img_size;
     str x22, [x9, #map_start_img_size_offset]
 
