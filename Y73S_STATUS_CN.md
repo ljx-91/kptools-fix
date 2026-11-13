@@ -3225,3 +3225,20 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 静态审计再次确认：当前非 GKI Y73s 路径在 `select_map_area()` 中使用 16-byte 向上对齐的 map anchor；GKI 专用 PAC 双窗口扫描不会进入这台设备的非 GKI 分支。已有离线报告记录了针对原厂镜像的修正测试和符号结果。该离线报告使用的工具构建/源码版本早于本轮提交，不能代替本轮重新构建。
 
 验证边界：本轮尚未运行 GitHub Actions，也未在本机完成 Host kptools 编译；没有新生成 KPIMG 或修补镜像，没有真机验证。下一步必须运行 Host workflow，再用本轮新构建的 kptools 对原厂 kernel 重跑并核对 paging_init 入口/目标偏移。
+
+
+## 106. veneer 边界修复的二次复核（2026-11-14）
+
+对第 105 节新增代码做二次逐行复核时，发现诊断字符串在第一次提交中把换行转义写成了双反斜杠（运行时会打印字面量 `\\n`，而不是换行）。这不改变地址判断逻辑，但会影响错误日志可读性。
+
+已修复：
+- `tools/common.c` 三处 veneer 诊断字符串恢复为标准 C `\\n`。
+- `tools/patch.c` 的失败提示恢复为标准 C `\\n`。
+- `scripts/verify_y73s_paging_veneer_bounds.py` 增加双重转义检查。
+
+提交：
+- `c138d5d0e5e2ac119d544a6ff452f1a2756fda4a` common.c 日志转义修复
+- `0cef2530e6db55f9476ca2bf59d536dc5028c472` patch.c 日志转义修复
+- `8070b06dc8d895a573e57a14a6765f973baadc21` 静态测试检查双重转义
+
+复核确认 `tools/common.h` 已包含 `string.h`，`memcpy` 声明可见；Host Makefile 使用 C11，新增函数原型与调用参数一致。仍未执行实际 GCC 编译/Actions，不能宣称构建通过。
