@@ -315,6 +315,21 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
             __builtin_trap();
         }
     }
+
+    /*
+     * The caller may request a lookup-only PTE by passing pa == 0 (used
+     * to read the kernel text AttrIndx). For actual destination mappings,
+     * never silently accept an already-valid leaf that points at another
+     * physical page: the caller only adjusts permissions and does not
+     * rewrite the output address. Verify the final descriptor and its OA.
+     */
+    uint64_t leaf_desc = *(uint64_t *)pxd_entry_va;
+    if ((leaf_desc & 0x3ull) != 0x3ull) __builtin_trap();
+    if (pa) {
+        uint64_t pa_mask = ((1ull << (48 - page_shift)) - 1) << page_shift;
+        if ((pa & (page_size - 1)) || (pa & pa_mask) != (leaf_desc & pa_mask))
+            __builtin_trap();
+    }
     return pxd_entry_va;
 }
 
