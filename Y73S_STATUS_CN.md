@@ -3169,3 +3169,13 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - `build-y73s-kpimg-gcc.yml` 与 FolkPatch artifacts workflow 均显式设置 `Y73S_TARGET=1`；Kernel Makefile 将其转换为 `-DKP_TARGET_Y73S=1`，因此目标构建会启用 Y73s 的 paging_init 后线性映射探测路径。
 - **本次审计结论：**在当前分支源码与已保存的 Y73s 原厂 kallsyms 记录之间，未发现 KPIMG 将 `0x01914928` 错当物理地址的现行代码路径；当前分支选择的物理地址查找器和关键符号偏移是匹配的。此前离线记录中 `memblock_phys_alloc: 0x01914928` 的名称应视为错误标签，不得据此手工填写 preset。
 - **尚未闭环：**未在本次会话中重新构建 KPIMG，也未对最终构建产物做 ELF 重定位/指令逐字节审计；最新 HEAD 的 Actions 尚未在修复提交后重新运行；没有真机启动验证。因此这只是静态源码与原厂符号表交叉审计，不构成可刷写结论。
+
+
+## 103. 2026-11-14：限制 paging_init PAC 扫描与 Hook 分支地址
+
+- 在继续审计 `kernel/base/setup1.S` 时发现，`map_prepare()` 原先的 `.cmp_auti` 循环无边界地逐条读取指令，直到匹配 PAC/AUT 编码；若 preset 的 `paging_init_offset` 错误或目标函数指令布局不符，可能越过内核 Image 末尾持续读取。
+- 已增加 `kernel_size` 检查：要求入口偏移及 4 字节指令位于 Image 范围内；PAC/AUT 扫描每次读取前检查地址不超过 Image 最后一个完整指令位置；越界走 `.bad_paging_init` 并执行 `brk #0`，不再继续读写未知地址。
+- 同时为生成的 AArch64 `B` Hook 增加 4 字节对齐与有符号 28-bit 位移范围检查（实际分支范围 ±128 MiB），防止 `ubfx` 静默截断超范围目标地址。
+- 新增 `scripts/verify_y73s_paging_init_bounds.py`，并将其接入 KPIMG GCC 14.2 workflow。
+- 提交：`fba52b76a62824a0059dbae5d59357870fb1d41a`（汇编边界修复）、`f8077e6b8b885415aaa566669ef97fc3e8624301`（回归契约）、`ffea75b0780a63a6c794feb30f5f0457afc6521e`（CI 接入）。
+- **验证边界：**本次未实际运行 Arm GNU GCC 14.2 构建；需由 KPIMG workflow 验证汇编器接受指令、链接与新契约通过。此修改是 fail-closed 防护，不证明原厂 preset 地址或真机运行时一定正确。
