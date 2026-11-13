@@ -136,7 +136,7 @@ def main():
             "existing leaf mappings must match the requested destination PA")
     require(r"if \(pa\)", pte,
             "lookup-only PTE requests must preserve the kernel text AttrIndx path")
-    require(r"pa \>\> 48", pte,
+    require(r"pa >> 48", pte,
             "leaf PTE validation must reject physical addresses outside the supported 48-bit OA range")
 
     # Y73S KALLSYMS lacks cpu_online_mask/nr_cpu_ids. The callback must
