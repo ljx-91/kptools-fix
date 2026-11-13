@@ -232,6 +232,21 @@ jobs:
             "build-tools;36.1.0" \
             "ndk;30.0.15729638" \
             "cmake;3.31.0"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.15729638" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/30.0.15729638" >> "$GITHUB_ENV"
+
+      # This is a separate job from the kernel/KPIMG build above. Install
+      # Rust and cargo-ndk here as well; PATH changes do not cross job boundaries.
+      - name: Install Rust target and cargo-ndk for APK sidecar
+        run: |
+          set -euxo pipefail
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          "$HOME/.cargo/bin/rustc" --version
+          "$HOME/.cargo/bin/rustup" target add aarch64-linux-android
+          "$HOME/.cargo/bin/cargo" install cargo-ndk --locked
+          "$HOME/.cargo/bin/cargo" ndk --version
+          test -d "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64"
 
       - uses: actions/download-artifact@v4
         with:
