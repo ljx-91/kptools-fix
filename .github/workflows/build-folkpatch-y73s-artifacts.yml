@@ -35,15 +35,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Configure Android SDK command-line tools
+      - name: Install Android SDK command-line tools
         run: |
-          set -eu
-          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          sdkmanager_bin="$sdk_root/cmdline-tools/16.0/bin"
-          test -x "$sdkmanager_bin/sdkmanager"
+          set -euxo pipefail
+          sdk_root="$RUNNER_TEMP/android-sdk"
+          archive="$RUNNER_TEMP/commandlinetools-linux.zip"
+          extract="$RUNNER_TEMP/android-cmdline-tools"
+          mkdir -p "$sdk_root/cmdline-tools" "$extract"
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 300 \
+            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
+            -o "$archive"
+          python3 -m zipfile -e "$archive" "$extract"
+          test -x "$extract/cmdline-tools/bin/sdkmanager"
+          mv "$extract/cmdline-tools" "$sdk_root/cmdline-tools/latest"
           echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
-          echo "$sdkmanager_bin" >> "$GITHUB_PATH"
-          yes | "$sdkmanager_bin/sdkmanager" --licenses
+          echo "ANDROID_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
+          echo "$sdk_root/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --licenses
 
       - name: Install pinned Android NDK
         run: |
@@ -181,15 +189,23 @@ jobs:
           cache: gradle
           cache-dependency-path: FolkPatch/gradle/wrapper/gradle-wrapper.properties
 
-      - name: Configure Android SDK command-line tools
+      - name: Install Android SDK command-line tools
         run: |
-          set -eu
-          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          sdkmanager_bin="$sdk_root/cmdline-tools/16.0/bin"
-          test -x "$sdkmanager_bin/sdkmanager"
+          set -euxo pipefail
+          sdk_root="$RUNNER_TEMP/android-sdk"
+          archive="$RUNNER_TEMP/commandlinetools-linux.zip"
+          extract="$RUNNER_TEMP/android-cmdline-tools"
+          mkdir -p "$sdk_root/cmdline-tools" "$extract"
+          curl --fail --location --retry 3 --connect-timeout 30 --max-time 300 \
+            "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
+            -o "$archive"
+          python3 -m zipfile -e "$archive" "$extract"
+          test -x "$extract/cmdline-tools/bin/sdkmanager"
+          mv "$extract/cmdline-tools" "$sdk_root/cmdline-tools/latest"
           echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
-          echo "$sdkmanager_bin" >> "$GITHUB_PATH"
-          yes | "$sdkmanager_bin/sdkmanager" --licenses
+          echo "ANDROID_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
+          echo "$sdk_root/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --licenses
 
       - name: Install FolkPatch Android SDK components
         run: |
