@@ -587,6 +587,13 @@ void __noinline _paging_init()
     uint64_t page_size = 1 << data->page_shift;
     if (data->start_offset < 0 || data->start_img_size < 0 || data->extra_size < 0 ||
         data->start_size <= 0 || data->alloc_size < 0) __builtin_trap();
+    /*
+     * The start image is copied at destination offset zero; extra data starts
+     * at start_size. Reject a stale/corrupt preset that would make those
+     * destination ranges overlap. The current linker layout makes them equal,
+     * but allowing a smaller image keeps the zero-filled alignment gap valid.
+     */
+    if ((uint64_t)data->start_img_size > (uint64_t)data->start_size) __builtin_trap();
     if ((uint64_t)data->start_offset > ~(uint64_t)0 - data->kernel_pa) __builtin_trap();
     uint64_t old_start_pa = (uint64_t)data->start_offset + data->kernel_pa;
     if ((uint64_t)data->start_img_size > ~(uint64_t)0 - (uint64_t)data->extra_size) __builtin_trap();
