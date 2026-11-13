@@ -249,9 +249,19 @@ map_prepare:
     add x11, x11, #MEMORY_RW_SIZE
     str x11, [x9, #map_alloc_size_offset]
 
-    // backup and hook paging_init
-    // uint64_t paging_init_pa = paging_init_offset + kernel_pa;
+    // Validate the preset entry before reading or modifying the kernel image.
+    // The PAC/AUT scan below is strictly bounded by kernel_size.
+    ldr x16, [x10, #setup_kernel_size_offset]
+    cmp x16, #4
+    b.lo .bad_paging_init
+    sub x17, x16, #4
+    cmp x15, x17
+    b.hi .bad_paging_init
     add x13, x15, x19
+    adds x17, x19, x16
+    b.cs .bad_paging_init
+    sub x17, x17, #4
+
     // map_data.paging_init_backup = *(uint32_t *)(paging_init_pa);
     ldr w12, [x13]
 
@@ -268,7 +278,9 @@ map_prepare:
     // uint32_t *p = (uint32_t *)paging_init_pa + 1;
     add x11, x13, #4
 .cmp_auti:
-    // while ((*p & 0xFFFFFD1F) != 0xD503211F) ++p;
+    // Stop if the matching PAC/AUT instruction is not inside the kernel image.
+    cmp x11, x17
+    b.hi .bad_paging_init
     ldr w0, [x11], #4
     and w0, w0, w2
     cmp w0, w1
@@ -288,9 +300,16 @@ map_prepare:
     sub x11, x11, x12
     add x11, x11, x14
 
-    // *(uint32_t *)paging_init_pa = B_REL(paging_init_offset, replace_offset);
-    // #define B_REL(src, dst) (0x14000000u | (((dst - src) & 0x0FFFFFFFu) >> 2u))
+    // The AArch64 B immediate is signed, 4-byte aligned, and limited to +/-128 MiB.
     sub x15, x11, x15
+    tst x15, #3
+    b.ne .bad_paging_init
+    asr x16, x15, #27
+    cmp x16, #0
+    b.eq 92f
+    cmn x16, #1
+    b.ne .bad_paging_init
+92:
     ubfx w15, w15, #2, #26
     mov w12, #0x14000000
     orr w15, w15, w12
@@ -312,6 +331,11 @@ map_prepare:
 
     dsb ish
     ret
+
+.bad_paging_init:
+    // Invalid/out-of-image preset or unencodable hook: never continue with
+    // an unchecked kernel read/write or a truncated branch displacement.
+    brk #0
 
 .text
 .align 2
