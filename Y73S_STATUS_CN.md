@@ -3154,3 +3154,18 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - 历史失败日志另有一项独立问题：旧 commit `370cc3c` 的 `test_y73s_kallsym_pid_vnr_cfi.py` 与当时的 resolver 实现不匹配；当前 HEAD 的 `tools/kallsym.c` 已包含该测试要求的 branch-stub 与 image-bounds 检查，仍需由新 CI 确认。
 
 **验证边界：**本次只恢复源码和 CI 配置，没有生成 KPIMG/Boot，没有设备操作。目标 Linux 4.14.141 KDIR 的 LKM 编译、真机启动、AVB 与 APatch 运行时验证仍未完成。
+
+
+
+## 102. 2026-11-14：Y73s KPIMG 地址映射审计（源代码 + 原厂 kallsyms 交叉核对）
+
+- 当前分支 HEAD：`f4f4f2c38a95af52d81eb41f1d32e1451260aa77`。
+- 核对 `tools/symbol.c`、`tools/patch.c`、`tools/common.c`、`kernel/base/setup1.S`、`kernel/base/map.c`、`kernel/base/start.c`、`kernel/kpimg.lds` 和 Y73s 原厂 kallsyms 导出记录。
+- **纠正此前离线记录中的一个符号标签错误：**原厂符号偏移 `0x01914928` 对应的是 `memblock_alloc_try_nid`，它返回虚拟地址指针，不是物理地址分配器；不能把它当作 `memblock_phys_alloc` 使用。原厂记录中 `memblock_find_in_range` 是 `0x01914914`，`memblock_virt_alloc_try_nid_nopanic` 是 `0x0191492c`，`memblock_virt_alloc_try_nid` 是 `0x01914930`。
+- 当前分支的 `fillin_map_symbol()` 正确优先解析 `memblock_find_in_range`，并将其类型标记为 `MAP_SYM_MEMBLOCK_FIND_IN_RANGE`；`map_phys_alloc()` 对返回的 PA 调用 `memblock_reserve()` 后才使用。线性映射探测优先使用五参数 `memblock_virt_alloc_try_nid_nopanic`，并通过再次查询原物理区间确认分配器没有回退到其他 PA。源码契约还明确禁止把 `memblock_alloc_try_nid` 作为物理分配器。
+- 原厂地址交叉核对：`memblock_reserve=0x019282d8`、`memblock_free=0x019282d4`、`memblock_mark_nomap=0x019282e8`、`kallsyms_lookup_name=0x01922680`、`printk=0x01921b14`，均与当前分支按符号名解析的接口相符。
+- `paging_init` 原始符号入口为 `0x01940228`；原厂符号表另列出 `paging_init.cfi=0x020fbc7c`。当前 patcher 先解析精确的 `paging_init`，再由 `relo_branch_func()` 跟随入口 B veneer，得到真正的函数体偏移；这解释了 preset 中记录的 `0x020fbc7c`，不能把它误判为随机错误地址。仍需对最终输入 Image 的入口指令做逐字节复核。
+- `map_offset=0x019352d0` 与原厂 `tcp_init_sock=0x019352c4` 按 16 字节向上对齐的选择规则一致。此区域是启动早期临时牺牲的 map hole；`start()` 初始化 KP 区域后调用 `restore_map()` 恢复原始字节，必须保持该恢复路径完整。
+- `build-y73s-kpimg-gcc.yml` 与 FolkPatch artifacts workflow 均显式设置 `Y73S_TARGET=1`；Kernel Makefile 将其转换为 `-DKP_TARGET_Y73S=1`，因此目标构建会启用 Y73s 的 paging_init 后线性映射探测路径。
+- **本次审计结论：**在当前分支源码与已保存的 Y73s 原厂 kallsyms 记录之间，未发现 KPIMG 将 `0x01914928` 错当物理地址的现行代码路径；当前分支选择的物理地址查找器和关键符号偏移是匹配的。此前离线记录中 `memblock_phys_alloc: 0x01914928` 的名称应视为错误标签，不得据此手工填写 preset。
+- **尚未闭环：**未在本次会话中重新构建 KPIMG，也未对最终构建产物做 ELF 重定位/指令逐字节审计；最新 HEAD 的 Actions 尚未在修复提交后重新运行；没有真机启动验证。因此这只是静态源码与原厂符号表交叉审计，不构成可刷写结论。
