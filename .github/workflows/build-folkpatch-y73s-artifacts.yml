@@ -214,8 +214,12 @@ jobs:
       - name: Install FolkPatch Android SDK components
         run: |
           set -eux
+          # The pinned upstream FolkPatch revision declares compileSdk 37,
+          # which is not published in the stable SDK repository used by this
+          # runner. Its targetSdk is 36; compile against the available API 36
+          # platform for this sidecar build without changing the upstream tree.
           sdkmanager --install \
-            "platforms;android-37" \
+            "platforms;android-36" \
             "build-tools;36.1.0" \
             "ndk;30.0.15729638" \
             "cmake;3.31.0"
@@ -230,6 +234,9 @@ jobs:
           set -eux
           sed -i 's/applicationId = "me.yuki.folk"/applicationId = "me.yuki.folk.y73s.patcher"/' FolkPatch/app/build.gradle.kts
           sed -i 's/project.ext.set("kernelPatchVersion", "0.13.9")/project.ext.set("kernelPatchVersion", "0.13.10")/' FolkPatch/build.gradle.kts
+          # Compile SDK 36 is installed above; target SDK remains upstream's 36.
+          sed -i 's/androidCompileSdkVersion by extra(37)/androidCompileSdkVersion by extra(36)/' FolkPatch/build.gradle.kts
+          grep -F 'androidCompileSdkVersion by extra(36)' FolkPatch/build.gradle.kts
           sed -i 's/android:label="FolkPatch"/android:label="FolkPatch Y73s Patcher"/' FolkPatch/app/src/main/AndroidManifest.xml
           grep -F 'applicationId = "me.yuki.folk.y73s.patcher"' FolkPatch/app/build.gradle.kts
           grep -F 'kernelPatchVersion", "0.13.10"' FolkPatch/build.gradle.kts
