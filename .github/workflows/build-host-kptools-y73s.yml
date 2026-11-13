@@ -1,0 +1,63 @@
+name: Build Y73s Linux host kptools
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - y73s-cred-layout-guards-20261108
+    paths:
+      - 'tools/**'
+      - 'scripts/verify_bootimg_io_contract.py'
+      - 'scripts/verify_kptools_patch_bounds.py'
+      - '.github/workflows/build-host-kptools-y73s.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-host-kptools:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install host dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y build-essential make zlib1g-dev python3 binutils
+
+      - name: Build and verify Linux host kptools
+        run: |
+          set -euxo pipefail
+          make -C tools clean
+          make -C tools -j"$(nproc)"
+          tools/kptools --version
+          python3 scripts/verify_bootimg_io_contract.py
+          python3 scripts/verify_kptools_patch_bounds.py
+          file tools/kptools
+          readelf -h tools/kptools | grep -E 'Class:.*ELF64|Machine:.*X86-64'
+
+      - name: Package host tool
+        run: |
+          set -euxo pipefail
+          mkdir -p artifacts
+          cp tools/kptools artifacts/kptools-host-linux-x86_64
+          chmod 0755 artifacts/kptools-host-linux-x86_64
+          sha256sum artifacts/kptools-host-linux-x86_64 > artifacts/SHA256SUMS
+          cat > artifacts/README.txt <<'EOF'
+          Linux x86_64 host build of Y73s-adapted KernelPatch kptools.
+          Built from the same repository commit as the branch source.
+          This is for offline host-side boot image analysis and patch testing.
+          Do not copy this executable to Android; use kptools-android from the
+          matching folkpatch-y73s-kernelpatch-artifacts artifact instead.
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kptools-host-linux-y73s
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 14
