@@ -106,6 +106,20 @@ host 工具提交相对 KPIMG/APK 提交只新增了 host 构建 workflow 文件
 - 将该 kernel 重新 repack 后，Boot 容器不再与原厂文件逐字节相同（新文件 SHA-256：`0c076c7e2ca83e2dec208c500c504f96ad424a07d6235058ba37726825e6f363`）。原因是 GZIP 流重新压缩、kernel_size / vbmeta_offset 随之变化；AVB digest/signature 也没有重新计算。
 - 因此，`kptools --unpatch` 可以精确恢复解压后的原厂 kernel 内容，但不能替代保存原始 `boot.img`。回滚必须保留原厂 Boot 备份；不能把重新 repack 的 unpatched image 当作原厂字节级备份。
 
+## 最终 APK 组件验收
+
+- GitHub Actions run：`43522122997`，结论 success；APK artifact：`14084331808`。
+- APK：`FolkPatch-Y73s-Patcher.apk`，42,300,642 bytes。
+- APK SHA-256：`00e48009f60e1e7fb3dd39a8453d37c31289cdf2d1186849f7a424d5b89dfe91`。
+- Package：`me.yuki.folk.y73s.patcher`；versionCode `115404`；versionName `0f3f42ba`。
+- DEX 中的 `BuildKPV` 已是 `0.13.10`，没有残留 `0.13.9` 的 BuildKPV 字符串。
+- Manifest：minSdk 26、targetSdk 36、compileSdk 36；`debuggable=true`。
+- APK v2 signing block 的内容摘要与 RSA/SHA-256 签名验证通过；签名证书为 Android Debug，SHA-256：`4a9233c088d5bae628d5daf6c03bd2f199bb05e5f99e44c8618c0353de820360`。
+- APK 内 `assets/kpimg` 与本次 KPIMG artifact 逐字节一致，SHA-256：`a7ac08f0bec60508bc9ad1e60e3cbff10cf79a7d617300861bf7b9faaf2f45d8`。
+- APK 内 `libkptools.so` 的 GNU Build ID 与本次 Android kptools artifact 一致：`a7ed1c2fa888f07a3ef507d4ee6775e69a777234`。
+- FPD 存在；7 个可选 KMI 模块均存在，按可用上游发布资产固定为 0.13.9。它们不适用于本机 4.14.141 内核。
+- APK 使用 Debug 签名，不是 Release 包；CI 每次运行生成的临时 Debug 证书会变化，后续新构建不能保证覆盖安装旧 APK。
+
 ## AVB 与安全限制
 
 - 原厂 footer：`original_image_size=17,618,944`，`vbmeta_offset=17,620,992`，`vbmeta_size=1,472`。
