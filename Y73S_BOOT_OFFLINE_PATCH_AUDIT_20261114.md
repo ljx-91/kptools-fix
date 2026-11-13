@@ -100,6 +100,12 @@ host 工具提交相对 KPIMG/APK 提交只新增了 host 构建 workflow 文件
 - 因 `CONFIG_KALLSYMS_ALL=n`，APK 内上游脚本会显示通用风险提示；本次 kptools 的 Y73s 严格 vector / 指纹解析成功，但不能因此消除运行时启动风险。
 - KPIMG 的可信管理器 pin 指向官方 `me.yuki.folk` 签名。Y73s patcher APK 使用并列包名 `me.yuki.folk.y73s.patcher`，不能替代官方管理器；需要保留官方 FolkPatch 管理器安装。
 
+## Unpatch / 回滚路径检查
+
+- 对修补后解压出的 kernel 执行 `kptools --unpatch`，得到 47,517,708 bytes 的 kernel；SHA-256 与原厂解压 kernel 完全一致：`345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e`。
+- 将该 kernel 重新 repack 后，Boot 容器不再与原厂文件逐字节相同（新文件 SHA-256：`0c076c7e2ca83e2dec208c500c504f96ad424a07d6235058ba37726825e6f363`）。原因是 GZIP 流重新压缩、kernel_size / vbmeta_offset 随之变化；AVB digest/signature 也没有重新计算。
+- 因此，`kptools --unpatch` 可以精确恢复解压后的原厂 kernel 内容，但不能替代保存原始 `boot.img`。回滚必须保留原厂 Boot 备份；不能把重新 repack 的 unpatched image 当作原厂字节级备份。
+
 ## AVB 与安全限制
 
 - 原厂 footer：`original_image_size=17,618,944`，`vbmeta_offset=17,620,992`，`vbmeta_size=1,472`。
