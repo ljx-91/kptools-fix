@@ -1,8 +1,8 @@
 # Vivo Y73s 项目当前状态（唯一状态入口）
 
-> 更新时间：2026-11-12  
+> 更新时间：2026-11-14
 > 当前分支：`y73s-cred-layout-guards-20261108`  
-> 最近代码/测试基线（本次状态文档更新前）：`79e567c1a24f7e93a7c1665b17a4a3be3b2c60d4`  
+> 最近代码/测试基线（本次状态文档更新前）：`889788e66f16ea83ee393a603182c3729f79675d`  
 > 本文是当前状态的权威摘要；历史审计报告保留技术证据，若历史记录与本文冲突，以最新源码和 CI 为准。
 
 ## 1. 当前结论
@@ -3142,3 +3142,15 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - AVB auditor 对原厂 boot exit 0；对最新候选 exit 1，唯一失败是 boot HashDescriptor digest（expected 36a3d398...，actual a16a5073...）。三个 vbmeta RSA 签名、两个 chain key 和 LK modulus 检查通过。
 
 **当前结论：**最新候选仍不是 OEM AVB HashDescriptor 通过的镜像；LK unlocked-policy 可能容忍验证错误，但必须确认本机运行时 LKS_UNLOCK。当前没有真机启动日志，不得刷写。
+
+
+## 101. 2026-11-14：恢复 Y73s 分支编译完整性并修正 CI 环境
+
+- 在检查 2026-11-12 Actions 日志时发现，提交 `b161578f` 的 `kernel/patch/android/userd.c` 意外删除了 `before_openat()` 剩余实现、`after_openat()`、packages.list rename hook 和 `android_user_init()` 尾部，共约 228 行，文件在函数中途结束，导致 KPIMG 编译报 `expected declaration or statement at end of input`。
+- 已从该提交的父版本 `7814467342d0cc6c2e560bad2552b3e3d9d3317e` 恢复完整文件，并保留 FolkPatch 115404 官方签名证书 pin（SHA-256 DER：`a9eba5b702eb55fb5f4b1a672a7133a16a7bcaea949cde43c812ef26c77de812`）。修复提交：`343c6375153dd149cf35e23b4cf7e270a03772d9`。
+- 同时修正 FolkPatch artifacts workflow：在运行 sdkmanager 前显式安装 JDK 17，避免 Ubuntu runner 默认 JDK 11 与 cmdline-tools 16 的最低版本要求冲突；新增手动触发入口。提交：`7d37e439125c8499e8d638c730d7d23650e4868e`。
+- Host/source-contract workflow 新增 `workflow_dispatch` 手动触发入口。提交：`889788e66f16ea83ee393a603182c3729f79675d`。
+- 当前分支源码已恢复完整；但 GitHub App 提交不会自动触发 push workflows，因此上述修复尚无新 Actions 结果。需在 GitHub Actions 页面手动运行 KPIMG GCC 14.2、Host kptools/source contracts、FolkPatch artifacts 三个 workflow，之后才能更新 CI 状态。
+- 历史失败日志另有一项独立问题：旧 commit `370cc3c` 的 `test_y73s_kallsym_pid_vnr_cfi.py` 与当时的 resolver 实现不匹配；当前 HEAD 的 `tools/kallsym.c` 已包含该测试要求的 branch-stub 与 image-bounds 检查，仍需由新 CI 确认。
+
+**验证边界：**本次只恢复源码和 CI 配置，没有生成 KPIMG/Boot，没有设备操作。目标 Linux 4.14.141 KDIR 的 LKM 编译、真机启动、AVB 与 APatch 运行时验证仍未完成。
