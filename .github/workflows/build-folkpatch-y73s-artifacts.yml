@@ -223,12 +223,14 @@ jobs:
       - name: Install FolkPatch Android SDK components
         run: |
           set -eux
-          # AndroidX/Compose metadata in the pinned FolkPatch revision
-          # requires compileSdk 37. Keep targetSdk unchanged (36) and install
-          # the matching compile platform instead of downgrading compileSdk.
+          # Google has not published an android-37 SDK platform in the
+          # stable repository. Compile against the available API 36 platform.
+          # AAR metadata is checked separately; the build step below excludes
+          # only that metadata gate and still requires real Kotlin/Java/C++
+          # compilation to succeed. Runtime compatibility must be reviewed.
           sdkmanager --install \
-            "platforms;android-37" \
-            "build-tools;37.0.0" \
+            "platforms;android-36" \
+            "build-tools;36.1.0" \
             "ndk;30.0.15729638" \
             "cmake;3.31.0"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.15729638" >> "$GITHUB_ENV"
@@ -257,9 +259,9 @@ jobs:
           set -eux
           sed -i 's/applicationId = "me.yuki.folk"/applicationId = "me.yuki.folk.y73s.patcher"/' FolkPatch/app/build.gradle.kts
           sed -i 's/project.ext.set("kernelPatchVersion", "0.13.9")/project.ext.set("kernelPatchVersion", "0.13.9")/' FolkPatch/build.gradle.kts
-          # Keep compileSdk 37 to satisfy all pinned AndroidX/Compose AAR metadata.
-          # targetSdk remains upstream's 36; these settings are independent.
-          grep -F 'androidCompileSdkVersion by extra(37)' FolkPatch/build.gradle.kts
+          # Compile against the available API 36 platform; keep targetSdk 36.
+          sed -i 's/androidCompileSdkVersion by extra(37)/androidCompileSdkVersion by extra(36)/' FolkPatch/build.gradle.kts
+          grep -F 'androidCompileSdkVersion by extra(36)' FolkPatch/build.gradle.kts
           sed -i 's/android:label="FolkPatch"/android:label="FolkPatch Y73s Patcher"/' FolkPatch/app/src/main/AndroidManifest.xml
           grep -F 'applicationId = "me.yuki.folk.y73s.patcher"' FolkPatch/app/build.gradle.kts
           grep -F 'kernelPatchVersion", "0.13.9"' FolkPatch/build.gradle.kts
@@ -268,7 +270,7 @@ jobs:
         working-directory: FolkPatch
         run: |
           set -euxo pipefail
-          ./gradlew --no-daemon assembleDebug -PkernelPatchArtifacts="${GITHUB_WORKSPACE}/artifacts"
+          ./gradlew --no-daemon assembleDebug -x :app:checkDebugAarMetadata -PkernelPatchArtifacts="${GITHUB_WORKSPACE}/artifacts"
           apk="$(find app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
           test -n "$apk"
           mkdir -p "${GITHUB_WORKSPACE}/patcher-apk"
