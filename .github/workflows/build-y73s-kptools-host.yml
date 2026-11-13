@@ -33,6 +33,7 @@ jobs:
           python3 tests/test_y73s_hybrid_recovery.py
           python3 scripts/test_kptools_extra_terminator.py
           python3 scripts/test_y73s_kallsym_pid_vnr_cfi.py
+          python3 scripts/verify_y73s_paging_veneer_bounds.py
           python3 scripts/test_folkpatch_trusted_manager.py
           cc -std=gnu11 -Wall -Wextra -Werror -I kernel/include \
             scripts/test_y73s_hook_layout.c -o /tmp/test_y73s_hook_layout
