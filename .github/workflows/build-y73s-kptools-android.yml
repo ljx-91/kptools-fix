@@ -21,6 +21,12 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Set up JDK 17 for Android SDK tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
       - name: Install Android NDK
         uses: android-actions/setup-android@v3
 
