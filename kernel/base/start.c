@@ -524,7 +524,7 @@ void restore_map()
     if (start_preset.map_backup_len <= 0 || start_preset.map_backup_len > MAP_MAX_SIZE ||
         start_preset.map_offset < 0 || start_preset.kernel_size <= 0 ||
         start_preset.map_offset > start_preset.kernel_size - start_preset.map_backup_len ||
-        (uint64_t)start_preset.map_offset > UINT64_MAX - kernel_va) {
+        (uint64_t)start_preset.map_offset > (~(uint64_t)0) - kernel_va) {
         __builtin_trap();
     }
 
