@@ -274,6 +274,14 @@ jobs:
           # the previous app-only path left :core:designsystem:checkDebugAarMetadata active.
           # This remains diagnostic only: successful compilation must be followed by
           # inspection of API-37 references and runtime compatibility.
+          # AGP's BundleAar task declares the metadata-check output directory as
+          # an input even when the check task is excluded. Pre-create the expected
+          # empty directories for every Gradle subproject so task input validation
+          # does not fail after successful source compilation.
+          while IFS= read -r build_file; do
+            project_dir="$(dirname "$build_file")"
+            mkdir -p "$project_dir/build/intermediates/aar_metadata_check/debug/checkDebugAarMetadata"
+          done < <(find . -name build.gradle.kts -not -path './.gradle/*' -not -path '*/build/*')
           ./gradlew --no-daemon assembleDebug -x checkDebugAarMetadata -PkernelPatchArtifacts="${GITHUB_WORKSPACE}/artifacts"
           apk="$(find app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
           test -n "$apk"
