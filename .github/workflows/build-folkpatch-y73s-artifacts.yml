@@ -258,13 +258,17 @@ jobs:
         run: |
           set -eux
           sed -i 's/applicationId = "me.yuki.folk"/applicationId = "me.yuki.folk.y73s.patcher"/' FolkPatch/app/build.gradle.kts
-          sed -i 's/project.ext.set("kernelPatchVersion", "0.13.9")/project.ext.set("kernelPatchVersion", "0.13.9")/' FolkPatch/build.gradle.kts
+          # The custom KPIMG and kptools in this repository are built from KernelPatch 0.13.10 sources.
+          # Keep the separately downloaded optional KMI modules pinned to the published 0.13.9 release.
+          sed -i 's/project.ext.set("kernelPatchVersion", "0.13.9")/project.ext.set("kernelPatchVersion", "0.13.10")/' FolkPatch/build.gradle.kts
+          sed -i 's@releases/download/$kernelPatchVersion/${kmi}_kernelpatch.ko@releases/download/0.13.9/${kmi}_kernelpatch.ko@' FolkPatch/app/build.gradle.kts
           # Compile against the available API 36 platform; keep targetSdk 36.
           sed -i 's/androidCompileSdkVersion by extra(37)/androidCompileSdkVersion by extra(36)/' FolkPatch/build.gradle.kts
           grep -F 'androidCompileSdkVersion by extra(36)' FolkPatch/build.gradle.kts
           sed -i 's/android:label="FolkPatch"/android:label="FolkPatch Y73s Patcher"/' FolkPatch/app/src/main/AndroidManifest.xml
           grep -F 'applicationId = "me.yuki.folk.y73s.patcher"' FolkPatch/app/build.gradle.kts
-          grep -F 'kernelPatchVersion", "0.13.9"' FolkPatch/build.gradle.kts
+          grep -F 'kernelPatchVersion", "0.13.10"' FolkPatch/build.gradle.kts
+          grep -F 'releases/download/0.13.9/${kmi}_kernelpatch.ko' FolkPatch/app/build.gradle.kts
 
       - name: Build FolkPatch Y73s patcher APK
         working-directory: FolkPatch
