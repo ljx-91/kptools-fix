@@ -531,7 +531,7 @@ void restore_map()
     uint64_t start = kernel_va + (uint64_t)start_preset.map_offset;
     uint64_t end = start + (uint64_t)start_preset.map_backup_len;
     if (end < start || page_size <= 0 || (page_size & (page_size - 1))) __builtin_trap();
-    log_boot("Restore: %llx, %llx\\n", start, end);
+    log_boot("Restore: %llx, %llx\n", start, end);
 
     map_restored = 1;
     for (uint64_t i = start; i < align_ceil(end, page_size); i += page_size) {
