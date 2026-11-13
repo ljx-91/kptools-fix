@@ -22,3 +22,19 @@ Commits:
 This is a safety hardening, not proof that the target path will boot. If the Y73S destination virtual range already contains a block mapping, this version will stop at the guard. The correct next step is to inspect the target's live TTBR1 page-table hierarchy for the exact destination VA range, or implement and test a block-splitting routine that preserves all relevant attributes. No target-device page-table dump is currently available.
 
 This audit does not establish the physical RAM map, page-table memory attributes, TLB behavior on the target, or successful boot. Do not treat it as a flash-ready verdict. AVB remains outside this audit's scope by project direction.
+
+## Additional finding: an existing leaf PTE must map the requested PA
+
+A second correctness gap was found during the follow-up audit. At the final level, an existing page descriptor (Desc[1:0] == 0b11) was accepted and returned without checking its output address against the requested destination PA. The caller only adjusts descriptor permission bits; it does not rewrite the output address. If the VA already mapped a different physical page, the zero/copy loop could therefore write through the old mapping while believing it had mapped the newly allocated destination.
+
+### Fix
+
+- kernel/base/map.c: after the walk, require the final descriptor to be a page descriptor.
+- For nonzero requested PA (the destination mapping path), compare the descriptor output address against the requested page-aligned PA and trap on mismatch.
+- Preserve the existing pa == 0 lookup-only use used to read the kernel text AttrIndx; that path does not request a remapping.
+
+Commits:
+- 9287ce98541ab9f05d11136ed1a26b9491cad638 — validate existing leaf PTE output address.
+- 755e550f27d4614e4191f5d5e4f32c356cbca6c5 — add source regression assertions.
+
+This closes a static source-level mismatch hazard. It does not prove that the requested VA range is free of block descriptors or that the live TTBR1 hierarchy and physical RAM layout match the assumptions.
