@@ -123,6 +123,10 @@ def main():
     pte = function_body(map_c, "static uint64_t __noinline get_or_create_pte(")
     require(r"pxd_pa\s*=\s*map_phys_alloc\(data,\s*page_size,\s*page_size\);\s*if\s*\(!pxd_pa\)\s*__builtin_trap\(\);",
             pte, "page-table allocation must be checked before descriptor creation")
+    require(r"pxd_desc\s*=\s*pxd_pa\s*\|\s*\(lv\s*==\s*3\s*\?\s*attr_prot\s*:\s*0x3ull\)",
+            pte, "intermediate levels must use table descriptors; leaf attributes are leaf-only")
+    require(r"if\s*\(block_flag\)\s*\{[\s\S]*?__builtin_trap\(\);",
+            pte, "existing block mappings must fail closed rather than be overwritten as page descriptors")
 
     # Y73S KALLSYMS lacks cpu_online_mask/nr_cpu_ids. The callback must
     # therefore never call num_online_cpus() or inspect unresolved cpumask state.
@@ -198,6 +202,7 @@ def main():
     print("[PASS] physical ranges are reserved before use")
     print("[PASS] linear-map probe ordering and reservation checks")
     print("[PASS] destination and intermediate page-table allocation guards")
+    print("[PASS] page-table descriptor types are level-correct and block mappings fail closed")
     print("[PASS] hotpatch avoids unresolved CPU-mask symbols and fails closed")
     print("[PASS] early-boot stop_machine window is explicitly scoped")
     print("[PASS] hook install/uninstall propagate patch failures safely")
