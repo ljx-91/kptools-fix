@@ -3200,3 +3200,28 @@ APatch Manager 实际鉴权、Root 授权、KPM load/unload、Wi-Fi 稳定性、
 - `529ee237110fe641d286f493badb17336a730371` workflow 集成测试
 
 验证边界：目前是源码静态修改和 CI 脚本接入；尚未有本轮 GCC 实际编译、Actions 运行成功或 Y73s 真机启动验证。不得据此宣称启动问题已解决。
+
+
+## 105. paging_init B-veneer 地址边界审计（2026-11-14）
+
+继续审计符号地址落地过程时，发现 `tools/common.c::relo_branch_func()` 原实现直接读取 `img + func_offset`，并把 AArch64 B 指令的有符号 imm26 目标加回偏移，但函数没有拿到镜像长度，也没有验证入口和 veneer 目标是否仍在解压 kernel image 内。对于损坏/误识别的符号偏移，这会造成越界读取，或者把 KPIMG preset 写入一个镜像外的目标偏移。当前 Y73s 的已知 paging_init 地址经离线验证有效；这是防止错误候选造成内存越界的加固，不代表已证明此前设备重启由此引起。
+
+已修改：
+- `relo_branch_func` 增加 `imglen` 参数。
+- 读取前检查入口偏移非负、4 字节对齐且完整 4 字节位于镜像范围。
+- 通过 `memcpy` 读取指令，避免潜在非对齐指针解引用。
+- 对 B veneer 使用有符号 imm26 位移计算目标，检查目标非负、4 字节对齐且完整指令仍在镜像内。
+- `tools/patch.c` 将 `ori_kimg_len` 传入；目标无效立即终止修补。
+- 新增 `scripts/verify_y73s_paging_veneer_bounds.py`，并加入 Host kptools workflow。
+
+提交：
+- `9c89eb83f4f5e0be5a6712f2b7cab90a37291fa7` common.c 增加镜像边界校验
+- `015335f608fc47859f4c9c5694b7709b2006ea88` 更新 common.h 原型
+- `8b1778b2a516dc6aba50f2dfd706f50c925c8abc` patch.c 传入镜像长度并拒绝错误目标
+- `c811e2608b56ae1062f070089bc4a69a3928dd04` 诊断字符串转义修正
+- `7cf9faabd602941494c821d3875708a3cfcc870d` 新增静态契约测试
+- `f52420056b096f08bcd2a51af147d3642d6dc2af` Host workflow 集成测试
+
+静态审计再次确认：当前非 GKI Y73s 路径在 `select_map_area()` 中使用 16-byte 向上对齐的 map anchor；GKI 专用 PAC 双窗口扫描不会进入这台设备的非 GKI 分支。已有离线报告记录了针对原厂镜像的修正测试和符号结果。该离线报告使用的工具构建/源码版本早于本轮提交，不能代替本轮重新构建。
+
+验证边界：本轮尚未运行 GitHub Actions，也未在本机完成 Host kptools 编译；没有新生成 KPIMG 或修补镜像，没有真机验证。下一步必须运行 Host workflow，再用本轮新构建的 kptools 对原厂 kernel 重跑并核对 paging_init 入口/目标偏移。
