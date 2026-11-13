@@ -515,19 +515,40 @@ static int map_restored = 0;
 void restore_map()
 {
     if (map_restored) return;
+
+    /*
+     * map_backup is a fixed-size field in start_preset. Validate every range
+     * before touching the kernel mapping; corrupted preset lengths/offsets
+     * must not turn restoration into an out-of-bounds read or write.
+     */
+    if (start_preset.map_backup_len <= 0 || start_preset.map_backup_len > MAP_MAX_SIZE ||
+        start_preset.map_offset < 0 || start_preset.kernel_size <= 0 ||
+        start_preset.map_offset > start_preset.kernel_size - start_preset.map_backup_len ||
+        (uint64_t)start_preset.map_offset > UINT64_MAX - kernel_va) {
+        __builtin_trap();
+    }
+
+    uint64_t start = kernel_va + (uint64_t)start_preset.map_offset;
+    uint64_t end = start + (uint64_t)start_preset.map_backup_len;
+    if (end < start || page_size <= 0 || (page_size & (page_size - 1))) __builtin_trap();
+    log_boot("Restore: %llx, %llx\\n", start, end);
+
     map_restored = 1;
-
-    uint64_t start = kernel_va + start_preset.map_offset;
-    uint64_t end = start + start_preset.map_backup_len;
-    log_boot("Restore: %llx, %llx\n", start, end);
-
     for (uint64_t i = start; i < align_ceil(end, page_size); i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         uint64_t orig = *pte;
         *pte = (orig | PTE_DBM) & ~PTE_RDONLY;
         flush_tlb_kernel_page(i);
-        for (uint64_t j = i; j >= start && j < end && j < i + page_size; j += 8) {
-            *(uint64_t *)j = *(uint64_t *)(start_preset.map_backup + (j - start));
+        /*
+         * Restore byte-exactly. The backup length is not required to be
+         * 8-byte aligned, so a uint64_t tail store could overrun both arrays.
+         */
+        uint64_t page_end = i + page_size;
+        if (page_end < i) __builtin_trap();
+        uint64_t copy_start = i > start ? i : start;
+        uint64_t copy_end = page_end < end ? page_end : end;
+        for (uint64_t j = copy_start; j < copy_end; ++j) {
+            *(uint8_t *)j = start_preset.map_backup[j - start];
         }
         *pte = orig;
         flush_tlb_kernel_page(i);
