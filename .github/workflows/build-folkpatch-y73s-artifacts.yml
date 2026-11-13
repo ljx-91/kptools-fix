@@ -53,7 +53,7 @@ jobs:
           echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
           echo "$sdk_root/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --licenses
+          yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --licenses || test -s "$sdk_root/licenses/android-sdk-license"
 
       - name: Install pinned Android NDK
         run: |
@@ -209,7 +209,7 @@ jobs:
           echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
           echo "$sdk_root/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
-          yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --licenses
+          yes | "$sdk_root/cmdline-tools/latest/bin/sdkmanager" --licenses || test -s "$sdk_root/licenses/android-sdk-license"
 
       - name: Install FolkPatch Android SDK components
         run: |
