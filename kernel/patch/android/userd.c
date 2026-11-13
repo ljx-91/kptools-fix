@@ -79,8 +79,7 @@ struct trusted_manager_entry {
 };
 
 /* FolkPatch 115404 signing certificate: SHA-256(DER) verified from the supplied APK.
- * Trust only the official FolkPatch package. Upstream APatch/demo entries are
- * intentionally excluded so another installed manager cannot shadow it.
+ * Trust only the official FolkPatch package; the side-by-side patcher is image-only.
  */
 static const struct trusted_manager_entry trusted_managers[] = {
     {
@@ -293,6 +292,7 @@ static int apk_sig_block_matches_trusted_digest(struct file *fp, loff_t *pos, lo
         read_le32_bounded(fp, pos, certificates_end, &cert_len)) {
         return 0;
     }
+
     if (cert_len == 0 || cert_len > APK_CERT_MAX_LENGTH || (uint64_t)cert_len > (uint64_t)(certificates_end - *pos)) {
         log_boot("trusted manager apk cert length invalid: %u\n", cert_len);
         return 0;
@@ -591,7 +591,8 @@ static int lookup_package_list_uid(const char *package_name, uid_t *trusted_uid_
         }
 
         pkg = line;
-        while (*line && !isspace(*line)) {            line++;
+        while (*line && !isspace(*line)) {
+            line++;
         }
         if (!*line) {
             continue;
@@ -890,6 +891,7 @@ static int apk_outer_actor_int(struct dir_context_int *dctx,
             return 0;
         }
     }
+
     if (namelen >= 2 && name[0] == '~' && name[1] == '~') {
         if (ctx->name_count < ctx->max_names && namelen < ctx->name_len) {
             char *slot = ctx->names + ctx->name_count * ctx->name_len;
@@ -1189,7 +1191,8 @@ int refresh_trusted_manager_state(void)
 KP_EXPORT_SYMBOL(refresh_trusted_manager_uid);
 
 
-int is_trusted_manager_uid_android(uid_t uid){
+int is_trusted_manager_uid_android(uid_t uid)
+{
     uid_t trusted_uid;
     unsigned long flags;
 
@@ -1488,7 +1491,8 @@ static int ap_kpm_valid_name(const char *name, int namelen)
 static bool ap_kpm_scan_actor(struct dir_context *dctx, const char *name, int namelen,
                               loff_t offset, u64 ino, unsigned int d_type)
 {
-    struct ap_kpm_scan_ctx *ctx = container_of(dctx, struct ap_kpm_scan_ctx, dctx);    if (!ctx || ctx->count >= AP_KPM_MAX_MODULES || !ap_kpm_valid_name(name, namelen)) return true;
+    struct ap_kpm_scan_ctx *ctx = container_of(dctx, struct ap_kpm_scan_ctx, dctx);
+    if (!ctx || ctx->count >= AP_KPM_MAX_MODULES || !ap_kpm_valid_name(name, namelen)) return true;
     char *slot = ctx->names + ctx->count * AP_KPM_NAME_LEN;
     memcpy(slot, name, namelen);
     slot[namelen] = '\0';
@@ -1787,3 +1791,209 @@ static void before_openat(hook_fargs4_t *args, void *udata)
     if (replaced) return;
 
     if (current_uid() != 0) return;
+
+    const char __user *filename = (typeof(filename))syscall_argn(args, 1);
+    char buf[256];
+    long rc = compat_strncpy_from_user(buf, filename, sizeof(buf));
+    if (rc <= 0 || rc >= sizeof(buf)) return;
+
+    int file_count = sizeof(ORIGIN_RC_FILES) / sizeof(ORIGIN_RC_FILES[0]);
+    for (int i = 0; i < file_count; i++) {
+        if (ORIGIN_RC_FILES[i][0] == '\0') break;
+        
+        if (!strcmp(buf, ORIGIN_RC_FILES[i])) {
+            args->local.data3 = i + 1;
+            log_boot("matched rc file: %s\n", ORIGIN_RC_FILES[i]);
+            break;
+        }
+    }
+
+    if (args->local.data3 == 0) {
+        return;
+    }
+
+    replaced = 1;
+    const char *origin_rc = ORIGIN_RC_FILES[args->local.data3 - 1];
+
+    loff_t ori_len = 0;
+    struct file *newfp = filp_open(REPLACE_RC_FILE, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (!newfp || IS_ERR(newfp)) {
+        log_boot("create replace rc error: %d\n", PTR_ERR(newfp));
+        goto out;
+    }
+
+    loff_t off = 0;
+    const char *ori_rc_data = kernel_read_file(origin_rc, &ori_len);
+    if (!ori_rc_data) goto free;
+    kernel_write(newfp, ori_rc_data, ori_len, &off);
+    if (off != ori_len) {
+        log_boot("write replace rc error: %x\n", off);
+        goto free;
+    }
+
+    char added_rc_data[4096];
+    const char *sk = get_superkey();
+    int added_rc_len = expand_rc_template(added_rc_data, sizeof(added_rc_data), user_rc_data, sk);
+    if (added_rc_len < 0) {
+        log_boot("expand rc template error: %d\n", added_rc_len);
+        goto free;
+    }
+
+    kernel_write(newfp, added_rc_data, added_rc_len, &off);
+    if (off != added_rc_len + ori_len) {
+        log_boot("write replace rc error: %x\n", off);
+        goto free;
+    }
+
+    /* Never overwrite init's filename allocation: /init.rc is shorter than
+     * REPLACE_RC_FILE, and the 64-byte table entries are not buffer sizes. */
+    uintptr_t sp = current_user_stack_pointer();
+    if (sp < sizeof(REPLACE_RC_FILE)) goto free;
+    sp = (sp - sizeof(REPLACE_RC_FILE)) & ~(uintptr_t)15;
+    int cplen = compat_copy_to_user((void *__user)sp, REPLACE_RC_FILE, sizeof(REPLACE_RC_FILE));
+    if (cplen != sizeof(REPLACE_RC_FILE)) {
+        log_boot("redirect rc file copy error: %d\n", cplen);
+        goto free;
+    }
+    args->local.data0 = 1;
+    args->local.data1 = syscall_argn(args, 1);
+    set_syscall_argn(args, 1, sp);
+    log_boot("redirect rc file stack: %llx\n", sp);
+
+free:
+    filp_close(newfp, 0);
+    kvfree(ori_rc_data);
+
+out:
+    args->local.data2 = 1;
+    return;
+}
+
+static void after_openat(hook_fargs4_t *args, void *udata)
+{
+    if (args->local.data0) {
+        set_syscall_argn(args, 1, args->local.data1);
+        log_boot("redirect rc file open result: %ld\n", (long)args->ret);
+    }
+    if (args->local.data2) {
+        unhook_syscalln(__NR_openat, before_openat, after_openat);
+    }
+}
+
+static void before_sys_renameat2(hook_fargs5_t *args, void *udata)
+{
+    (void)udata;
+    char old_path[sizeof(ANDROID_PACKAGES_LIST_TMP_PATH)];
+    char new_path[sizeof(ANDROID_PACKAGES_LIST_PATH)];
+    long old_len;
+    long new_len;
+
+    args->local.data0 = 0;
+
+    /* Only track the exact absolute packages.list replacement operation. */
+    if ((unsigned int)args->arg4 != 0) {
+        return;
+    }
+
+    old_len = compat_strncpy_from_user(
+        old_path, (const char __user *)args->arg1, sizeof(old_path));
+    if (old_len != (long)(sizeof(old_path) - 1)) {
+        return;
+    }
+
+    new_len = compat_strncpy_from_user(
+        new_path, (const char __user *)args->arg3, sizeof(new_path));
+    if (new_len != (long)(sizeof(new_path) - 1)) {
+        return;
+    }
+
+    if (!strcmp(old_path, ANDROID_PACKAGES_LIST_TMP_PATH) &&
+        !strcmp(new_path, ANDROID_PACKAGES_LIST_PATH)) {
+        args->local.data0 = 1;
+    }
+}
+
+static void after_sys_renameat2(hook_fargs5_t *args, void *udata)
+{
+    (void)udata;
+    if (args->local.data0 && (long)args->ret == 0) {
+        int rc;
+
+        /*
+         * sys_renameat2 returns only after VFS rename and its directory locks
+         * have completed. Read the committed packages.list, never the temp file.
+         */
+        rc = refresh_trusted_manager_state_from_packages_list(0);
+        log_boot("packages.list committed rename refresh trusted manager rc=%d\n", rc);
+    }
+}
+
+static void hook_packages_list_rename(void)
+{
+    unsigned long addr;
+    hook_err_t rc;
+
+    /*
+     * In Y73s 4.14.141, renameat/rename route through the CFI body SyS_renameat2.cfi. Hook its
+     * completed return path instead of the earlier LSM authorization hooks.
+     */
+    addr = kallsyms_lookup_name("SyS_renameat2.cfi");
+    if (!addr) {
+        log_boot("no symbol: SyS_renameat2.cfi; packages.list refresh hook unavailable\n");
+        return;
+    }
+
+    rc = hook_wrap5((void *)addr, before_sys_renameat2, after_sys_renameat2, 0);
+    log_boot("hook sys_renameat2 packages.list refresh rc: %d\n", rc);
+}
+
+#define EV_KEY 0x01
+#define KEY_VOLUMEDOWN 114
+
+int android_is_safe_mode = 0;
+KP_EXPORT_SYMBOL(android_is_safe_mode);
+
+// void input_handle_event(struct input_dev *dev, unsigned int type, unsigned int code, int value)
+static void before_input_handle_event(hook_fargs4_t *args, void *udata)
+{
+    static unsigned int volumedown_pressed_count = 0;
+    unsigned int type = args->arg1;
+    unsigned int code = args->arg2;
+    int value = args->arg3;
+    if (value && type == EV_KEY && code == KEY_VOLUMEDOWN) {
+        volumedown_pressed_count++;
+        if (volumedown_pressed_count == 3) {
+            log_boot("entering safemode ...");
+            android_is_safe_mode = 1;
+        }
+    }
+}
+
+int android_user_init()
+{
+    hook_err_t ret = 0;
+    hook_err_t rc = HOOK_NO_ERR;
+
+    rc = hook_syscalln(__NR_execve, 3, before_execve, after_execve, (void *)__NR_execve);
+    log_boot("hook __NR_execve rc: %d\n", rc);
+    ret |= rc;
+
+    rc = hook_syscalln(__NR_execveat, 5, before_execveat, after_execveat, (void *)__NR_execveat);
+    log_boot("hook __NR_execveat rc: %d\n", rc);
+    ret |= rc;
+
+    rc = hook_syscalln(__NR_openat, 4, before_openat, after_openat, 0);
+    log_boot("hook __NR_openat rc: %d\n", rc);
+    ret |= rc;
+
+    hook_packages_list_rename();
+
+    unsigned long input_handle_event_addr = patch_config->input_handle_event;
+    if (input_handle_event_addr) {
+        rc = hook_wrap4((void *)input_handle_event_addr, before_input_handle_event, 0, 0);
+        ret |= rc;
+        log_boot("hook input_handle_event rc: %d\n", rc);
+    }
+
+    return ret;
+}
