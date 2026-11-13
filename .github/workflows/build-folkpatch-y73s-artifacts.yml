@@ -35,8 +35,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Install Android NDK
-        uses: android-actions/setup-android@v3
+      - name: Configure Android SDK command-line tools
+        run: |
+          set -eu
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          sdkmanager_bin="$sdk_root/cmdline-tools/16.0/bin"
+          test -x "$sdkmanager_bin/sdkmanager"
+          echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
+          echo "$sdkmanager_bin" >> "$GITHUB_PATH"
+          yes | "$sdkmanager_bin/sdkmanager" --licenses
 
       - name: Install pinned Android NDK
         run: |
@@ -174,7 +181,15 @@ jobs:
           cache: gradle
           cache-dependency-path: FolkPatch/gradle/wrapper/gradle-wrapper.properties
 
-      - uses: android-actions/setup-android@v3
+      - name: Configure Android SDK command-line tools
+        run: |
+          set -eu
+          sdk_root="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          sdkmanager_bin="$sdk_root/cmdline-tools/16.0/bin"
+          test -x "$sdkmanager_bin/sdkmanager"
+          echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
+          echo "$sdkmanager_bin" >> "$GITHUB_PATH"
+          yes | "$sdkmanager_bin/sdkmanager" --licenses
 
       - name: Install FolkPatch Android SDK components
         run: |
