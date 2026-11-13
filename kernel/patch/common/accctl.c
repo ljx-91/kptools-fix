@@ -346,12 +346,17 @@ int bypass_selinux()
         hook_err_t fallback_rc =
             hook((void *)slow_avc_audit_addr, (void *)slow_avc_audit_replace, (void **)&slow_avc_audit_backup);
         if (fallback_rc == HOOK_NO_ERR) {
-            log_boot("hook slow_avc_audit: %llx installed\\n", slow_avc_audit_addr);
-            return 0;
+            log_boot("hook slow_avc_audit: %llx installed; SELinux decision hook unavailable\\n",
+                     slow_avc_audit_addr);
+        } else {
+            log_boot("hook slow_avc_audit: %llx, error: %d\\n", slow_avc_audit_addr, fallback_rc);
         }
-        log_boot("hook slow_avc_audit: %llx, error: %d\\n", slow_avc_audit_addr, fallback_rc);
-        return fallback_rc;
     }
 
+    /*
+     * slow_avc_audit runs after the SELinux decision and cannot replace
+     * avc_denied. Never report SELinux bypass as successful when the primary
+     * decision hook is missing or failed, even if the audit hook installed.
+     */
     return primary_rc;
 }
