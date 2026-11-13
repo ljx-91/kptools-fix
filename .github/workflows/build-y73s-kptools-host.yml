@@ -1,6 +1,7 @@
 name: Build Linux kptools for Y73S offline audit
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - y73s-cred-layout-guards-20261108
