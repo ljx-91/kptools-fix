@@ -97,6 +97,9 @@ def main():
             "avc_denied is the primary SELinux decision hook")
     require("patch_config->slow_avc_audit" in avc,
             "slow_avc_audit remains a secondary audit fallback, not a permission-decision substitute")
+    require("slow_avc_audit runs after the SELinux decision" in avc and
+            "return primary_rc;" in avc[avc.index("patch_config->slow_avc_audit"):],
+            "secondary audit hook never masks a missing or failed SELinux decision hook")
     require("avd = (struct av_decision *)_flags;" in accctl and
             "if ((uint64_t)_state <= 0xffffffffL)" in accctl,
             "AVC replacement preserves the legacy eight-register Y73s argument layout")
