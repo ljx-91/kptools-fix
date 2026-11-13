@@ -46,8 +46,10 @@ jobs:
             "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
             -o "$archive"
           python3 -m zipfile -e "$archive" "$extract"
-          test -x "$extract/cmdline-tools/bin/sdkmanager"
+          test -f "$extract/cmdline-tools/bin/sdkmanager"
+          chmod +x "$extract/cmdline-tools/bin/"*
           mv "$extract/cmdline-tools" "$sdk_root/cmdline-tools/latest"
+          test -x "$sdk_root/cmdline-tools/latest/bin/sdkmanager"
           echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
           echo "$sdk_root/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
@@ -200,8 +202,10 @@ jobs:
             "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" \
             -o "$archive"
           python3 -m zipfile -e "$archive" "$extract"
-          test -x "$extract/cmdline-tools/bin/sdkmanager"
+          test -f "$extract/cmdline-tools/bin/sdkmanager"
+          chmod +x "$extract/cmdline-tools/bin/"*
           mv "$extract/cmdline-tools" "$sdk_root/cmdline-tools/latest"
+          test -x "$sdk_root/cmdline-tools/latest/bin/sdkmanager"
           echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
           echo "ANDROID_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
           echo "$sdk_root/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
