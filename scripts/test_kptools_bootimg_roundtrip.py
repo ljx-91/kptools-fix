@@ -29,7 +29,15 @@ def make_boot(path):
     struct.pack_into("<Q", raw, 8, 0x80000)
     struct.pack_into("<Q", raw, 16, len(raw))
     struct.pack_into("<I", raw, 56, 0x644D5241)
-    kernel_blob = gzip.compress(bytes(raw), compresslevel=9, mtime=0) + make_fdt()
+    fdt = make_fdt()
+    kernel_blob = gzip.compress(bytes(raw), compresslevel=9, mtime=0) + fdt
+
+    # Android DT table header/entry area followed by the same FDT in the v2 tail.
+    dtb_table = bytearray(64)
+    struct.pack_into(">8I", dtb_table, 0, 0xD7B7AB1E, 64 + len(fdt),
+                     64, 32, 1, 64, PAGE, 0)
+    dtb_table.extend(fdt)
+
     hdr = bytearray(HEADER_SIZE)
     hdr[:8] = b"ANDROID!"
     struct.pack_into("<10I", hdr, 8, len(kernel_blob), 0x80080000, 0, 0, 0, 0,
@@ -38,13 +46,19 @@ def make_boot(path):
     struct.pack_into("<I", hdr, 1632, 0)
     struct.pack_into("<Q", hdr, 1636, 0)
     struct.pack_into("<I", hdr, 1644, HEADER_SIZE)
-    struct.pack_into("<I", hdr, 1648, 80)
+    struct.pack_into("<I", hdr, 1648, len(dtb_table))
     struct.pack_into("<Q", hdr, 1652, 0x83000000)
+
     with open(path, "wb") as f:
         f.write(hdr)
-        f.write(bytes(PAGE-len(hdr)))
+        f.write(bytes(PAGE - len(hdr)))
         f.write(kernel_blob)
         f.write(bytes((-len(kernel_blob)) % PAGE))
+        f.write(dtb_table)
+        f.write(bytes(64))  # reserved tail/footer area used by the repacker
+        used = PAGE + ((len(kernel_blob) + PAGE - 1) // PAGE * PAGE) + len(dtb_table) + 64
+        f.write(bytes((-used) % PAGE))
+
 
 def run(exe, args, cwd):
     p = subprocess.run([str(exe), *args], cwd=cwd, stdout=subprocess.PIPE,
@@ -62,19 +76,32 @@ def boot_components(path):
     ssz = struct.unpack_from("<I", data, 24)[0]
     page = struct.unpack_from("<I", data, 36)[0]
     version = struct.unpack_from("<I", data, 40)[0]
+    recovery_dtbo_size = struct.unpack_from("<I", data, 1632)[0]
+    dtb_size = struct.unpack_from("<I", data, 1648)[0]
     if version != 2 or page != PAGE:
         raise AssertionError(f"unexpected header: v{version}, page={page}")
-    align = lambda n: (n + page - 1) // page * page
-    ko = page
-    ro = align(ko + ksz)
-    so = align(ro + rsz)
-    if so + ssz > len(data):
+
+    def align(n):
+        return (n + page - 1) // page * page
+
+    kernel_off = page
+    ramdisk_off = align(kernel_off + ksz)
+    second_off = align(ramdisk_off + rsz)
+    dtb_off = second_off + align(ssz) + align(recovery_dtbo_size)
+    if dtb_off + dtb_size > len(data):
         raise AssertionError("boot component bounds exceed image")
-    blob = data[ko:ko+ksz]
+
+    blob = data[kernel_off:kernel_off + ksz]
     dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
     kernel = dec.decompress(blob) + dec.flush()
-    return {"kernel": kernel, "dtb": dec.unused_data,
-            "ramdisk": data[ro:ro+rsz], "second_size": ssz}
+    return {
+        "kernel": kernel,
+        "dtb": dec.unused_data,
+        "tail_dtb": data[dtb_off:dtb_off + dtb_size],
+        "ramdisk": data[ramdisk_off:ramdisk_off + rsz],
+        "second_size": ssz,
+    }
+
 
 def main():
     ap = argparse.ArgumentParser()
@@ -103,7 +130,7 @@ def main():
         if not repacked.is_file():
             raise AssertionError("repack did not produce new-boot.img")
         after = boot_components(repacked)
-        for key in ("kernel", "dtb", "ramdisk", "second_size"):
+        for key in ("kernel", "dtb", "tail_dtb", "ramdisk", "second_size"):
             if before[key] != after[key]:
                 raise AssertionError(f"{key} changed across round-trip")
         second = root / "second"
@@ -114,7 +141,8 @@ def main():
             raise AssertionError("unpack/repack/unpack kernel mismatch")
         print("[PASS] Windows kptools unpack/repack/unpack")
         print(f"[PASS] kernel SHA256: {hashlib.sha256(raw2).hexdigest()}")
-        print(f"[PASS] appended DTB bytes: {len(after['dtb'])}")
+        print(f"[PASS] appended kernel DTB bytes: {len(after['dtb'])}")
+        print(f"[PASS] boot-v2 tail DTB table bytes: {len(after['tail_dtb'])}")
         print(f"[PASS] ramdisk bytes: {len(after['ramdisk'])}")
         print(f"[PASS] second-stage bytes: {after['second_size']}")
         if a.boot_image:
