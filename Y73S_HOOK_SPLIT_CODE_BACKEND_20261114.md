@@ -147,3 +147,40 @@ preflights all aliases before changing any descriptors under
 `exec_prot_lock`. No partial descriptor-write failure path was identified
 after successful preflight. This is a static source review, not a runtime
 concurrency proof.
+
+
+
+## 2026-11-14 follow-up: relocation output bounds and PC-relative audit
+
+The relocation pass was reviewed for instruction-class coverage, internal branch
+mapping, and fixed-buffer bounds.
+
+- The output buffer is sized for the worst supported case: six overwritten
+  instructions at up to eight generated words each, plus a maximum four-word
+  branch-back sequence (52 words total).
+- `relocate_inst()` now checks the remaining output capacity before invoking
+  an instruction emitter, checks the decoded expansion length, and advances
+  `relo_insts_num` only after successful emission.
+- `hook_prepare()` now rejects a null record, resets the relocation count for
+  each preparation, validates the generated overwrite length, and reserves
+  four words before writing the branch-back sequence. The emitted branch-back
+  length is validated before being committed.
+- Unknown/non-PC-relative instructions retain the original instruction and
+  use a NOP padding word. The supported PC-relative classes are explicitly
+  decoded (B/BL, B.cond, ADR/ADRP, integer/SIMD literal loads, PRFM literal,
+  CBZ/CBNZ, and TBZ/TBNZ). This is a source-level decoder audit, not proof
+  against every future architectural extension.
+- Literal data loads whose target lies in the overwritten instruction range
+  remain rejected. PRFM literal is the exception: its address is remapped
+  through the relocated range. Because PRFM is a prefetch hint rather than a
+  data-producing load, this can change only the prefetch locality when the
+  target points into the overwritten range; it does not provide a reliable
+  architectural data dependency. This behavior has not been benchmarked.
+- Internal branch destinations are translated by summing the actual generated
+  expansion length of each preceding overwritten instruction. AArch64 branch
+  targets are instruction-aligned, so the mapping is instruction-index based.
+
+The static contract suite now contains 35 checks, including null-record,
+per-instruction output-bound, and branch-back reservation assertions. CI for
+the new revision is running; results will be recorded after completion.
+These checks do not replace runtime execution tests on the Y73s.
