@@ -48,6 +48,23 @@ typedef struct
     uint64_t kimage_voffset;
     uint64_t linear_voffset;
 } map_data_t;
+_Static_assert(offsetof(map_data_t, paging_init_relo) == 64,
+               "map_start_call paging_init_relo offset mismatch");
+#ifdef MAP_DEBUG
+_Static_assert(offsetof(map_data_t, page_shift) == 184,
+               "map_start_call page_shift offset mismatch");
+_Static_assert(offsetof(map_data_t, kimage_voffset) == 192,
+               "map_start_call kimage_voffset offset mismatch");
+_Static_assert(offsetof(map_data_t, linear_voffset) == 200,
+               "map_start_call linear_voffset offset mismatch");
+#else
+_Static_assert(offsetof(map_data_t, page_shift) == 136,
+               "map_start_call page_shift offset mismatch");
+_Static_assert(offsetof(map_data_t, kimage_voffset) == 144,
+               "map_start_call kimage_voffset offset mismatch");
+_Static_assert(offsetof(map_data_t, linear_voffset) == 152,
+               "map_start_call linear_voffset offset mismatch");
+#endif
 #else
 #define map_paging_init_backup_offset 0
 #define map_kernel_version_offset (map_paging_init_backup_offset + 4)
