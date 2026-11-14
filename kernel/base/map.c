@@ -870,8 +870,10 @@ void __noinline _paging_init()
      * pass it as the third ABI argument, preserving the audited register-save
      * slots while accounting for the measured 0x140-byte _paging_init frame.
      */
+    uint64_t runtime_tcr_el1 = 0;
+    asm volatile("mrs %0, tcr_el1" : "=r"(runtime_tcr_el1));
     ((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset,
-                               (uint64_t)data->alloc_size);
+                               (uint64_t)data->alloc_size, runtime_tcr_el1);
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
     if (data->alloc_size)
         sctlr_el1 |= (1ull << 19);
