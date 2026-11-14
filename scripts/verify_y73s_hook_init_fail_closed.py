@@ -75,10 +75,15 @@ checks = {
         "KP_EXEC_RX" in exec_alloc and
         "int kp_exec_seal(void *ptr)" in exec_alloc and
         "int kp_exec_seal(void *ptr);" in kpmalloc_h,
-    "failed unpublished records release executable pages":
-        "if (warp->using == 3)" in hmem and
-        "if (exec_relo) (void)kp_free_exec(exec_relo);" in hmem and
-        "if (exec_transit) (void)kp_free_exec(exec_transit);" in hmem,
+    "unpublished record stays reserved while executable pages are released":
+        "warp->using = 4;" in hmem and
+        "if (exec_relo) relo_rc = kp_free_exec(exec_relo);" in hmem and
+        "if (exec_transit) transit_rc = kp_free_exec(exec_transit);" in hmem,
+    "failed executable-page release quarantines the record and retains failed pointers":
+        "if (!relo_rc) warp->exec_relo = NULL;" in hmem and
+        "if (!transit_rc) warp->exec_transit = NULL;" in hmem and
+        "warp->using = 2;" in hmem and
+        "failed RW-NX restore must never make this record reusable" in hmem,
     "retired records retain executable pages for delayed arrivals":
         bool(re.search(r"void\s+hook_mem_retire\s*\([^)]*\)\s*\{[^}]*__atomic_store_n\(&warp->using,\s*2", hmem, re.S)) and
         "kp_free_exec" not in re.search(r"void\s+hook_mem_retire\s*\([^)]*\)\s*\{(.*?)\n\}", hmem, re.S).group(1),
