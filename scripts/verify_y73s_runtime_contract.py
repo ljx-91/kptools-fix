@@ -115,10 +115,13 @@ def main():
             "relocated code/data must be cleaned to the Point of Unification")
     require(r"dsb ish", clean_cache,
             "D-cache clean must complete before I-cache invalidation")
-    require(r"clean_dcache_range_to_pou\\(paging_init_va,\\s*sizeof\\(uint32_t\\)\\);\\s*flush_icache_all\\(\\);",
-            paging, "restored paging_init instruction must be D-cache-clean before I-cache invalidation")
-    require(r"copy_map_range\\(sctlr_el1 \\+ data->start_size,[\\s\\S]*?clean_dcache_range_to_pou\\(sctlr_el1,\\s*all_size\\);\\s*flush_icache_all\\(\\);",
-            paging, "relocated KP image and extras must be D-cache-clean before I-cache invalidation")
+    if "clean_dcache_range_to_pou(paging_init_va, sizeof(uint32_t));\\n    flush_icache_all();" not in paging:
+        raise AssertionError("restored paging_init instruction must be D-cache-clean before I-cache invalidation")
+    copy_at = paging.find("copy_map_range(sctlr_el1 + data->start_size")
+    clean_at = paging.find("clean_dcache_range_to_pou(sctlr_el1, all_size);", copy_at)
+    flush_at = paging.find("flush_icache_all();", clean_at)
+    if copy_at < 0 or clean_at <= copy_at or flush_at <= clean_at:
+        raise AssertionError("relocated KP image and extras must be D-cache-clean before I-cache invalidation")
     copy_range = function_body(map_c, "static void __noinline copy_map_range(")
     require(r"if\s*\(!\(\(dst\s*\|\s*src\)\s*&\s*\(sizeof\(uint64_t\)\s*-\s*1\)\)\)", copy_range,
             "word copies must require naturally aligned source and destination")
