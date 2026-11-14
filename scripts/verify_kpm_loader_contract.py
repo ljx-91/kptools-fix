@@ -149,6 +149,13 @@ def main():
     require(r"filp\s*\?\s*PTR_ERR\(filp\)\s*:\s*-ENOENT", lkm_path,
             "LKM path loader must not turn a NULL file handle into a zero return code")
 
+    load = function_body(module, "long load_module_ex(")
+    require(r"flush_icache_range\\(\\(unsigned long\\)mod->start,\\s*"
+            r"\\(unsigned long\\)mod->start\\s*\\+\\s*mod->text_size\\)",
+            load, "KPM relocated text must be D-cache-cleaned to PoU before execution")
+    if load.find("flush_icache_range(") < 0 or load.find("flush_icache_all();") < load.find("flush_icache_range("):
+        raise AssertionError("global I-cache broadcast must follow relocated-text D-cache clean")
+
     unload = function_body(module, "long unload_module(")
     require(r"if\s*\(mod->exit\)\s*rc\s*=", unload,
             "optional KPM exit callback must be checked before invocation")
