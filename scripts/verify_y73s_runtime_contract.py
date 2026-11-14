@@ -163,6 +163,8 @@ def main():
             pte, "existing destination leaf must have AF set before early access")
     require(r"leaf_desc\s*&\s*\(1ull\s*<<\s*52\)",
             pte, "single-leaf permission changes must reject contiguous-hint mappings")
+    require(r"if\s*\(lv\s*!=\s*3\s*&&\s*\(pxd_desc\s*&\s*\(\(1ull\s*<<\s*62\)\s*\|\s*\(1ull\s*<<\s*59\)\)\)\s*\)\s*__builtin_trap\(\);",
+            pte, "ancestor table descriptors must not impose APTable read-only or PXNTable restrictions")
     require(r"if\s*\(block_flag\)\s*\{[\s\S]*?__builtin_trap\(\);",
             pte, "existing block mappings must fail closed rather than be overwritten as page descriptors")
 
