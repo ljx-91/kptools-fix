@@ -133,8 +133,8 @@ def main():
             pte, "Y73S page-table walker must reject non-canonical TTBR1 virtual addresses")
     require(r"if\s*\(!page_level\s*\|\|\s*page_level\s*>\s*4\)\s*__builtin_trap\(\);",
             pte, "page-table walk must reject an invalid translation level count")
-    require(r"pxd_pa\s*=\s*map_phys_alloc\(data,\s*page_size,\s*page_size\);\s*if\s*\(!pxd_pa\)\s*__builtin_trap\(\);",
-            pte, "page-table allocation must be checked before descriptor creation")
+    require(r"pxd_pa\s*=\s*map_phys_alloc\(data,\s*page_size,\s*page_size\);\s*if\s*\(!pxd_pa\s*\|\|\s*pxd_pa\s*>\s*~\(uint64_t\)0\s*-\s*data->linear_voffset\)\s*__builtin_trap\(\);",
+            pte, "page-table allocation must be checked for failure and linear-map address overflow")
     before(pte, "*(volatile uint64_t *)i = 0;", 'asm volatile("dsb ishst"',
            "new child page-table contents must be zeroed before the publication barrier")
     before(pte, 'asm volatile("dsb ishst"', "pxd_desc = pxd_pa | 0x3ull",
