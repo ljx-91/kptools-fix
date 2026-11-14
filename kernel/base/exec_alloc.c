@@ -485,6 +485,43 @@ void *kp_exec_memalign(size_t alignment, size_t bytes)
     return exec_alloc(bytes, alignment);
 }
 
+int kp_exec_seal(void *ptr)
+{
+    struct kp_exec_allocator *a;
+    unsigned long flags;
+    unsigned int pages, index;
+    uint64_t address;
+    int rc;
+
+    if (!ptr) return -EINVAL;
+    flags = kp_private_spin_lock(&exec_allocator_lock);
+    a = exec_allocator;
+    pages = exec_validate_head_locked(ptr);
+    if (!pages || !a) {
+        kp_private_spin_unlock(&exec_allocator_lock, flags);
+        return -EINVAL;
+    }
+    address = (uint64_t)(unsigned long)ptr;
+    index = (unsigned int)((address - a->base) / a->page_bytes);
+    if (a->flags[index] & KP_EXEC_FLAG_FINALIZED) {
+        kp_private_spin_unlock(&exec_allocator_lock, flags);
+        return -EBUSY;
+    }
+    a->runs[index] = KP_EXEC_PAGE_BUSY;
+    kp_private_spin_unlock(&exec_allocator_lock, flags);
+
+    rc = exec_set_uniform_protection(a, address,
+                                     (size_t)pages * a->page_bytes,
+                                     KP_EXEC_RX);
+
+    flags = kp_private_spin_lock(&exec_allocator_lock);
+    a->runs[index] = (uint16_t)pages;
+    if (!rc)
+        a->flags[index] |= KP_EXEC_FLAG_FINALIZED;
+    kp_private_spin_unlock(&exec_allocator_lock, flags);
+    return rc;
+}
+
 int kp_exec_free(void *ptr)
 {
     struct kp_exec_allocator *a;
