@@ -58,6 +58,7 @@ BASE_SRCS += base/setup.c
 BASE_SRCS += base/setup1.S
 BASE_SRCS += base/cache.S
 BASE_SRCS += base/tlsf.c
+BASE_SRCS += base/exec_alloc.c
 BASE_SRCS += base/start.c 
 BASE_SRCS += base/map.c 
 BASE_SRCS += base/map1.S 
