@@ -466,7 +466,11 @@ static void prot_myself()
         *pte = (*pte | PTE_DBM | PTE_SHARED) & ~PTE_PXN & ~PTE_RDONLY & ~PTE_GP;
     }
     flush_tlb_kernel_range(_kp_hook_start, _kp_hook_end);
-    hook_mem_add(_kp_hook_start, HOOK_ALLOC_SIZE);
+    int hook_mem_rc = hook_mem_add(_kp_hook_start, HOOK_ALLOC_SIZE);
+    if (hook_mem_rc) {
+        /* hook_mem_zalloc() fails closed while the arena is unavailable. */
+        log_boot("Hook engine disabled: hook_mem_add failed (%d)\\n", hook_mem_rc);
+    }
 
     // rw memory
     _kp_rw_start = _kp_hook_end;
