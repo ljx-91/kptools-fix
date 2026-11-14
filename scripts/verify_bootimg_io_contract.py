@@ -30,7 +30,18 @@ def need(pattern, source, message):
 
 def main():
     src = (ROOT / "tools/bootimg.c").read_text(encoding="utf-8")
+    hdr = (ROOT / "tools/bootimg.h").read_text(encoding="utf-8")
+    need(r"struct boot_img_hdr\s*\{[\s\S]*uint64_t recovery_dtbo_offset;[\s\S]*uint32_t header_size;[\s\S]*uint32_t dtb_size;[\s\S]*uint64_t dtb_addr;[\s\S]*\}\s*__attribute__\(\(packed\)\)",
+         hdr, "Android boot v2 header fields must use the packed on-disk layout")
+    need(r"_Static_assert\(sizeof\(struct boot_img_hdr\)\s*==\s*1660",
+         hdr, "Android boot v2 header must be exactly 1660 bytes")
+    for field, offset in (("recovery_dtbo_offset", 1636), ("header_size", 1644),
+                          ("dtb_size", 1648), ("dtb_addr", 1652)):
+        need(rf"_Static_assert\(offsetof\(struct boot_img_hdr,\s*{field}\)\s*==\s*{offset}",
+             hdr, f"Android boot v2 {field} offset mismatch")
     repack = body(src, "int repack_bootimg_mem(")
+    need(r"header_ver\s*==\s*2\s*&&\s*hdr\.header_size\s*!=\s*sizeof\(hdr\)",
+         repack, "repack must reject malformed Android boot v2 header sizes")
     need(r"fread\(&hdr,\s*sizeof\(hdr\),\s*1,\s*f_orig\)\s*!=\s*1", repack,
          "repack must reject truncated boot headers")
     need(r"hdr\.kernel_size\s*>\s*\(uint64_t\)total_size\s*-\s*page_size", repack,
@@ -65,6 +76,8 @@ def main():
         raise AssertionError("successful repack must jump past failure cleanup before AVB preservation")
 
     patch = body(src, "int patch_bootimg(")
+    need(r"hdr\.unused\[0\]\s*==\s*2\s*&&\s*hdr\.header_size\s*!=\s*sizeof\(hdr\)",
+         patch, "patch must reject malformed Android boot v2 header sizes")
     need(r"fread\(&hdr,\s*sizeof\(hdr\),\s*1,\s*fp\)\s*!=\s*1", patch,
          "patch must reject truncated boot headers")
     need(r"hdr\.kernel_size\s*>\s*\(uint64_t\)boot_size\s*-\s*kernel_offset", patch,
