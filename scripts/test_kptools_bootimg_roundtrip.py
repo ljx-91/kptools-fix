@@ -167,6 +167,9 @@ def boot_components(path):
         "tail_dtb": data[dtb_off:dtb_off + dtb_size],
         "ramdisk": data[ramdisk_off:ramdisk_off + rsz],
         "second_size": ssz,
+        "header_size": struct.unpack_from("<I", data, 1644)[0],
+        "recovery_dtbo_offset": struct.unpack_from("<Q", data, 1636)[0],
+        "dtb_addr": struct.unpack_from("<Q", data, 1652)[0],
     }
 
 
@@ -202,7 +205,7 @@ def main():
             if not repacked.is_file():
                 raise AssertionError("repack did not produce new-boot.img")
             after = boot_components(repacked)
-            for key in ("kernel", "dtb", "tail_dtb", "ramdisk", "second_size"):
+            for key in ("kernel", "dtb", "tail_dtb", "ramdisk", "second_size", "header_size", "recovery_dtbo_offset", "dtb_addr"):
                 if before[key] != after[key]:
                     raise AssertionError(f"{key} changed across round-trip")
             digest, stored, algorithm = boot_id_digest(repacked)
