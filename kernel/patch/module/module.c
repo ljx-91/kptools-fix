@@ -883,7 +883,12 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
 free_mod:
     if (mod) {
         if (mod->args) kvfree(mod->args);
-        if (mod->start) kp_free_exec(mod->start);
+        if (mod->start) {
+            int free_rc = kp_free_exec(mod->start);
+            if (free_rc)
+                logke("[%s] executable image retained after permission reset failure: %d\\n",
+                      mod->info.name, free_rc);
+        }
         kvfree(mod);
     }
 out:
@@ -933,7 +938,12 @@ long unload_module(const char *name, void *__user reserved)
     list_del_init(&mod->list); mod->state = KP_MODULE_DEAD;
     module_lock_release(flags);
     if (mod->args) kvfree(mod->args);
-    if (mod->start) kp_free_exec(mod->start);
+    if (mod->start) {
+        int free_rc = kp_free_exec(mod->start);
+        if (free_rc)
+            logke("[%s] executable image retained after permission reset failure: %d\\n",
+                  mod->info.name, free_rc);
+    }
     kvfree(mod);
     logkfi("name: %s, rc: %ld\n", name, rc);
     return rc;
