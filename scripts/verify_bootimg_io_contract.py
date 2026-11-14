@@ -49,6 +49,11 @@ def main():
     need(r"rest_buf_tmp\s*=\s*calloc[\s\S]*?fread\(rest_buf_tmp[\s\S]*?\)\s*!=\s*rest_data_size\s*-\s*sizeof\(avb\)",
          repack, "repack must check tail allocation and read")
 
+    need(r"sha256_update\\(&ctx,\\s*\\(const BYTE \\*\\)final_k_buf,\\s*final_k_size\\)\\s*;\\s*if\\s*\\(dtb_size\\)\\s*sha256_update\\(&ctx,\\s*\\(const BYTE \\*\\)extracted_dtb,\\s*dtb_size\\)",
+         repack, "SHA-256 boot ID must hash compressed kernel and appended DTB as separate bounded buffers")
+    need(r"sha1_update\\(&ctx,\\s*\\(const BYTE \\*\\)final_k_buf,\\s*final_k_size\\)\\s*;\\s*if\\s*\\(dtb_size\\)\\s*sha1_update\\(&ctx,\\s*\\(const BYTE \\*\\)extracted_dtb,\\s*dtb_size\\)",
+         repack, "SHA-1 boot ID must hash compressed kernel and appended DTB as separate bounded buffers")
+
     success_close = repack.find("if (fclose(f_out) != 0)")
     success_jump = repack.find("goto post_write;", success_close)
     fail_label = repack.find("write_fail:", success_close)
