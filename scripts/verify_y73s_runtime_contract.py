@@ -119,12 +119,14 @@ def main():
             "start image must use the bounded copy helper")
     require(r"copy_map_range\(sctlr_el1\s*\+\s*data->start_size,\s*paging_init_va\s*\+\s*data->start_img_size,\s*\(uint64_t\)data->extra_size\)", paging,
             "extra payload must use the bounded copy helper")
-    require(r"map_start_target\s*=\s*sctlr_el1", paging,
+    require(r"data->paging_init_relo\s*=\s*sctlr_el1", paging,
             "relocated image entry must use the validated destination virtual address")
-    require(r"map_start_call\(\)", paging,
+    require(r"data->page_shift\s*=\s*original_wxn", paging,
+            "saved WXN state must be handed off only after the final page-shift use")
+    require(r"map_start_call\(data\)", paging,
             "relocated image entry must use the local map assembly bridge")
     map_bridge = source("kernel/base/map1.S")
-    require(r"ldr\s+x2,\s*\[x9\][\s\S]*?blr\s+x16", map_bridge,
+    require(r"ldr\s+x2,\s*\[x9,\s*#map_page_shift_offset\][\s\S]*?blr\s+x16", map_bridge,
             "map bridge must pass the saved WXN bit in x2 to relocated start")
     start_c = source("kernel/base/start.c")
     start_fn = function_body(start_c, "int __attribute__((section(\".start.text\"))) __noinline start(")
