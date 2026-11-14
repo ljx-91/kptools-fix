@@ -115,28 +115,30 @@ A further audit of `kernel/base/exec_alloc.c` confirmed an important limitation 
 
 - A 4-KiB linear-map leaf is recorded in `linear_ptes[]` and receives the same
   permission transition as its KIMG alias.
-- A block descriptor (for example, a 2-MiB or 1-GiB mapping) is accepted when
-  it maps the expected physical page, has the expected memory attributes and
-  shareability/access-flag bits, and has PXN set. The walker returns success
-  without recording a leaf PTE.
-- Consequently, a writable PXN block alias is not changed when the KIMG alias
-  is sealed RX. Execution through the linear alias remains prohibited by PXN,
-  but writes through that alias may still modify the same physical page.
+- A block descriptor (for example, a 2-MiB or 1-GiB mapping) is accepted
+  only when it maps the expected physical page, has matching memory attributes
+  and shareability/access-flag bits, is privileged-XN, has AP[2] set
+  (privileged read-only), and has DBM clear.
+- A writable or DBM-enabled block alias is now rejected with `-EFAULT`.
+  This is fail-closed: executable allocator initialization will not proceed
+  through an alias whose write permission cannot be safely removed.
+- A 4-KiB linear-map leaf continues to be recorded and receives synchronized
+  permission updates with the KIMG alias.
 
-This means the current implementation does **not** prove physical-page-wide
-strict W^X when a writable block linear alias is present. It only establishes
-that the block alias is PXN. The code deliberately does not split a live
-linear-map block descriptor because doing so safely requires device-specific
-page-table evidence, allocation of a replacement table, correct descriptor
-construction, synchronization, and TLB invalidation. Blindly changing a
-2-MiB/1-GiB descriptor would affect neighboring kernel pages.
+The implementation still does **not** split a live linear-map block descriptor.
+That is intentional: safely splitting it requires device-specific page-table
+evidence, allocation of a replacement table, correct descriptor construction,
+synchronization, and TLB invalidation. Blindly changing a 2-MiB/1-GiB descriptor
+would affect neighboring kernel pages.
 
-No speculative page-table rewrite was made in this audit. Before claiming
-strict W^X, collect the actual Y73s descriptors for both the KIMG and linear
-aliases of the executable arena (including AP[2], DBM, PXN, output address,
-and descriptor level), then choose either a verified block-splitting design
-or a fail-closed policy. This remains a device/runtime validation item, not
-a passing W^X guarantee.
+This change closes the statically identifiable writable-block-alias acceptance
+gap, but the actual Y73s runtime descriptor level and attributes are not yet
+captured. If the device uses a writable block for the executable arena, the
+allocator now fails closed and generated executable allocations will be
+unavailable; no boot failure or successful hook initialization is inferred.
+The new static contract requires block aliases to be RO, DBM-disabled, and PXN.
+A physical-page-wide W^X claim still requires runtime page-table evidence and
+device validation.
 
 The allocator's state transitions were also reviewed: allocation, seal, free,
 and module-protection operations reserve a run with the BUSY marker while
