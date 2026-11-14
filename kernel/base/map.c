@@ -806,7 +806,7 @@ void __noinline _paging_init()
     // SCTLR_EL1 bits while paging_init() runs.
     uint64_t sctlr_el1 = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
-    map_start_wxn = (sctlr_el1 >> 19) & 1ull;
+    uint64_t original_wxn = (sctlr_el1 >> 19) & 1ull;
     sctlr_el1 &= ~(1ull << 19);
     asm volatile("msr sctlr_el1, %0\n\tisb" : : "r"(sctlr_el1) : "memory");
 
