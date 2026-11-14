@@ -159,7 +159,7 @@ void *kp_exec_realloc(void *ptr, size_t bytes)
     struct kp_exec_allocator *a;
     unsigned long flags;
     unsigned int old_pages, new_pages, index, i;
-    size_t copy_bytes;
+    size_t requested_pages, copy_bytes;
     void *replacement;
 
     if (!ptr) return kp_exec_malloc(bytes);
@@ -176,11 +176,13 @@ void *kp_exec_realloc(void *ptr, size_t bytes)
         kp_private_spin_unlock(&exec_allocator_lock, flags);
         return NULL;
     }
-    new_pages = (unsigned int)((bytes + a->page_bytes - 1) / a->page_bytes);
-    if (!new_pages || new_pages > a->page_count || new_pages > 0xfffeU) {
+    requested_pages = (bytes + a->page_bytes - 1) / a->page_bytes;
+    if (!requested_pages || requested_pages > a->page_count ||
+        requested_pages > 0xfffeU) {
         kp_private_spin_unlock(&exec_allocator_lock, flags);
         return NULL;
     }
+    new_pages = (unsigned int)requested_pages;
     index = (unsigned int)(((uint64_t)(unsigned long)ptr - a->base) / a->page_bytes);
 
     if (new_pages <= old_pages) {
