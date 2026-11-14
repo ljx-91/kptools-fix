@@ -130,7 +130,7 @@ def main():
             "failure return must restore the saved WXN state")
     start_c = source("kernel/base/start.c")
     start_fn = function_body(start_c, "int __attribute__((section(\".start.text\"))) __noinline start(")
-    require(r"start\(uint64_t kimage_voff, uint64_t linear_voff, uint64_t saved_wxn\)", start_fn,
+    require(r"start\(uint64_t kimage_voff, uint64_t linear_voff, uint64_t saved_wxn\)", start_c,
             "relocated start must receive saved WXN through the explicit third argument")
     before(start_fn, "prot_myself();", "msr sctlr_el1",
            "KP text/data permissions must be sealed before restoring WXN")
@@ -141,7 +141,7 @@ def main():
         raise AssertionError("KP writable-region PXN protection must not depend on mapping layout")
     if prot_fn.count("PTE_DBM | PTE_SHARED | PTE_PXN") < 3:
         raise AssertionError("KP data, extra and RW regions must all be RW-NX")
-    before(paging, "((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset);",
+    before(paging, "((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset,",
            "if (data->alloc_size)", "failure return must restore WXN after start returns")
     require(r"memblock_mark_nomap_f[^;]*\)\(start_pa,\s*all_size\)\)\s*__builtin_trap\(\);",
             paging, "NOMAP failure must stop before mapping/copying")
