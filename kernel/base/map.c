@@ -4,6 +4,12 @@
  */
 
 #include "setup.h"
+/* Arguments for the assembly bridge; kept inside the non-relocated .setup.map. */
+volatile uint64_t map_start_target __attribute__((section(".map.data")));
+volatile uint64_t map_start_arg0 __attribute__((section(".map.data")));
+volatile uint64_t map_start_arg1 __attribute__((section(".map.data")));
+volatile uint64_t map_start_wxn __attribute__((section(".map.data")));
+extern void map_start_call(void);
 #define NUMA_NO_NODE (-1)
 
 typedef uint64_t phys_addr_t;
@@ -805,7 +811,7 @@ void __noinline _paging_init()
     // SCTLR_EL1 bits while paging_init() runs.
     uint64_t sctlr_el1 = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
-    uint64_t original_wxn = (sctlr_el1 >> 19) & 1ull;
+    map_start_wxn = (sctlr_el1 >> 19) & 1ull;
     sctlr_el1 &= ~(1ull << 19);
     asm volatile("msr sctlr_el1, %0\n\tisb" : : "r"(sctlr_el1) : "memory");
 
@@ -859,26 +865,17 @@ void __noinline _paging_init()
      * RWX, so restore WXN here (not inside start()'s error branch).
      */
     /*
-     * Supply the saved WXN bit in x2 while keeping start_f's two-argument
-     * C ABI. The Y73S tail-return verifier depends on _paging_init's frame.
+     * The bridge lives wholly inside .setup.map, so the copied map section
+     * has no external PC-relative references. It passes WXN in x2 while
+     * keeping _paging_init's verified two-argument call/frame shape.
      */
-    uint64_t start_arg0 = data->kimage_voffset;
-    uint64_t start_arg1 = data->linear_voffset;
-    uint64_t start_arg2 = original_wxn;
-    uint64_t start_fn = sctlr_el1;
-    asm volatile(
-        "mov x0, %0\n\t"
-        "mov x1, %1\n\t"
-        "mov x2, %2\n\t"
-        "blr %3\n\t"
-        :
-        : "r"(start_arg0), "r"(start_arg1), "r"(start_arg2), "r"(start_fn)
-        : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8",
-          "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16",
-          "x17", "x18", "x30", "memory");
+    map_start_target = sctlr_el1;
+    map_start_arg0 = data->kimage_voffset;
+    map_start_arg1 = data->linear_voffset;
+    map_start_call();
     uint64_t current_sctlr = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(current_sctlr));
-    if (original_wxn)
+    if (map_start_wxn)
         current_sctlr |= (1ull << 19);
     else
         current_sctlr &= ~(1ull << 19);
