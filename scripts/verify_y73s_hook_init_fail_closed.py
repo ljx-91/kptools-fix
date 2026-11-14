@@ -48,6 +48,14 @@ checks = {
         "kp_exec_seal(exec_relo)" in hook_c and
         "kp_exec_seal(transit)" in hook_c and
         "kp_exec_seal(transit)" in fphook_c,
+    "generated inline code is D-cache-cleaned to PoU before RX sealing":
+        "#define KP_HOOK_FLUSH_ICACHE_RANGE(start, end)" in hook_c and
+        "flush_icache_range((unsigned long)(start), (unsigned long)(end))" in hook_c and
+        "KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)exec_relo" in hook_c and
+        "KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)transit" in hook_c,
+    "generated FP transit code is D-cache-cleaned to PoU before RX sealing":
+        "flush_icache_range((unsigned long)transit" in fphook_c and
+        "flush_icache_all();\n    if (kp_exec_seal(transit))" not in fphook_c,
     "RX seal applies read-only and clears PXN":
         "exec_set_uniform_protection(a, address" in exec_alloc and
         "KP_EXEC_RX" in exec_alloc and
