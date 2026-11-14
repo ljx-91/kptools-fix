@@ -13,6 +13,8 @@
 #include <uapi/asm-generic/errno.h>
 #include "hmem.h"
 
+static hook_err_t hook_prepare_relo_exec(void *record, hook_t *hook);
+
 #define bits32(n, high, low) ((uint32_t)((n) << (31u - (high))) >> (31u - (high) + (low)))
 #define bit(n, st) (((n) >> (st)) & 1)
 #define sign64_extend(n, len) \
