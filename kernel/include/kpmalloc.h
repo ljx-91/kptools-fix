@@ -10,7 +10,9 @@ int kp_exec_allocator_init(void *base, size_t bytes, size_t runtime_page_size);
 void *kp_exec_malloc(size_t bytes);
 void *kp_exec_memalign(size_t align, size_t bytes);
 void *kp_exec_realloc(void *ptr, size_t size);
-void kp_exec_free(void *ptr);
+int kp_exec_free(void *ptr);
+int kp_exec_protect_module(void *ptr, size_t module_size, size_t text_size,
+                           size_t ro_size, size_t symtab_start);
 
 static inline void *kp_malloc_exec(size_t bytes)
 {
@@ -27,9 +29,9 @@ static inline void *kp_realloc_exec(void *ptr, size_t size)
     return kp_exec_realloc(ptr, size);
 }
 
-static inline void kp_free_exec(void *ptr)
+static inline int kp_free_exec(void *ptr)
 {
-    kp_exec_free(ptr);
+    return kp_exec_free(ptr);
 }
 
 static inline void *kp_malloc(size_t bytes)
