@@ -124,13 +124,17 @@ def main():
     before(paging, "data->alloc_size = (sctlr_el1 >> 19) & 1ull;",
            "sctlr_el1 &= ~(1ull << 19);",
            "original WXN state must be saved before clearing")
-    require(r"\(\(start_f\)sctlr_el1\)\(data->kimage_voffset,\s*data->linear_voffset,\s*\(uint64_t\)data->alloc_size\)", paging,
+    require(r"\(\(start_f\)sctlr_el1\)\(data->kimage_voffset,\s*data->linear_voffset,\s*\(uint64_t\)data->alloc_size,\s*runtime_tcr_el1\)", paging,
             "relocated image entry must receive the saved WXN bit as its third ABI argument")
     require(r"if\s*\(data->alloc_size\).*?1ull\s*<<\s*19", paging,
             "failure return must restore the saved WXN state")
     start_c = source("kernel/base/start.c")
     start_fn = function_body(start_c, "int __attribute__((section(\".start.text\"))) __noinline start(")
-    require(r"start\(uint64_t kimage_voff, uint64_t linear_voff, uint64_t saved_wxn\)", start_c,
+    require(r"mrs %0, id_aa64mmfr1_el1", start_fn,
+            "startup diagnostics must read the implemented HPDS feature level")
+    require(r"Y73S TCR_EL1=%016llx HPDS=%u HPD1=%u HWU159_162=%x", start_fn,
+            "startup diagnostics must expose the live TCR PBHA controls")
+    require(r"start\(uint64_t kimage_voff, uint64_t linear_voff,\s*uint64_t saved_wxn, uint64_t runtime_tcr_el1\)", start_c,
             "relocated start must receive saved WXN through the explicit third argument")
     before(start_fn, "prot_myself();", "msr sctlr_el1",
            "KP text/data permissions must be sealed before restoring WXN")
