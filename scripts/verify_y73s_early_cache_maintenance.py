@@ -20,6 +20,18 @@ def block_between(disassembly: str, start: str, end: str) -> str:
     return disassembly[begin:finish]
 
 
+def require_patterns(block: str, patterns: tuple[str, ...], label: str) -> None:
+    for pattern in patterns:
+        if not re.search(pattern, block, re.IGNORECASE):
+            fail(f"{label} missing instruction pattern: {pattern}")
+
+
+def call_positions(block: str, symbol: str) -> list[int]:
+    return [m.start() for m in re.finditer(
+        rf"bl\\s+[^\\n]*<{re.escape(symbol)}>", block
+    )]
+
+
 def main() -> None:
     if len(sys.argv) != 2:
         fail("usage: verify_y73s_early_cache_maintenance.py <kpimg.elf>")
@@ -34,15 +46,23 @@ def main() -> None:
     disassembly = result.stdout
 
     helper = block_between(disassembly, "dcache_clean_range", "start_prepare")
-    required = (
-        r"mrs\s+x2,\s*CTR_EL0",
-        r"ubfx\s+x2,\s*x2,\s*#16,\s*#4",
-        r"dc\s+cvau,\s*x5",
-        r"dsb\s+ish",
-    )
-    for pattern in required:
-        if not re.search(pattern, helper, re.IGNORECASE):
-            fail(f"dcache_clean_range missing instruction pattern: {pattern}")
+    require_patterns(helper, (
+        r"cbz\\s+x1",
+        r"mrs\\s+x2,\\s*ctr_el0",
+        r"ubfx\\s+x2,\\s*x2,\\s*#16,\\s*#4",
+        r"mov\\s+x3,\\s*#4",
+        r"lsl\\s+x3,\\s*x3,\\s*x2",
+        r"sub\\s+x4,\\s*x3,\\s*#1",
+        r"bic\\s+x5,\\s*x0,\\s*x4",
+        r"add\\s+x0,\\s*x0,\\s*x1",
+        r"add\\s+x0,\\s*x0,\\s*x4",
+        r"bic\\s+x0,\\s*x0,\\s*x4",
+        r"dc\\s+cvau,\\s*x5",
+        r"add\\s+x5,\\s*x5,\\s*x3",
+        r"cmp\\s+x5,\\s*x0",
+        r"b\\.lo\\s+",
+        r"dsb\\s+ish",
+    ), "dcache_clean_range")
 
     start_prepare = block_between(disassembly, "start_prepare", "map_prepare")
     map_prepare = block_between(disassembly, "map_prepare", "setup")
@@ -52,25 +72,37 @@ def main() -> None:
         fail("missing setup function disassembly")
     setup = disassembly[setup_start:setup_end if setup_end >= 0 else None]
 
-    if not re.search(r"bl\s+.*<dcache_clean_range>", start_prepare):
-        fail("relocated start image/extra copy is not D-cache-cleaned")
+    start_copy = start_prepare.find("<rmemcpy32>")
+    start_clean = call_positions(start_prepare, "dcache_clean_range")
+    if start_copy < 0 or len(start_clean) != 1 or start_clean[0] <= start_copy:
+        fail("relocated start image/extra copy is not followed by exactly one D-cache clean")
 
-    map_calls = len(re.findall(r"bl\s+.*<dcache_clean_range>", map_prepare))
-    if map_calls != 3:
-        fail(f"expected 3 map_prepare cache-clean calls (PAC, branch, map), got {map_calls}")
+    map_clean = call_positions(map_prepare, "dcache_clean_range")
+    if len(map_clean) != 3:
+        fail(f"expected 3 map_prepare cache-clean calls (PAC, branch, map), got {len(map_clean)}")
+    pac_store = map_prepare.find("stur")
+    branch_store = map_prepare.find("str")
+    map_copy = map_prepare.rfind("<memcpy8>")
+    if pac_store < 0 or not (pac_store < map_clean[0] < map_clean[1]):
+        fail("PAC/AUT instruction patch is not cleaned before the paging_init branch patch")
+    if branch_store < 0 or not (map_clean[0] < branch_store < map_clean[1]):
+        fail("paging_init branch patch is not followed by its D-cache clean")
+    if map_copy < 0 or map_copy >= map_clean[2]:
+        fail("relocated .setup.map copy is not followed by its D-cache clean")
 
-    setup_calls = len(re.findall(r"bl\s+.*<dcache_clean_range>", setup))
-    if setup_calls != 1:
-        fail(f"expected 1 setup cache-clean call for restored Image header, got {setup_calls}")
-
-    icache_match = re.search(r"ic\s+iallu", setup)
-    last_clean = setup.rfind("<dcache_clean_range>")
-    if not icache_match or last_clean < 0 or icache_match.start() < last_clean:
+    header_copy = setup.find("<memcpy8>")
+    setup_clean = call_positions(setup, "dcache_clean_range")
+    icache = setup.find("ic\\s+iallu")
+    if header_copy < 0 or len(setup_clean) != 1 or setup_clean[0] <= header_copy:
+        fail("restored Image header is not followed by exactly one D-cache clean")
+    if icache < 0 or icache <= setup_clean[0]:
         fail("I-cache invalidation is not ordered after the final D-cache clean")
+    if not re.search(r"dsb\\s+ish[\\s\\S]*ic\\s+iallu[\\s\\S]*dsb\\s+ish[\\s\\S]*isb", setup, re.IGNORECASE):
+        fail("final DSB / I-cache invalidate / DSB / ISB handoff sequence is incomplete")
 
-    print("PASS: CTR_EL0-sized DC CVAU range cleaner is present")
-    print("PASS: relocated code, PAC instruction, paging_init branch, map code, and Image header are cleaned")
-    print("PASS: D-cache clean precedes I-cache invalidation and final handoff")
+    print("PASS: CTR_EL0-sized, cache-line-aligned DC CVAU range cleaner is present")
+    print("PASS: relocated start image, PAC/AUT, paging_init branch, .setup.map, and Image header are cleaned after writes")
+    print("PASS: final D-cache clean, I-cache invalidation, DSB, and ISB are correctly ordered")
 
 
 if __name__ == "__main__":
