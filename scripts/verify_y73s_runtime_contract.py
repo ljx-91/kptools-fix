@@ -157,6 +157,10 @@ def main():
             mem_proc_fn, "Y73S must fail closed unless TCR_EL1 selects 4-KiB / 39-bit TTBR1 geometry")
 
     pte = function_body(map_c, "static uint64_t __noinline get_or_create_pte(")
+    require(r"uint64_t attr_prot = 0x703ull \\| attr_indx;", pte,
+            "new Y73S leaf mappings must leave PBHA[3:0] clear")
+    if "0x40000000000703" in pte:
+        raise AssertionError("new Y73S leaf mappings must not force PBHA[3]")
     require(r"if\s*\(page_shift\s*!=\s*12\s*\|\|\s*va_bits\s*!=\s*39\)\s*__builtin_trap\(\);",
             pte, "Y73S page-table walker must enforce the supported 4-KiB / 39-bit geometry")
     require(r"\(va\s*>>\s*39\)\s*!=\s*0x1FFFFFFull",
