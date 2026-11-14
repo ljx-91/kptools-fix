@@ -161,3 +161,42 @@ The latest source changes trigger four CI workflows: combined FolkPatch build/re
 ### Evidence boundary
 
 CI and static source contracts do not establish the actual Y73S runtime TCR/HPDS values, memblock map, TTBR1 page-table contents, or successful boot. Those require the instrumented boot log / ramoops or a controlled real-device test with the stock boot readily restorable.
+
+
+## Offline Boot candidate built from the cache/TCR-instrumented KPIMG
+
+Source commit used for this candidate: `9de668e952813384945ea8cf4ceedb4a94b3fcd3` (documentation-only follow-up commits do not change its source payload).
+
+Inputs:
+- Original stock Boot SHA-256: `c47e94f64696fe70de11ea26cda4a3e0e6e025e581e7a96b95f1d975c9fe7cd5`
+- KPIMG version: `0xd0a`, Android release ARM64, size 304,992 bytes.
+- KPIMG file SHA-256: `f71c57d5cd230cdf45e788fb5066488f7f5dab73993cc1450d7ceb47cd6d776e`
+
+Output:
+- `y73s-stock-patched-dcache-tcr-9de668e.img`
+- Size: 100,663,296 bytes.
+- SHA-256: `0d36a81a4d499aedc6e94df205cf29ebe6e3607cf0eede93286f269deb332ff0`
+- kptools re-unpack and `-l` report `patched=true`; embedded KPIMG reports `0xd0a`.
+- KPIMG injection offset: `0x02d52000`, region size `0x4a760`.
+- Embedded KPIMG bytes from offset `0x200` through the end match the CI KPIMG payload byte-for-byte. The 113 differing bytes are confined to the first `0x200` bytes, the per-image preset/header area.
+- The embedded KPIMG contains the new `Y73S TCR_EL1=... HPDS=... HPD1=... HWU159_162=...` runtime diagnostic string.
+
+Boot structure comparison:
+- Android Boot Header v2 and 2048-byte page size retained.
+- Ramdisk remains 777,508 bytes and is byte-for-byte identical (SHA-256 `f14df852dfc9d2dc7fe17edfbceedb564d616b19e2ace7ef0f633d94798065dc`).
+- DTB remains 158,376 bytes and is byte-for-byte identical.
+- Decompressed kernel grows from 47,517,708 to 47,826,912 bytes.
+- Header kernel_size changes from 16,678,904 to 16,751,793 bytes.
+- AVB footer remains v1.0; original_image_size moves from 17,618,944 to 17,692,672, vbmeta_offset from 17,620,992 to 17,694,720; vbmeta_size remains 1,472.
+- Embedded vbmeta blob remains byte-for-byte identical, SHA-256 `5374b5d334a275eb682ec80f87345468e0994e0fa1c0c611d37196e062b6ed85`.
+- The original Boot Hash Descriptor remains unchanged. Its original digest matches the stock image; recomputing the descriptor digest over the candidate yields `9e31e35ef2f078974ff589684caf4c8b4710b34c5062a5a4c3fc6249c5199ac6`, which does not match the stored OEM digest `36a3d398fc5a5350e1642f54584ebca8d06e20644e622993f9547e057467623c`.
+- No AVB digest, vbmeta payload, or signature was changed or regenerated.
+
+CI evidence for source commit `9de668e952813384945ea8cf4ceedb4a94b3fcd3`:
+- Combined FolkPatch main build and Y73S regression test job: success (run 43622185940, job 132530098653).
+- Linux kptools build and LKM/KPM source audit: success (run 43622186076).
+- Android KPIMG build and Windows kptools build: success (run 43622185989).
+- Separate Android KPIMG workflow was still queued at the time of this report (run 43622185966); the same KPIMG version was already built successfully by the combined and Windows workflows.
+- Patch-only APK packaging in the combined workflow was still running (job 132530607064).
+
+This is an offline candidate only. The new runtime TCR log has not yet been collected from the device. No flash or real-device boot test has been performed; do not treat the candidate as boot-verified or AVB-digest-valid.
