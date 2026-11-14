@@ -4,6 +4,7 @@
  */
 
 #include <stdint.h>
+#include <stddef.h>
 
 #include "patch.h"
 
@@ -35,15 +36,24 @@ struct boot_img_hdr {
     uint32_t id[8];
 	uint8_t extra_cmdline[1024];     // command
 
-    // v2 
-    uint32_t recovery_dtbo_size;     
-    uint64_t recovery_dtbo_offset;   
-         
-    
-    // v3 
-    uint32_t dtb_size;               
-    uint64_t dtb_addr;               
-};
+    // Android boot header v2 tail. These fields are intentionally packed:
+    // recovery_dtbo_offset and dtb_addr are unaligned in the on-disk format.
+    uint32_t recovery_dtbo_size;
+    uint64_t recovery_dtbo_offset;
+    uint32_t header_size;
+    uint32_t dtb_size;
+    uint64_t dtb_addr;
+} __attribute__((packed));
+
+_Static_assert(sizeof(struct boot_img_hdr) == 1660, "Android boot v2 header size mismatch");
+_Static_assert(offsetof(struct boot_img_hdr, recovery_dtbo_offset) == 1636,
+               "Android boot v2 recovery_dtbo_offset offset mismatch");
+_Static_assert(offsetof(struct boot_img_hdr, header_size) == 1644,
+               "Android boot v2 header_size offset mismatch");
+_Static_assert(offsetof(struct boot_img_hdr, dtb_size) == 1648,
+               "Android boot v2 dtb_size offset mismatch");
+_Static_assert(offsetof(struct boot_img_hdr, dtb_addr) == 1652,
+               "Android boot v2 dtb_addr offset mismatch");
 struct kernel_hdr {
 	uint32_t code0;      // Executable code
     uint32_t code1;      // Executable code
