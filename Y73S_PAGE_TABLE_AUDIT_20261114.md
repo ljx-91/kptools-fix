@@ -74,3 +74,17 @@ The Y73S mapping permission update previously ORed bit 51 into every destination
 The Y73S mapping update now clears AP[2] and PXN as required for the intended writable/executable kernel mapping, but does not force-set DBM. An existing descriptor's DBM state is preserved. This avoids imposing an optional hardware dirty-state feature on newly created mappings.
 
 The runtime source verifier rejects reintroduction of the unconditional DBM bit. This is a descriptor-level compatibility hardening; it does not replace validation against the device's live ID_AA64MMFR1_EL1 and TCR_EL1 values.
+
+## Follow-up: enforce EL1-only write permissions and validate existing leaves
+
+A review of the inherited permission mask found that it cleared AP[2] (bit 7) but left AP[1] (bit 6) unchanged. AP[1] controls EL0 access. If an existing destination leaf had AP[1]=1, clearing only AP[2] could leave AP[2:1]=01 and retain EL0 access. The destination mapping must be EL1 read/write and EL0 inaccessible, so the mask now clears both AP[2:1] bits and PXN. It does not force-set DBM.
+
+For an already-valid destination leaf, the walker now additionally requires:
+- Output Address matches the requested physical page.
+- AttrIndx matches the kernel text memory type used for the destination.
+- AF is already set, avoiding an early access-flag fault.
+- Contiguous hint is clear, because this mapper does not update a whole contiguous-descriptor group atomically.
+
+These checks intentionally fail closed rather than silently modifying a mapping whose memory type or access semantics differ from the expected kernel mapping.
+
+The rationale follows Arm's AArch64 memory attributes guide: AP, AttrIndx, AF and execution permissions are independent descriptor properties; AF=0 can produce an Access Flag fault when software-managed, and incompatible memory type/shareability aliases can behave incorrectly. This audit has not yet validated inherited APTable/PXNTable restrictions in every ancestor descriptor; that remains a separate item.
