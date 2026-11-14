@@ -88,3 +88,9 @@ For an already-valid destination leaf, the walker now additionally requires:
 These checks intentionally fail closed rather than silently modifying a mapping whose memory type or access semantics differ from the expected kernel mapping.
 
 The rationale follows Arm's AArch64 memory attributes guide: AP, AttrIndx, AF and execution permissions are independent descriptor properties; AF=0 can produce an Access Flag fault when software-managed, and incompatible memory type/shareability aliases can behave incorrectly. This audit has not yet validated inherited APTable/PXNTable restrictions in every ancestor descriptor; that remains a separate item.
+
+## Follow-up: reject restrictive ancestor table attributes
+
+Arm's AArch64 memory attributes guide explains that access permissions and execute-never properties can be hierarchical: a table descriptor can impose restrictions that a leaf descriptor cannot undo. The TTBR1 walker now checks each non-leaf table descriptor and fails closed if APTable[1] (bit 62) forces read-only access or PXNTable (bit 59) prevents EL1 execution.
+
+APTable[0] and UXNTable are not rejected by this check because they further restrict EL0 access/execution, which is consistent with the intended EL1-only kernel mapping. This remains a conservative source-level guard; the actual Y73S page-table hierarchy has not yet been captured from a running device.
