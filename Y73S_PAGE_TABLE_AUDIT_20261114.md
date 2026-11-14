@@ -116,3 +116,48 @@ References:
 - Arm Cortex-A76 TRM, ID_AA64MMFR1_EL1.HPDS: https://www.easymanua.ls/arm/cortex-a76-core/manual?p=224
 - Arm Cortex-A55 TRM, ID_AA64MMFR1_EL1.HPDS: https://documentation-service.arm.com/static/5e7e09f6a3736a0d2e862d2f
 - Arm ID_AA64MMFR1_EL1 HPDS field description: https://www.df.lth.se/~getz/ARM/SysReg/AArch64-id_aa64mmfr1_el1.html
+
+
+## Five-track follow-up (2026-11-15)
+
+### 1. Runtime TCR / HPDS / PBHA diagnostics
+
+The live Y73S `TCR_EL1` is now captured in `_paging_init` after the original `paging_init()` returns and passed as the fourth argument to relocated `start()`. The relocated start code also reads `ID_AA64MMFR1_EL1` and records:
+- raw `TCR_EL1`
+- `ID_AA64MMFR1_EL1.HPDS[15:12]`
+- `TCR_EL1.HPD1[42]`
+- `TCR_EL1.HWU162:HWU159[50:47]`
+
+The boot log line is `Y73S TCR_EL1=... HPDS=... HPD1=... HWU159_162=...`. This is runtime instrumentation, not a claim that the current device's register values are already known. Arm's current register description states HWU162 is effective for TTBR1 bit 62 only when HPD1 is 1, and HPDS=2 identifies HPDS2 support. References: https://support.arm.com/documentation/111107/2026-09/AArch64-Registers/TCR-EL1--Translation-Control-Register--EL1- and https://support.arm.com/documentation/111107/2026-09/AArch64-Registers/ID-AA64MMFR1-EL1--AArch64-Memory-Model-Feature-Register-1
+
+### 2. Linux 4.14 memblock API and fallback audit
+
+The exact upstream Linux v4.14 sources were inspected:
+- `MEMBLOCK_ALLOC_ACCESSIBLE == 0`; `memblock_find_in_range(0, 0, size, align)` therefore resolves its end to `memblock.current_limit` and excludes the first page.
+- `memblock_virt_alloc_try_nid_nopanic(size, align, min_addr, max_addr, nid)` first tries the requested interval, but if it cannot allocate there it drops `min_addr` and retries from zero. On success it reserves the PA, converts it with `phys_to_virt()`, and zeroes the allocation.
+- `memblock_reserve`, `memblock_free`, and `memblock_mark_nomap` return status codes; the current Y73S code checks the critical reserve/free/NOMAP results.
+- The current probe's second `memblock_find_in_range(detect_phys, detect_phys + page_size, page_size, page_size)` detects whether the exact requested page remained free. A nonzero result fails closed rather than accepting the allocator's fallback VA/PA mismatch.
+
+This validates the rationale of the existing fallback guard against upstream v4.14 semantics. The Vivo vendor kernel may contain local changes; exact vendor binary behavior still requires runtime confirmation. Reference: https://github.com/torvalds/linux/blob/v4.14/mm/memblock.c
+
+### 3. Destination mapping / alias attributes
+
+The destination mapping is created as a 4-KiB TTBR1 leaf using the kernel text AttrIndx, inner-shareable, AF set, EL1 RW / EL0 no-access, and EL1 executable while the relocation code runs. Existing mappings are checked for the expected output address and memory attributes; legal block descriptors are lookup-only and mapping requests fail closed rather than splitting or replacing a live block. New leaf descriptors leave PBHA[3:0] clear. The KPM executable allocator separately validates both KIMG and linear aliases before permission changes; writable linear block aliases are rejected, and only already-RO/PXN block aliases are accepted.
+
+### 4. D-cache / I-cache ordering correction
+
+A further early-boot correctness issue was found: `flush_icache_all()` invalidates I-cache but does not clean dirty D-cache lines to PoU. The C relocation path writes the restored `paging_init` instruction and copies the KP start image / extras into newly allocated cacheable memory. The previous code invalidated I-cache without first cleaning those writes.
+
+The fix adds an inline, self-contained `clean_dcache_range_to_pou()` helper using `CTR_EL0.DminLine`, `dc cvau` for every touched line, and `dsb ish`. It now runs:
+1. after restoring the original `paging_init` instruction and before I-cache invalidation / calling it;
+2. after zeroing/copying the complete relocated allocation and before I-cache invalidation / branching into relocated KP code.
+
+The runtime source verifier now enforces both orderings. This fix is not yet device-boot tested.
+
+### 5. Rebuild and offline image validation
+
+The latest source changes trigger four CI workflows: combined FolkPatch build/regressions, Linux kptools/source audit, Android ARM64 KPIMG, and Windows KPIMG/kptools. Only after all complete successfully should a new Boot be repacked from the exact stock image and latest KPIMG artifact, then compared byte-for-byte for ramdisk, DTB, vbmeta/footer placement and expected kernel payload changes. No AVB metadata is to be rewritten or re-signed.
+
+### Evidence boundary
+
+CI and static source contracts do not establish the actual Y73S runtime TCR/HPDS values, memblock map, TTBR1 page-table contents, or successful boot. Those require the instrumented boot log / ramoops or a controlled real-device test with the stock boot readily restorable.
