@@ -128,6 +128,10 @@ def main():
     map_bridge = source("kernel/base/map1.S")
     require(r"ldr\s+x2,\s*\[x9,\s*#map_page_shift_offset\][\s\S]*?blr\s+x16", map_bridge,
             "map bridge must pass the saved WXN bit in x2 to relocated start")
+    require(r"str\s+x30,\s*\[sp,\s*#-16\]!.*?ldr\s+x30,\s*\[sp\],\s*#16", map_bridge,
+            "map bridge must preserve its return address without changing x29")
+    if re.search(r"\b(?:stp|str)\s+x29", map_bridge):
+        raise AssertionError("map bridge must leave _paging_init's frame pointer unchanged")
     start_c = source("kernel/base/start.c")
     start_fn = function_body(start_c, "int __attribute__((section(\".start.text\"))) __noinline start(")
     require(r'mov %0, x2', start_fn,
