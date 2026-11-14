@@ -49,20 +49,27 @@ checks = {
         "kp_exec_seal(exec_relo)" in hook_c and
         "kp_exec_seal(transit)" in hook_c and
         "kp_exec_seal(transit)" in fphook_c,
-    "generated inline code is D-cache-cleaned to PoU before RX sealing":
+    "generated inline code is cleaned to PoU and globally invalidated before RX sealing":
         "#define KP_HOOK_FLUSH_ICACHE_RANGE(start, end)" in hook_c and
         "flush_icache_range((unsigned long)(start), (unsigned long)(end))" in hook_c and
         "KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)exec_relo" in hook_c and
-        "KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)transit" in hook_c,
+        "KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)transit" in hook_c and
+        hook_c.count("flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */") == 2 and
+        hook_c.index("KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)exec_relo") <
+        hook_c.index("flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */") <
+        hook_c.index("kp_exec_seal(exec_relo)"),
     "flush_icache_range cleans D-cache to PoU and invalidates I-cache":
         bool(re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S)) and
         bool(re.search(r"dc\s+cvau", re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S).group(1))) and
         bool(re.search(r"ic\s+ivau", re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S).group(1))) and
         bool(re.search(r"dsb\s+ish", re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S).group(1))) and
         bool(re.search(r"isb", re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S).group(1))),
-    "generated FP transit code is D-cache-cleaned to PoU before RX sealing":
+    "generated FP transit code is cleaned to PoU and globally invalidated before RX sealing":
         "flush_icache_range((unsigned long)transit" in fphook_c and
-        "flush_icache_all();\n    if (kp_exec_seal(transit))" not in fphook_c,
+        "flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */" in fphook_c and
+        fphook_c.index("flush_icache_range((unsigned long)transit") <
+        fphook_c.index("flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */") <
+        fphook_c.index("kp_exec_seal(transit)"),
     "RX seal applies read-only and clears PXN":
         "exec_set_uniform_protection(a, address" in exec_alloc and
         "KP_EXEC_RX" in exec_alloc and
