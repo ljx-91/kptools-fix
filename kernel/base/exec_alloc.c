@@ -111,6 +111,8 @@ int kp_exec_allocator_init(void *base, size_t bytes, size_t runtime_page_size)
         !is_power_of_two(runtime_page_size) ||
         ((uint64_t)(unsigned long)base & (runtime_page_size - 1)) ||
         !bytes || bytes % runtime_page_size) return -EINVAL;
+    if ((uint64_t)(unsigned long)base > (uint64_t)-1 - (uint64_t)bytes)
+        return -EOVERFLOW;
 
     if (bytes / runtime_page_size > KP_EXEC_MAX_PAGES ||
         bytes / runtime_page_size > 0xfffeU) return -EOVERFLOW;
