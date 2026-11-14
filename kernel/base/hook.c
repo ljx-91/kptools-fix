@@ -83,6 +83,17 @@ static int32_t relo_len[] = { 6, 8, 8, 4, 4, 6, 6, 6, 8, 8, 8, 8, 6, 6, 6, 6, 2 
 //     return x;
 // }
 
+static int32_t relo_inst_len(uint32_t inst, inst_type_t type)
+{
+    if ((type == INST_LDR_32 || type == INST_LDR_64 ||
+         type == INST_LDRSW_LIT) && bits32(inst, 4, 0) == 31)
+        return 7;
+    for (int i = 0; i < sizeof(relo_len) / sizeof(relo_len[0]); ++i)
+        if ((inst & masks[i]) == types[i])
+            return relo_len[i];
+    return 2;
+}
+
 static int is_in_tramp(hook_t *hook, uint64_t addr)
 {
     uint64_t tramp_start = hook->origin_addr;
@@ -117,9 +128,12 @@ static uint64_t relo_in_tramp(hook_t *hook, uint64_t addr)
     uint64_t fix_addr = hook->relo_addr;
     for (int i = 0; i < addr_inst_index; i++) {
         inst_type_t inst = hook->origin_insts[i];
+        fix_addr += (uint64_t)relo_inst_len(inst, INST_IGNORE) * 4;
+        /* Decode the instruction class before applying any special length. */
         for (int j = 0; j < sizeof(relo_len) / sizeof(relo_len[0]); j++) {
             if ((inst & masks[j]) == types[j]) {
-                fix_addr += relo_len[j] * 4;
+                fix_addr -= (uint64_t)relo_inst_len(inst, INST_IGNORE) * 4;
+                fix_addr += (uint64_t)relo_inst_len(inst, types[j]) * 4;
                 break;
             }
         }
@@ -238,22 +252,43 @@ static __noinline hook_err_t relo_ldr(hook_t *hook, uint64_t inst_addr, uint32_t
     addr = relo_in_tramp(hook, addr);
 
     if (type == INST_LDR_32 || type == INST_LDR_64 || type == INST_LDRSW_LIT) {
-        /* At buf[0], the 64-bit literal starts at buf[4] (+16). */
-        buf[0] = 0x58000080u | rt; // LDR Xt, #16
-        if (type == INST_LDR_32) {
-            buf[1] = 0xB9400000 | rt | (rt << 5u); // LDR Wt, [Xt]
-        } else if (type == INST_LDR_64) {
-            buf[1] = 0xF9400000 | rt | (rt << 5u); // LDR Xt, [Xt]
+        if (rt == 31) {
+            /*
+             * Rt=31 is WZR/XZR, not a usable address register. Preserve X16/X17,
+             * use X17 as the address scratch, perform the architecturally
+             * required memory access into the zero register, then skip the
+             * embedded 64-bit address literal.
+             */
+            buf[0] = 0xA9BF47F0; // STP X16, X17, [SP, #-0x10]!
+            buf[1] = 0x58000091; // LDR X17, #16 (literal at buf[5])
+            if (type == INST_LDR_32)
+                buf[2] = 0xB940023F; // LDR WZR, [X17]
+            else if (type == INST_LDR_64)
+                buf[2] = 0xF940023F; // LDR XZR, [X17]
+            else
+                buf[2] = 0xB980023F; // LDRSW XZR, [X17]
+            buf[3] = 0xA8C147F0; // LDP X16, X17, [SP], #0x10
+            buf[4] = 0x14000003; // B #12
+            buf[5] = addr & 0xFFFFFFFF;
+            buf[6] = addr >> 32u;
         } else {
-            // LDRSW_LIT
-            buf[1] = 0xB9800000 | rt | (rt << 5u); // LDRSW Xt, [Xt]
+            /* At buf[0], the 64-bit literal starts at buf[4] (+16). */
+            buf[0] = 0x58000080u | rt; // LDR Xt, #16
+            if (type == INST_LDR_32) {
+                buf[1] = 0xB9400000 | rt | (rt << 5u); // LDR Wt, [Xt]
+            } else if (type == INST_LDR_64) {
+                buf[1] = 0xF9400000 | rt | (rt << 5u); // LDR Xt, [Xt]
+            } else {
+                // LDRSW_LIT
+                buf[1] = 0xB9800000 | rt | (rt << 5u); // LDRSW Xt, [Xt]
+            }
+            buf[2] = 0x14000004; // B #16
+            buf[3] = ARM64_NOP;
+            buf[4] = addr & 0xFFFFFFFF;
+            buf[5] = addr >> 32u;
         }
-        buf[2] = 0x14000004; // B #16
-        buf[3] = ARM64_NOP;
-        buf[4] = addr & 0xFFFFFFFF;
-        buf[5] = addr >> 32u;
     } else {
-        buf[0] = 0xA93F47F0; // STP X16, X17, [SP, #-0x10]!
+        buf[0] = 0xA9BF47F0; // STP X16, X17, [SP, #-0x10]!
         /* At buf[1] (+4), the 64-bit literal starts at buf[6] (+24): +20. */
         buf[1] = 0x580000B1; // LDR X17, #20
         if (type == INST_PRFM_LIT) {
@@ -660,12 +695,12 @@ static __noinline hook_err_t relocate_inst(hook_t *hook, uint64_t inst_addr, uin
 {
     hook_err_t rc = HOOK_NO_ERR;
     inst_type_t it = INST_IGNORE;
-    int len = 1;
+    int len = 2;
 
     for (int j = 0; j < sizeof(relo_len) / sizeof(relo_len[0]); j++) {
         if ((inst & masks[j]) == types[j]) {
             it = types[j];
-            len = relo_len[j];
+            len = relo_inst_len(inst, it);
             break;
         }
     }
