@@ -127,6 +127,14 @@ checks = {
         "!(desc & PTE_RDONLY) || (desc & PTE_DBM)" in exec_alloc and
         "!(desc & PTE_PXN)" in exec_alloc and
         "Writable block aliases are rejected fail-closed." in exec_alloc,
+    "relocation rejects null hook records before dereference":
+        bool(re.search(r"hook_err_t\\s+hook_prepare\\s*\\(hook_t\\s*\\*hook\\)\\s*\\{\\s*if\\s*\\(!hook\\)", hook_c)),
+    "relocated instruction writes are bounded by the fixed output array":
+        "len > capacity - hook->relo_insts_num" in hook_c and
+        "if (rc)\\n        return rc;" in hook_c,
+    "branch-back emission reserves and validates its maximum output":
+        "capacity - hook->relo_insts_num < 4" in hook_c and
+        "back_len <= 0 || back_len > 4" in hook_c,
     "legacy structure transit capacity remains unchanged":
         "#define TRANSIT_INST_NUM 0x70" in hook_h,
 }
