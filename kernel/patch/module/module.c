@@ -886,7 +886,7 @@ free_mod:
         if (mod->start) {
             int free_rc = kp_free_exec(mod->start);
             if (free_rc)
-                logke("[%s] executable image retained after permission reset failure: %d\\n",
+                logke("[%s] executable image retained after permission reset failure: %d\n",
                       mod->info.name, free_rc);
         }
         kvfree(mod);
@@ -941,7 +941,7 @@ long unload_module(const char *name, void *__user reserved)
     if (mod->start) {
         int free_rc = kp_free_exec(mod->start);
         if (free_rc)
-            logke("[%s] executable image retained after permission reset failure: %d\\n",
+            logke("[%s] executable image retained after permission reset failure: %d\n",
                   mod->info.name, free_rc);
     }
     kvfree(mod);
