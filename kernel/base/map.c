@@ -863,8 +863,8 @@ void __noinline _paging_init()
      * place the value in x2 immediately before the original two-argument
      * call, preserving the verified _paging_init frame and tail-return ABI.
      */
-    asm volatile("mov x2, %0" : : "r"(data->alloc_size) : "x2", "memory");
-    ((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset);
+    ((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset,
+                               (uint64_t)data->alloc_size);
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
     if (data->alloc_size)
         sctlr_el1 |= (1ull << 19);
