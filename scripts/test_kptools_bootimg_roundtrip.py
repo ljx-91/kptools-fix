@@ -55,8 +55,9 @@ def make_boot(path):
         f.write(kernel_blob)
         f.write(bytes((-len(kernel_blob)) % PAGE))
         f.write(dtb_table)
-        f.write(bytes(64))  # reserved tail/footer area used by the repacker
-        used = PAGE + ((len(kernel_blob) + PAGE - 1) // PAGE * PAGE) + len(dtb_table) + 64
+        f.write(bytes([0xA5]) * 64)  # nonzero opaque tail after the DTB table
+        f.write(bytes(64))  # reserved footer-sized area used by the repacker
+        used = PAGE + ((len(kernel_blob) + PAGE - 1) // PAGE * PAGE) + len(dtb_table) + 128
         f.write(bytes((-used) % PAGE))
 
 
