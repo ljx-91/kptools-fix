@@ -800,12 +800,14 @@ void __noinline _paging_init()
     uint64_t attrs = *(uint64_t *)ktext_pte;
     uint64_t attr_indx = attrs & 0b11100;
 
-    // clear wxn
-    // todo: restore wxn later
+    // Temporarily clear WXN while the relocated image is copied and
+    // initialized. Save only WXN; the kernel may legitimately change other
+    // SCTLR_EL1 bits while paging_init() runs.
     uint64_t sctlr_el1 = 0;
-    asm volatile("mrs %[reg], sctlr_el1" : [reg] "+r"(sctlr_el1));
-    sctlr_el1 &= 0xFFFFFFFFFFF7FFFF;
-    asm volatile("msr sctlr_el1, %[reg]" : : [reg] "r"(sctlr_el1));
+    asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
+    uint64_t original_wxn = (sctlr_el1 >> 19) & 1ull;
+    sctlr_el1 &= ~(1ull << 19);
+    asm volatile("msr sctlr_el1, %0\n\tisb" : : "r"(sctlr_el1) : "memory");
 
     // move start memory
     // Validate both physical-to-virtual translations before using the ranges.
@@ -851,5 +853,19 @@ void __noinline _paging_init()
     ((memblock_free_f)data->map_symbol.memblock_free_relo)(old_start_pa, reserve_size);
 
     // start
-    ((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset);
+    /*
+     * start() normally tail-returns to the kernel and never comes back here.
+     * If start_init() fails, it returns while relocated .start.text is still
+     * RWX, so restore WXN here (not inside start()'s error branch).
+     */
+    (void)((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset,
+                               original_wxn);
+    uint64_t current_sctlr = 0;
+    asm volatile("mrs %0, sctlr_el1" : "=r"(current_sctlr));
+    if (original_wxn)
+        current_sctlr |= (1ull << 19);
+    else
+        current_sctlr &= ~(1ull << 19);
+    asm volatile("dsb ish\n\tmsr sctlr_el1, %0\n\tisb"
+                 : : "r"(current_sctlr) : "memory");
 }
