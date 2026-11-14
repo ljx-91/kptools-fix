@@ -19,6 +19,7 @@ REQUIRED_SOURCE = (
     "exec_walk_leaf",
     "exec_walk_linear_alias",
     "mapped_pa != expected_pa",
+    "!(desc & PTE_RDONLY) || (desc & PTE_DBM)",
     "!(desc & PTE_PXN)",
     "linear_ptes[KP_EXEC_MAX_PAGES]",
     "flush_tlb_kernel_range(base, base + bytes)",
