@@ -2,7 +2,17 @@
 /*
  * Copyright (C) 2023 bmax121. All Rights Reserved.
  */
-#include "setup.h"
+/* map_data_t offsets; guarded by matching C static assertions in setup.h. */
+#define map_paging_init_relo_offset 64
+#ifdef MAP_DEBUG
+#define map_page_shift_offset 184
+#define map_kimage_voffset_offset 192
+#define map_linear_voffset_offset 200
+#else
+#define map_page_shift_offset 136
+#define map_kimage_voffset_offset 144
+#define map_linear_voffset_offset 152
+#endif
 
     .text
     .align  2
