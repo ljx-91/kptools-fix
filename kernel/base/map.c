@@ -4,7 +4,6 @@
  */
 
 #include "setup.h"
-extern volatile uint64_t kp_saved_wxn;
 #define NUMA_NO_NODE (-1)
 
 typedef uint64_t phys_addr_t;
@@ -806,7 +805,7 @@ void __noinline _paging_init()
     // SCTLR_EL1 bits while paging_init() runs.
     uint64_t sctlr_el1 = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
-    kp_saved_wxn = (sctlr_el1 >> 19) & 1ull;
+    uint64_t original_wxn = (sctlr_el1 >> 19) & 1ull;
     sctlr_el1 &= ~(1ull << 19);
     asm volatile("msr sctlr_el1, %0\n\tisb" : : "r"(sctlr_el1) : "memory");
 
@@ -859,10 +858,27 @@ void __noinline _paging_init()
      * If start_init() fails, it returns while relocated .start.text is still
      * RWX, so restore WXN here (not inside start()'s error branch).
      */
-    (void)((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset);
+    /*
+     * Supply the saved WXN bit in x2 while keeping start_f's two-argument
+     * C ABI. The Y73S tail-return verifier depends on _paging_init's frame.
+     */
+    uint64_t start_arg0 = data->kimage_voffset;
+    uint64_t start_arg1 = data->linear_voffset;
+    uint64_t start_arg2 = original_wxn;
+    uint64_t start_fn = sctlr_el1;
+    asm volatile(
+        "mov x0, %0\n\t"
+        "mov x1, %1\n\t"
+        "mov x2, %2\n\t"
+        "blr %3\n\t"
+        :
+        : "r"(start_arg0), "r"(start_arg1), "r"(start_arg2), "r"(start_fn)
+        : "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8",
+          "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x16",
+          "x17", "x18", "x30", "memory");
     uint64_t current_sctlr = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(current_sctlr));
-    if (kp_saved_wxn)
+    if (original_wxn)
         current_sctlr |= (1ull << 19);
     else
         current_sctlr &= ~(1ull << 19);
