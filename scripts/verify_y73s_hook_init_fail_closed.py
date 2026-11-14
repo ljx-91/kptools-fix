@@ -145,6 +145,10 @@ checks = {
             r"if \(block_flag\) \{[\s\S]*?if \(!pa\) return pxd_entry_va;\s*__builtin_trap\(\);",
             map_c)) and
         "Splitting a live block while preserving all attributes is not" in map_c,
+    "reserved first/final-level block descriptors are rejected":
+        bool(re.search(
+            r"if \(lv == 0 \|\| lv == 3 \|\| \(page_shift != 12 && lv != 2\)\)\\s*__builtin_trap\(\);",
+            map_c)),
     "ordinary 4-KiB leaf lookup still validates the page descriptor":
         "if ((leaf_desc & 0x3ull) != 0x3ull) __builtin_trap();" in map_c,
     "legacy structure transit capacity remains unchanged":
