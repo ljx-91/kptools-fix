@@ -750,11 +750,8 @@ static int start_init(uint64_t kimage_voff, uint64_t linear_voff)
 void symbol_init();
 int patch();
 
-int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_voff, uint64_t linear_voff)
+int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_voff, uint64_t linear_voff, uint64_t saved_wxn)
 {
-    uint64_t saved_wxn = 0;
-    /* x2 is supplied by the map hook without changing the C ABI/frame. */
-    asm volatile("mov %0, x2" : "=r"(saved_wxn));
     int rc = 0;
     // raw stash for post-mortem debugging: no vsnprintf available yet here
     ((uint64_t *)boot_log)[0] = 0x4b50565354415254ull; // "KPVSTART" marker
@@ -786,8 +783,8 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
     rc = patch();
     // Return to the kernel's paging_init caller directly, restoring
     // _paging_init's callee-saved registers from its frame. The d0a
-    // Y73S KPIMG audit found a 0x130-byte _paging_init frame with x29 = SP,
-    // therefore the caller SP is x10+0x130. This is compiler-layout specific;
+    // Y73S KPIMG audit found a 0x140-byte _paging_init frame with x29 = SP,
+    // therefore the caller SP is x10+0x140. This is compiler-layout specific;
     // every new KPIMG must pass the post-build verifier before use.
     // x29 must be restored from
     // [P], exactly like _paging_init's own epilogue (ldp x29, x30,
@@ -809,7 +806,7 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
         "ldp x27, x28, [x10, #80]\n"
         "ldr x29, [x10]\n"
         "ldr x30, [x10, #8]\n"
-        "add sp, x10, #0x130\n"
+        "add sp, x10, #0x140\n"
         "ret\n"
         : : : "x10", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26",
               "x27", "x28", "x29", "x30", "memory");
