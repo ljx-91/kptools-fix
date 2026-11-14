@@ -127,6 +127,10 @@ def main():
     mem_proc_fn = function_body(map_c, "static __noinline void mem_proc(")
     require(r"mrs %0, tcr_el1", mem_proc_fn,
             "translation geometry must be read from the active TCR_EL1")
+    require(r"t1sz\s*=\s*tcr_el1\s*<<\s*42\s*>>\s*58", mem_proc_fn,
+            "TCR_EL1.T1SZ extraction must select bits [21:16]")
+    require(r"tg1\s*=\s*tcr_el1\s*<<\s*32\s*>>\s*62", mem_proc_fn,
+            "TCR_EL1.TG1 extraction must select bits [31:30]")
     require(r"if\s*\(tg1\s*!=\s*2\s*\|\|\s*t1sz\s*!=\s*25\s*\|\|\s*page_shift\s*!=\s*12\s*\|\|\s*va1_bits\s*!=\s*39\)\s*__builtin_trap\(\);",
             mem_proc_fn, "Y73S must fail closed unless TCR_EL1 selects 4-KiB / 39-bit TTBR1 geometry")
 
