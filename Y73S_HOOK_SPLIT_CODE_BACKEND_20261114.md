@@ -184,3 +184,32 @@ The static contract suite now contains 35 checks, including null-record,
 per-instruction output-bound, and branch-back reservation assertions. CI for
 the new revision is running; results will be recorded after completion.
 These checks do not replace runtime execution tests on the Y73s.
+
+
+## 2026-11-14 follow-up: lookup-only handling of kernel-image block descriptors
+
+The Y73s boot-image forensic review identified a deterministic early failure candidate in
+`get_or_create_pte()`: its `pa == 0` lookup-only call reads the kernel text
+AttrIndx, but the kernel image page tables can legitimately map the text range
+with 2-MiB PMD block descriptors. The previous walker rejected every block
+descriptor, including this read-only lookup, with `__builtin_trap()`.
+
+The Y73s path now distinguishes the two operations:
+
+- For `pa == 0`, encountering a valid block descriptor returns the address of
+  that descriptor slot. The caller reads its AttrIndx; this path does not write
+  the descriptor or allocate/split a table.
+- For `pa != 0`, encountering a block descriptor still traps. Live block
+  splitting and descriptor replacement remain unsupported and fail closed.
+- The ordinary 4-KiB leaf descriptor validation remains in place.
+
+This is a targeted source-level correction for the strongest boot-failure
+candidate found in the supplied patched kernel. The descriptor's physical base
+is not rewritten, and neighboring mappings are not changed by this lookup
+path. Static source contracts were added for the lookup-only return, the
+write-request rejection, and retained leaf validation.
+
+The fix has not yet been built into a fresh KPIMG artifact or boot-tested on
+the physical Y73s. It is therefore not evidence of successful boot, and the
+original failure diagnosis remains a high-confidence static diagnosis until
+runtime page-table evidence or a controlled device test confirms it.
