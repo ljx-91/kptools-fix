@@ -1296,6 +1296,12 @@ int repack_bootimg_mem(const char *orig_boot_path,
         }
     }
 
+    /* Copy packed header scalars to aligned locals before hashing them. */
+    uint32_t kernel_size_id = hdr.kernel_size;
+    uint32_t second_size_id = hdr.second_size;
+    uint32_t recovery_dtbo_size_id = hdr.recovery_dtbo_size;
+    uint32_t dtb_size_id = hdr.dtb_size;
+
     uint32_t use_sha256 = is_sha256(hdr.id);
     int len = use_sha256 ? SHA256_BLOCK_SIZE : SHA1_BLOCK_SIZE;
     BYTE buf[len];
@@ -1310,12 +1316,12 @@ int repack_bootimg_mem(const char *orig_boot_path,
             sha256_update(&ctx, (const BYTE *)final_k_buf, final_k_size);
             if (dtb_size)
                 sha256_update(&ctx, (const BYTE *)extracted_dtb, dtb_size);
-            sha256_update(&ctx, (const BYTE *)&hdr.kernel_size, 4);
+            sha256_update(&ctx, (const BYTE *)&kernel_size_id, 4);
             sha256_update(&ctx, (const BYTE *)rest_buf, fmt_size);
             sha256_update(&ctx, (const BYTE *)&fmt_size, sizeof(fmt_size));
 
             sha256_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.second_size);
-            sha256_update(&ctx, (const BYTE *)&hdr.second_size, 4);
+            sha256_update(&ctx, (const BYTE *)&second_size_id, 4);
             tools_logi("second_size=%d\n",hdr.second_size);
             if (hdr.second_size > 0){
                 checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
@@ -1332,14 +1338,14 @@ int repack_bootimg_mem(const char *orig_boot_path,
             if (header_ver == 1 || header_ver == 2){
                 tools_logi("recovery_dtbo_size=%d\n",hdr.recovery_dtbo_size);
                 sha256_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.recovery_dtbo_size);
-                sha256_update(&ctx, (const BYTE *)&hdr.recovery_dtbo_size, 4);
+                sha256_update(&ctx, (const BYTE *)&recovery_dtbo_size_id, 4);
                 checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
                     align_ceil((uint64_t)hdr.recovery_dtbo_size, (uint64_t)page_size));
             }
             if (header_ver == 2){
                 tools_logi("dtb_size=%d\n",hdr.dtb_size);
                 sha256_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.dtb_size);
-                sha256_update(&ctx, (const BYTE *)&hdr.dtb_size, 4);
+                sha256_update(&ctx, (const BYTE *)&dtb_size_id, 4);
             }
 
             sha256_final(&ctx, buf);
@@ -1352,13 +1358,13 @@ int repack_bootimg_mem(const char *orig_boot_path,
             sha1_update(&ctx, (const BYTE *)final_k_buf, final_k_size);
             if (dtb_size)
                 sha1_update(&ctx, (const BYTE *)extracted_dtb, dtb_size);
-            sha1_update(&ctx, (const BYTE *)&hdr.kernel_size, 4);
+            sha1_update(&ctx, (const BYTE *)&kernel_size_id, 4);
             sha1_update(&ctx, (const BYTE *)rest_buf, fmt_size);
             sha1_update(&ctx, (const BYTE *)&fmt_size, sizeof(fmt_size));
 
 
             sha1_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.second_size);
-            sha1_update(&ctx, (const BYTE *)&hdr.second_size, 4);
+            sha1_update(&ctx, (const BYTE *)&second_size_id, 4);
             if (hdr.second_size > 0){
                 checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
                     align_ceil((uint64_t)hdr.second_size, (uint64_t)page_size));
@@ -1376,7 +1382,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
             if (header_ver == 1 || header_ver == 2){
                 tools_logi("recovery_dtbo_size=%d,offset=%d\n",hdr.recovery_dtbo_size, checksum_aligned+rest_data_offset);
                 sha1_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.recovery_dtbo_size);
-                sha1_update(&ctx, (const BYTE *)&hdr.recovery_dtbo_size, 4);
+                sha1_update(&ctx, (const BYTE *)&recovery_dtbo_size_id, 4);
                 checksum_aligned = (uint32_t)((uint64_t)checksum_aligned +
                     align_ceil((uint64_t)hdr.recovery_dtbo_size, (uint64_t)page_size));
             }
@@ -1384,7 +1390,7 @@ int repack_bootimg_mem(const char *orig_boot_path,
             if (header_ver == 2){
                 tools_logi("dtb_size=%d,dtb_addr=%lu\n",hdr.dtb_size,hdr.dtb_addr);
                 sha1_update(&ctx, (const BYTE *)rest_buf + checksum_aligned, hdr.dtb_size);
-                sha1_update(&ctx, (const BYTE *)&hdr.dtb_size, 4);
+                sha1_update(&ctx, (const BYTE *)&dtb_size_id, 4);
             }
 
             sha1_final(&ctx, buf);
