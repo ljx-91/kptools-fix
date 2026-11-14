@@ -13,6 +13,7 @@
 #include <predata.h>
 #include <barrier.h>
 #include <stdarg.h>
+#include <kpmalloc.h>
 
 #include "../banner"
 #include "start.h"
@@ -260,7 +261,6 @@ uint64_t pgd_va;
 uint64_t kernel_stext_va = 0;
 
 tlsf_t kp_rw_mem = 0;
-tlsf_t kp_rox_mem = 0;
 
 #define BOOT_LOG_SIZE 0x2000
 static char boot_log[BOOT_LOG_SIZE] = { 0 };
@@ -483,15 +483,19 @@ static void prot_myself()
     flush_tlb_kernel_range(_kp_rw_start, _kp_rw_end);
     kp_rw_mem = tlsf_create_with_pool((void *)_kp_rw_start, MEMORY_RW_SIZE);
 
-    // rox memory
-    kp_rox_mem = tlsf_malloc(kp_rw_mem, tlsf_size());
-    tlsf_create(kp_rox_mem);
-
+    /*
+     * Executable KPM images use page runs, not TLSF. TLSF writes block
+     * headers into free/allocated pool memory and therefore cannot support
+     * independent text/rodata page permissions.
+     */
     _kp_rox_start = _kp_rw_end;
     _kp_rox_end = _kp_rox_start + MEMORY_ROX_SIZE;
     log_boot("ROX: %llx, %llx\n", _kp_rox_start, _kp_rox_end);
-
-    tlsf_add_pool(kp_rox_mem, (void *)_kp_rox_start, MEMORY_ROX_SIZE);
+    int exec_alloc_rc = kp_exec_allocator_init((void *)_kp_rox_start,
+                                                MEMORY_ROX_SIZE,
+                                                (size_t)page_size);
+    if (exec_alloc_rc)
+        log_boot("KP executable allocator init failed: %d\n", exec_alloc_rc);
 
     for (uint64_t i = _kp_rox_start; i < _kp_rox_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
