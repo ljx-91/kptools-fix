@@ -67,7 +67,7 @@ void *hook_mem_zalloc(uintptr_t origin_addr, enum hook_type type)
     for (uint64_t addr = start; addr < end && sizeof(hook_mem_warp_t) <= end - addr;
          addr += sizeof(hook_mem_warp_t)) {
         hook_mem_warp_t *wrap = (hook_mem_warp_t *)addr;
-        if (wrap->using == 1 || wrap->using == 3 || wrap->using == 4) {
+        if (wrap->using == 1 || wrap->using == 3 || wrap->using == 4 || wrap->using == 5) {
             if (wrap->addr == origin_addr) {
                 kp_private_spin_unlock(&hook_mem_lock, flags);
                 return 0;
@@ -107,8 +107,8 @@ void hook_mem_free(void *hook_mem)
     if (warp->using == 3) {
         exec_relo = warp->exec_relo;
         exec_transit = warp->exec_transit;
-        /* Reserve the record while permission reset and page release run. */
-        warp->using = 4;
+        /* State 5 reserves cleanup without colliding with retire-claimed state 4. */
+        warp->using = 5;
     }
     kp_private_spin_unlock(&hook_mem_lock, flags);
 
@@ -116,7 +116,7 @@ void hook_mem_free(void *hook_mem)
     if (exec_transit) transit_rc = kp_free_exec(exec_transit);
 
     flags = kp_private_spin_lock(&hook_mem_lock);
-    if (warp->using == 4) {
+    if (warp->using == 5) {
         if (!relo_rc) warp->exec_relo = NULL;
         if (!transit_rc) warp->exec_transit = NULL;
         if (!warp->exec_relo && !warp->exec_transit) {
