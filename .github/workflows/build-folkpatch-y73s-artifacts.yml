@@ -89,6 +89,13 @@ jobs:
           set -euxo pipefail
           python3 -m py_compile scripts/*.py
           python3 scripts/verify_y73s_setup_preset_bounds.py
+          python3 scripts/verify_y73s_memblock_contract.py
+          python3 scripts/verify_y73s_runtime_contract.py
+          python3 scripts/verify_y73s_paging_init_bounds.py
+          python3 scripts/verify_y73s_paging_veneer_bounds.py
+          python3 scripts/test_y73s_exec_allocator.py
+          python3 scripts/test_y73s_hook_gate_model.py
+          python3 scripts/test_y73s_hook_gate_interleavings.py
           python3 scripts/test_kptools_extra_terminator.py
           python3 scripts/test_y73s_kallsym_pid_vnr_cfi.py
           python3 scripts/test_folkpatch_trusted_manager.py
