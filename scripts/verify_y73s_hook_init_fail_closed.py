@@ -74,6 +74,9 @@ checks = {
         "uint64_t args[12];" in hook_h and
         "hook_chain12_callback" in hook_h and
         "hook_wrap12(" in hook_h and "fp_hook_wrap12(" in hook_h,
+    "integer literal relocation loads the literal at the correct PC-relative offset":
+        "buf[0] = 0x58000080u | rt; // LDR Xt, #16" in hook_c and
+        "buf[0] = 0x58000060u | rt" not in hook_c,
     "SIMD literal relocation loads the literal at the correct PC-relative offset":
         "buf[1] = 0x580000B1; // LDR X17, #20" in hook_c and
         "buf[1] = 0x58000091" not in hook_c,
