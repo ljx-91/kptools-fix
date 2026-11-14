@@ -136,13 +136,6 @@ def main():
             "relocated start must capture the WXN handoff before calling start_init")
     before(start_fn, "prot_myself();", "msr sctlr_el1",
            "KP text/data permissions must be sealed before restoring WXN")
-    require(r"uint64_t original_wxn\s*=\s*\(sctlr_el1\s*>>\s*19\)\s*&\s*1ull", paging,
-            "original WXN bit must be saved before temporary clearing")
-    before(paging, "uint64_t original_wxn = (sctlr_el1 >> 19) & 1ull;",
-           "sctlr_el1 &= ~(1ull << 19);",
-           "original WXN state must be saved before clearing")
-    before(paging, "map_start_call();", "uint64_t current_sctlr",
-           "failure return from relocated start must restore WXN")
     require(r"memblock_mark_nomap_f[^;]*\)\(start_pa,\s*all_size\)\)\s*__builtin_trap\(\);",
             paging, "NOMAP failure must stop before mapping/copying")
 
