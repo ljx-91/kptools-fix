@@ -131,6 +131,10 @@ def main():
             pte, "Y73S page-table walker must enforce the supported 4-KiB / 39-bit geometry")
     require(r"\(va\s*>>\s*39\)\s*!=\s*0x1FFFFFFull",
             pte, "Y73S page-table walker must reject non-canonical TTBR1 virtual addresses")
+    require(r"if\s*\(!pxd_pa\s*\|\|\s*pxd_pa\s*>\s*~\(uint64_t\)0\s*-\s*data->linear_voffset\)\s*__builtin_trap\(\);",
+            pte, "TTBR1 root and child table physical addresses must not overflow the linear-map conversion")
+    require(r"if\s*\(pxd_va\s*>\s*~\(uint64_t\)0\s*-\s*page_size\)\s*__builtin_trap\(\);",
+            pte, "TTBR1 table virtual windows must not overflow the address space")
     require(r"if\s*\(!page_level\s*\|\|\s*page_level\s*>\s*4\)\s*__builtin_trap\(\);",
             pte, "page-table walk must reject an invalid translation level count")
     require(r"pxd_pa\s*=\s*map_phys_alloc\(data,\s*page_size,\s*page_size\);\s*if\s*\(!pxd_pa\s*\|\|\s*pxd_pa\s*>\s*~\(uint64_t\)0\s*-\s*data->linear_voffset\)\s*__builtin_trap\(\);",
