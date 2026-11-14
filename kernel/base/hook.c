@@ -762,7 +762,8 @@ int hook_install(hook_t *hook)
     /* Trampoline bytes are generated in executable memory before the branch
      * is installed. Publish the relocated trampoline range before patching. */
 #ifndef KP_HOOK_FLUSH_ICACHE_RANGE
-#define KP_HOOK_FLUSH_ICACHE_RANGE(start, end) flush_icache_all()
+#define KP_HOOK_FLUSH_ICACHE_RANGE(start, end) \
+    flush_icache_range((unsigned long)(start), (unsigned long)(end))
 #endif
     KP_HOOK_FLUSH_ICACHE_RANGE(hook->relo_addr,
                                hook->relo_addr + hook->relo_insts_num * sizeof(uint32_t));
@@ -897,7 +898,8 @@ static hook_err_t hook_prepare_relo_exec(void *record, hook_t *hook)
 
     for (size_t i = 0; i < sizeof(hook->relo_insts) / sizeof(hook->relo_insts[0]); ++i)
         ((uint32_t *)exec_relo)[i] = hook->relo_insts[i];
-    flush_icache_all();
+    KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)exec_relo,
+                               (unsigned long)exec_relo + sizeof(hook->relo_insts));
     if (kp_exec_seal(exec_relo))
         return -HOOK_TRANSIT_NO_MEM;
     return HOOK_NO_ERR;
@@ -939,7 +941,8 @@ static hook_err_t hook_chain_prepare(hook_chain_t *chain, uint32_t **transit_out
     transit[5] = (uint64_t)chain >> 32;
     if (branch_absolute(&transit[6], transit_start) <= 0)
         return -HOOK_TRANSIT_NO_MEM;
-    flush_icache_all();
+    KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)transit,
+                               (unsigned long)transit + 64);
     if (kp_exec_seal(transit))
         return -HOOK_TRANSIT_NO_MEM;
     *transit_out = transit;
