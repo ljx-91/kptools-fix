@@ -115,6 +115,72 @@ static bool exec_leaf_valid(volatile uint64_t *pte, uint64_t expected_pa,
     return true;
 }
 
+/*
+ * The linear-map alias may use an ARM64 block descriptor (commonly 2-MiB).
+ * We do not split or rewrite such a block: it is acceptable only when it is
+ * already privileged-XN and maps the exact physical page. Page aliases are
+ * returned for synchronized permission updates.
+ */
+static int exec_walk_linear_alias(uint64_t va, uint64_t expected_pa,
+                                  uint64_t attr_index,
+                                  volatile uint64_t **leaf)
+{
+    uint64_t table_va;
+
+    *leaf = NULL;
+    if (page_shift != 12 || page_size != 4096 || page_level != 3 ||
+        (va >> 39) != 0x1ffffffull || !pgd_pa ||
+        !pgd_va || (pgd_va & (page_size - 1)))
+        return -EFAULT;
+
+    table_va = pgd_va;
+    for (int64_t level = 4 - page_level; level < 4; ++level) {
+        uint64_t shift = (page_shift - 3) * (4 - level) + 3;
+        uint64_t index = (va >> shift) & ((1ull << (page_shift - 3)) - 1);
+        volatile uint64_t *entry = (volatile uint64_t *)(unsigned long)
+                                   (table_va + index * sizeof(uint64_t));
+        uint64_t desc = *entry;
+        uint64_t type = desc & 0x3ull;
+
+        if (level == 3) {
+            if (type != 0x3ull ||
+                !exec_leaf_valid(entry, expected_pa, attr_index, true))
+                return -EFAULT;
+            *leaf = entry;
+            return 0;
+        }
+
+        if (type == 0x1ull) {
+            unsigned int block_shift =
+                (unsigned int)((3 - level) * (page_shift - 3) + page_shift);
+            uint64_t block_size = 1ull << block_shift;
+            uint64_t block_mask =
+                ((1ull << (48 - block_shift)) - 1) << block_shift;
+            uint64_t mapped_pa = (desc & block_mask) | (va & (block_size - 1));
+
+            if (mapped_pa != expected_pa ||
+                (desc & 0x1cull) != attr_index ||
+                (desc & 0x300ull) != 0x300ull ||
+                !(desc & (1ull << 10)) ||
+                !(desc & PTE_PXN))
+                return -EFAULT;
+            return 0;
+        }
+
+        if (type != 0x3ull || (desc & KP_EXEC_TABLE_RESTRICT_MASK))
+            return -EFAULT;
+
+        uint64_t table_pa = desc & KP_EXEC_PA_MASK;
+        if (!table_pa || table_pa > (uint64_t)-1 - linear_voffset)
+            return -EFAULT;
+        table_va = table_pa + linear_voffset;
+        if ((table_va & (page_size - 1)) ||
+            table_va > (uint64_t)-1 - page_size)
+            return -EFAULT;
+    }
+    return -EFAULT;
+}
+
 /* Preflight both KIMG and linear aliases and cache their leaf-PTE addresses. */
 static int exec_prepare_pages(struct kp_exec_allocator *a, uint64_t base,
                               size_t bytes, uint64_t *linear_base)
@@ -162,8 +228,8 @@ static int exec_prepare_pages(struct kp_exec_allocator *a, uint64_t base,
             return -EFAULT;
 
         if (linear_va != kimg_va) {
-            linear_pte = exec_walk_leaf(linear_va);
-            if (!exec_leaf_valid(linear_pte, expected_pa, attr_index, true))
+            if (exec_walk_linear_alias(linear_va, expected_pa,
+                                       attr_index, &linear_pte))
                 return -EFAULT;
         }
 
