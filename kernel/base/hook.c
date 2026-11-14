@@ -341,7 +341,7 @@ static __noinline hook_err_t relo_tb(hook_t *hook, uint64_t inst_addr, uint32_t 
     buf[0] = (inst & 0xFFF8001F) | 0x40u; // TB(N)Z Rt, #<imm>, #8
     buf[1] = 0x14000005; // B #20
     buf[2] = 0x58000051; // LDR X17, #8
-    buf[3] = 0xd61f0220; // RET X17
+    buf[3] = 0xD65F0220; // RET X17: preserve direct-branch target semantics under BTI
     buf[4] = addr & 0xFFFFFFFF;
     buf[5] = addr >> 32u;
     return HOOK_NO_ERR;
