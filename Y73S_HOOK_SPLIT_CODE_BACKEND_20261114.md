@@ -213,3 +213,44 @@ The fix has not yet been built into a fresh KPIMG artifact or boot-tested on
 the physical Y73s. It is therefore not evidence of successful boot, and the
 original failure diagnosis remains a high-confidence static diagnosis until
 runtime page-table evidence or a controlled device test confirms it.
+
+
+## 2026-11-14 second binary/source audit: Y73s memory map and descriptor-level guard
+
+The original stock `boot.img` in the Library was also inspected to cross-check the
+target memory geometry. Its Android boot header reports kernel load address
+`0x40080000`. The embedded MT6853 FDT reports RAM at
+`0x40000000` with size `0x3e605000` (end `0x7e605000`). The target preset's
+kernel memory extent is `0x389d000`; rounding the loaded kernel image to
+2-MiB PMD boundaries gives `0x40000000..0x43a00000`.
+
+The Y73s allocator path uses `memblock_find_in_range(0, 0, size, align)`
+followed by an exact reservation. Linux memblock searches free ranges from
+high to low for this API. Given the broad RAM interval and the kernel image's
+much lower physical range, the available evidence makes it less likely that
+the relocated destination allocation aliases a pre-existing kernel-image PMD
+block. This is not a runtime proof: the actual post-reservation memblock state,
+dynamic reserved-memory allocations and returned `start_pa` are not present
+in the supplied artifacts. The `pa != 0` block-descriptor fail-closed path
+therefore remains a residual condition to instrument or verify on-device.
+
+A separate page-table correctness issue was found in the generic walker: it
+classified any descriptor with type bits `01` as a block without rejecting
+architecturally reserved first-level/final-level block encodings. The walker
+now rejects L0 and L3 blocks for 4-KiB granules, and rejects all non-L2 blocks
+for 16-KiB/64-KiB granules, before interpreting the output address. A static
+contract test was added. This is defensive correctness hardening, not a
+newly confirmed cause of the reported Y73s boot failure.
+
+The WXN bit is still cleared in `_paging_init()` and not restored in the
+current source. This is a security-hardening debt because the relocated
+execution mapping is made writable and executable during the transition. It
+is not currently established as the cause of the early boot failure; restoring
+WXN safely requires first ensuring all code that must execute is RX and all
+writable regions are NX, then validating the return path.
+
+No additional independent deterministic early-boot blocker was established
+from the available kernel binary. The strongest confirmed static failure
+candidate remains the lookup-only PMD-block rejection described above. The
+uploaded patched kernel predates these source commits; it must not be treated
+as containing either correction.
