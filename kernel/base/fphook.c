@@ -8,6 +8,7 @@
 #include <symbol.h>
 #include <pgtable.h>
 #include <hotpatch.h>
+#include <kpmalloc.h>
 #include <uapi/asm-generic/errno.h>
 #include "hmem.h"
 
@@ -290,14 +291,16 @@ _fp_transit12(uint64_t arg0, uint64_t arg1, uint64_t arg2, uint64_t arg3, uint64
 
 extern void _fp_transit12_end();
 
-static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
+static hook_err_t hook_chain_prepare(fp_hook_chain_t *chain,
+                                     uint32_t **transit_out, int32_t argno)
 {
     uint64_t transit_start;
-    fp_hook_chain_t *chain = local_container_of(transit, fp_hook_chain_t, transit);
-
+    uint32_t *transit;
     int32_t abi_class = hook_argno_abi_class(argno);
-    if (abi_class < 0)
+
+    if (!chain || !transit_out || abi_class < 0)
         return -HOOK_BAD_ADDRESS;
+    *transit_out = NULL;
     chain->argno_abi_class = abi_class;
     if (argno == 0)
         transit_start = (uint64_t)_fp_transit0;
@@ -308,16 +311,26 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
     else
         transit_start = (uint64_t)_fp_transit12;
 
-    /* Keep the chain pointer in x16, then branch to the resident transit
-     * routine. Copying C code into the chain buffer would leave PC-relative
-     * calls to helper functions with invalid relocated targets. */
+    transit = kp_malloc_exec(64);
+    if (!transit) return -HOOK_TRANSIT_NO_MEM;
+    if (hook_mem_set_transit(chain, transit)) {
+        (void)kp_free_exec(transit);
+        return -HOOK_TRANSIT_NO_MEM;
+    }
+
+    /* Keep the chain pointer in x16, then branch to resident transit code. */
     transit[0] = ARM64_BTI_JC;
     transit[1] = 0x58000070; /* LDR X16, #12 */
     transit[2] = 0x14000004; /* B #16 */
     transit[3] = ARM64_NOP;
     transit[4] = (uint64_t)chain;
     transit[5] = (uint64_t)chain >> 32;
-    branch_absolute(&transit[6], transit_start);
+    if (branch_absolute(&transit[6], transit_start) <= 0)
+        return -HOOK_TRANSIT_NO_MEM;
+    flush_icache_all();
+    if (kp_exec_seal(transit))
+        return -HOOK_TRANSIT_NO_MEM;
+    *transit_out = transit;
     return HOOK_NO_ERR;
 }
 
@@ -447,10 +460,10 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
         return -HOOK_NO_MEM;
     }
     chain->hook.fp_addr = fp_addr;
-    chain->hook.replace_addr = (uint64_t)chain->transit;
-    err = hook_chain_prepare(chain->transit, argno);
+    uint32_t *transit = NULL;
+    err = hook_chain_prepare(chain, &transit, argno);
     if (err) goto fail;
-    flush_icache_all();
+    chain->hook.replace_addr = (uint64_t)transit;
     /* Snapshot and patch are serialized against all KP hook-manager writers.
      * A foreign writer that bypasses this manager remains outside this lock. */
     patch_rc = fp_hook_locked(chain->hook.fp_addr, (void *)chain->hook.replace_addr,
