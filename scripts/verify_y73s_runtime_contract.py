@@ -120,7 +120,19 @@ def main():
     require(r"memblock_mark_nomap_f[^;]*\)\(start_pa,\s*all_size\)\)\s*__builtin_trap\(\);",
             paging, "NOMAP failure must stop before mapping/copying")
 
+    mem_proc_fn = function_body(map_c, "static __noinline void mem_proc(")
+    require(r"mrs %0, tcr_el1", mem_proc_fn,
+            "translation geometry must be read from the active TCR_EL1")
+    require(r"if\s*\(tg1\s*!=\s*2\s*\|\|\s*t1sz\s*!=\s*25\s*\|\|\s*page_shift\s*!=\s*12\s*\|\|\s*va1_bits\s*!=\s*39\)\s*__builtin_trap\(\);",
+            mem_proc_fn, "Y73S must fail closed unless TCR_EL1 selects 4-KiB / 39-bit TTBR1 geometry")
+
     pte = function_body(map_c, "static uint64_t __noinline get_or_create_pte(")
+    require(r"if\s*\(page_shift\s*!=\s*12\s*\|\|\s*va_bits\s*!=\s*39\)\s*__builtin_trap\(\);",
+            pte, "Y73S page-table walker must enforce the supported 4-KiB / 39-bit geometry")
+    require(r"\(va\s*>>\s*39\)\s*!=\s*0x1FFFFFFull",
+            pte, "Y73S page-table walker must reject non-canonical TTBR1 virtual addresses")
+    require(r"if\s*\(!page_level\s*\|\|\s*page_level\s*>\s*4\)\s*__builtin_trap\(\);",
+            pte, "page-table walk must reject an invalid translation level count")
     require(r"pxd_pa\s*=\s*map_phys_alloc\(data,\s*page_size,\s*page_size\);\s*if\s*\(!pxd_pa\)\s*__builtin_trap\(\);",
             pte, "page-table allocation must be checked before descriptor creation")
     require(r"pxd_desc\s*=\s*pxd_pa\s*\|\s*\(lv\s*==\s*3\s*\?\s*attr_prot\s*:\s*0x3ull\)",
