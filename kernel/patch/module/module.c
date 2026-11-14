@@ -237,7 +237,6 @@ static int layout_sections(struct module *mod, struct load_info *info)
     for (int i = 0; i < info->hdr->e_shnum; i++)
         info->sechdrs[i].sh_entsize = ~0UL;
 
-    // todo: tslf alloc all rwx and not page aligned
     for (int m = 0; m < sizeof(masks) / sizeof(masks[0]); ++m) {
         for (int i = 0; i < info->hdr->e_shnum; ++i) {
             Elf_Shdr *s = &info->sechdrs[i];
@@ -380,6 +379,14 @@ static int layout_symtab(struct module *mod, struct load_info *info)
     Elf_Shdr *strsect = info->sechdrs + info->index.str;
     const Elf_Sym *src;
     unsigned int i, nsrc, ndst, strtab_size = 0;
+
+    /*
+     * layout_sections() page-aligns the end of the writable segment. Keep
+     * the appended symbol/string tables on their own read-only page range.
+     */
+    if (!page_size || (mod->size & (page_size - 1)))
+        return -EINVAL;
+    mod->symtab_start = mod->size;
 
     /* Put symbol section at end of module. */
     symsect->sh_flags |= SHF_ALLOC;
@@ -822,6 +829,13 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     flush_icache_range((unsigned long)mod->start,
                        (unsigned long)mod->start + mod->text_size);
     flush_icache_all();
+
+    rc = kp_exec_protect_module(mod->start, mod->size, mod->text_size,
+                                mod->ro_size, mod->symtab_start);
+    if (rc) {
+        set_load_error(info, "module W^X permission transition failed");
+        goto free_mod;
+    }
 
     flags = module_lock_acquire();
     if (find_module_locked(mod->info.name)) {
