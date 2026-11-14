@@ -10,6 +10,7 @@
 #include <uapi/asm-generic/errno.h>
 #include <linux/spinlock.h>
 #include <kp_spinlock.h>
+#include <kpmalloc.h>
 
 static uint64_t mem_region_start = 0;
 static uint64_t mem_region_end = 0;
@@ -25,6 +26,8 @@ typedef struct
     int using;
     enum hook_type type;
     uintptr_t addr;
+    void *exec_relo;
+    void *exec_transit;
     // must align 8
     union
     {
@@ -97,12 +100,52 @@ void hook_mem_free(void *hook_mem)
     if (!hook_mem || !hook_locks_ready) return;
     warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
     flags = kp_private_spin_lock(&hook_mem_lock);
+    void *exec_relo = NULL;
+    void *exec_transit = NULL;
     if (warp->using == 3) {
+        exec_relo = warp->exec_relo;
+        exec_transit = warp->exec_transit;
+        warp->exec_relo = NULL;
+        warp->exec_transit = NULL;
         warp->using = 0;
         warp->addr = 0;
         warp->type = NONE;
     }
     kp_private_spin_unlock(&hook_mem_lock, flags);
+    if (exec_relo) (void)kp_free_exec(exec_relo);
+    if (exec_transit) (void)kp_free_exec(exec_transit);
+}
+
+static int hook_mem_set_exec_ptr(void *hook_mem, void *exec_ptr, int transit)
+{
+    hook_mem_warp_t *warp;
+    unsigned long flags;
+    int rc = -EINVAL;
+
+    if (!hook_mem || !exec_ptr || !hook_locks_ready) return -EINVAL;
+    warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
+    flags = kp_private_spin_lock(&hook_mem_lock);
+    if (warp->using == 3) {
+        void **slot = transit ? &warp->exec_transit : &warp->exec_relo;
+        if (!*slot) {
+            *slot = exec_ptr;
+            rc = 0;
+        } else {
+            rc = -EBUSY;
+        }
+    }
+    kp_private_spin_unlock(&hook_mem_lock, flags);
+    return rc;
+}
+
+int hook_mem_set_relo(void *hook_mem, void *exec_ptr)
+{
+    return hook_mem_set_exec_ptr(hook_mem, exec_ptr, 0);
+}
+
+int hook_mem_set_transit(void *hook_mem, void *exec_ptr)
+{
+    return hook_mem_set_exec_ptr(hook_mem, exec_ptr, 1);
 }
 
 void hook_mem_publish(void *hook_mem)
