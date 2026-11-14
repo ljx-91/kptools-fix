@@ -762,7 +762,7 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
     if (rc) return rc;
     uint64_t id_aa64mmfr1_el1 = 0;
     asm volatile("mrs %0, id_aa64mmfr1_el1" : "=r"(id_aa64mmfr1_el1));
-    log_boot("Y73S TCR_EL1=%016llx HPDS=%u HPD1=%u HWU159_162=%x\\n",
+    log_boot("Y73S TCR_EL1=%016llx HPDS=%u HPD1=%u HWU159_162=%x\n",
              runtime_tcr_el1, (unsigned int)((id_aa64mmfr1_el1 >> 12) & 0xf),
              (unsigned int)((runtime_tcr_el1 >> 42) & 1),
              (unsigned int)((runtime_tcr_el1 >> 47) & 0xf));
