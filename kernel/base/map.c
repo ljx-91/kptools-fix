@@ -158,6 +158,18 @@ static __noinline void mem_proc(map_data_t *data)
     }
     data->page_shift = page_shift;
 
+#ifdef KP_TARGET_Y73S
+    /*
+     * The supported Y73S V2031A kernel is a 39-bit VA, 4-KiB granule
+     * configuration. TCR_EL1.TG1 == 0b10 encodes 4-KiB translation
+     * granules; T1SZ == 25 gives 39 address bits. Do not let an
+     * unexpected firmware/kernel configuration feed incompatible
+     * geometry into the page-table walker.
+     */
+    if (tg1 != 2 || t1sz != 25 || page_shift != 12 || va1_bits != 39)
+        __builtin_trap();
+#endif
+
 #ifndef KP_TARGET_Y73S
     // linear
     if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_FIND_IN_RANGE &&
@@ -252,9 +264,29 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
 {
     uint64_t page_shift = data->page_shift;
     uint64_t va_bits = data->va1_bits;
+    if (page_shift != 12 || va_bits != 39 || !pa) {
+        /*
+         * Y73S page-table construction is intentionally limited to its
+         * verified 4-KiB / 39-bit TTBR1 geometry. pa == 0 is reserved for
+         * the read-only AttrIndx lookup path and is handled separately.
+         */
+#ifdef KP_TARGET_Y73S
+        if (page_shift != 12 || va_bits != 39) __builtin_trap();
+#else
+        if (va_bits <= 4 || va_bits > 48 ||
+            (page_shift != 12 && page_shift != 14 && page_shift != 16))
+            __builtin_trap();
+#endif
+    }
     uint64_t page_level = (va_bits - 4) / (page_shift - 3);
+    if (!page_level || page_level > 4) __builtin_trap();
     uint64_t pxd_bits = page_shift - 3;
     uint64_t pxd_ptrs = 1u << pxd_bits;
+
+#ifdef KP_TARGET_Y73S
+    /* Every address handled here must be in the canonical TTBR1 39-bit half. */
+    if ((va >> 39) != 0x1FFFFFFull) __builtin_trap();
+#endif
 
     uint64_t ttbr1_el1;
     asm volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1_el1));
