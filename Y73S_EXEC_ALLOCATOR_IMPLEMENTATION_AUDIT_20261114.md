@@ -64,7 +64,7 @@ The test checks source wiring and fail-closed guards and exercises a determinist
 - interior and duplicate free rejection;
 - in-place growth/shrink and moved realloc;
 - non-overlap under deterministic mixed allocation/free operations;
-- W^X permission classes and alias validation source contracts.
+Source-contract assertions additionally check W^X permission classes and KIMG/linear alias validation.
 
 Target toolchain build: GitHub Actions run [43563634485](https://github.com/ljx-91/kptools-fix/actions/runs/43563634485), using Arm GNU GCC 14.2, completed successfully at revision `df2b33410baf13e3300dda976db34d4011ecb201`. The allocator model test, KPIMG build, early cache-maintenance audit, stack-frame audit, mapping relocation audit, and KPM loader source contract all passed.
 
