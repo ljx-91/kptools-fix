@@ -1301,8 +1301,10 @@ int repack_bootimg_mem(const char *orig_boot_path,
     uint32_t second_size_id = hdr.second_size;
     uint32_t recovery_dtbo_size_id = hdr.recovery_dtbo_size;
     uint32_t dtb_size_id = hdr.dtb_size;
+    uint32_t boot_id_words[8];
+    memcpy(boot_id_words, hdr.id, sizeof(boot_id_words));
 
-    uint32_t use_sha256 = is_sha256(hdr.id);
+    uint32_t use_sha256 = is_sha256(boot_id_words);
     int len = use_sha256 ? SHA256_BLOCK_SIZE : SHA1_BLOCK_SIZE;
     BYTE buf[len];
     if (use_sha256 != 1 || header_ver <= 3) {
