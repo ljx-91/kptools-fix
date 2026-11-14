@@ -118,8 +118,8 @@ static bool exec_leaf_valid(volatile uint64_t *pte, uint64_t expected_pa,
 /*
  * The linear-map alias may use an ARM64 block descriptor (commonly 2-MiB).
  * We do not split or rewrite such a block: it is acceptable only when it is
- * already privileged-XN and maps the exact physical page. Page aliases are
- * returned for synchronized permission updates.
+ * already privileged-XN, privileged-RO (AP[2]), has DBM disabled, and maps
+ * the exact physical page. Writable block aliases are rejected fail-closed.
  */
 static int exec_walk_linear_alias(uint64_t va, uint64_t expected_pa,
                                   uint64_t attr_index,
@@ -162,6 +162,7 @@ static int exec_walk_linear_alias(uint64_t va, uint64_t expected_pa,
                 (desc & 0x1cull) != attr_index ||
                 (desc & 0x300ull) != 0x300ull ||
                 !(desc & (1ull << 10)) ||
+                !(desc & PTE_RDONLY) || (desc & PTE_DBM) ||
                 !(desc & PTE_PXN))
                 return -EFAULT;
             return 0;
