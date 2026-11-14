@@ -94,3 +94,5 @@ The rationale follows Arm's AArch64 memory attributes guide: AP, AttrIndx, AF an
 Arm's AArch64 memory attributes guide explains that access permissions and execute-never properties can be hierarchical: a table descriptor can impose restrictions that a leaf descriptor cannot undo. The TTBR1 walker now checks each non-leaf table descriptor and fails closed if APTable[1] (bit 62) forces read-only access or PXNTable (bit 59) prevents EL1 execution.
 
 APTable[0] and UXNTable are not rejected by this check because they further restrict EL0 access/execution, which is consistent with the intended EL1-only kernel mapping. This remains a conservative source-level guard; the actual Y73S page-table hierarchy has not yet been captured from a running device.
+
+Existing destination leaves are also required to be Inner Shareable (SH[1:0] == 0b11). The destination RAM can have a normal-memory linear-map alias, and Arm recommends compatible cacheability and shareability attributes for aliases of the same physical location. A non-Inner-Shareable pre-existing leaf is therefore rejected rather than silently reused.
