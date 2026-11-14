@@ -900,6 +900,7 @@ static hook_err_t hook_prepare_relo_exec(void *record, hook_t *hook)
         ((uint32_t *)exec_relo)[i] = hook->relo_insts[i];
     KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)exec_relo,
                                (unsigned long)exec_relo + sizeof(hook->relo_insts));
+    flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */
     if (kp_exec_seal(exec_relo))
         return -HOOK_TRANSIT_NO_MEM;
     return HOOK_NO_ERR;
@@ -943,6 +944,7 @@ static hook_err_t hook_chain_prepare(hook_chain_t *chain, uint32_t **transit_out
         return -HOOK_TRANSIT_NO_MEM;
     KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)transit,
                                (unsigned long)transit + 64);
+    flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */
     if (kp_exec_seal(transit))
         return -HOOK_TRANSIT_NO_MEM;
     *transit_out = transit;
