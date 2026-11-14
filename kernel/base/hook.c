@@ -696,6 +696,11 @@ static __noinline hook_err_t relocate_inst(hook_t *hook, uint64_t inst_addr, uin
     hook_err_t rc = HOOK_NO_ERR;
     inst_type_t it = INST_IGNORE;
     int len = 2;
+    const int capacity = sizeof(hook->relo_insts) / sizeof(hook->relo_insts[0]);
+
+    if (!hook || hook->relo_insts_num < 0 ||
+        hook->relo_insts_num > capacity || len > capacity - hook->relo_insts_num)
+        return -HOOK_BAD_RELO;
 
     for (int j = 0; j < sizeof(relo_len) / sizeof(relo_len[0]); j++) {
         if ((inst & masks[j]) == types[j]) {
@@ -704,6 +709,9 @@ static __noinline hook_err_t relocate_inst(hook_t *hook, uint64_t inst_addr, uin
             break;
         }
     }
+
+    if (len <= 0 || len > capacity - hook->relo_insts_num)
+        return -HOOK_BAD_RELO;
 
     switch (it) {
     case INST_B:
@@ -738,17 +746,22 @@ static __noinline hook_err_t relocate_inst(hook_t *hook, uint64_t inst_addr, uin
         break;
     }
 
+    if (rc)
+        return rc;
     hook->relo_insts_num += len;
 
-    return rc;
+    return HOOK_NO_ERR;
 }
 
 hook_err_t hook_prepare(hook_t *hook)
 {
+    if (!hook) return -HOOK_BAD_ADDRESS;
     if (is_bad_address((void *)hook->func_addr)) return -HOOK_BAD_ADDRESS;
     if (is_bad_address((void *)hook->origin_addr)) return -HOOK_BAD_ADDRESS;
     if (is_bad_address((void *)hook->replace_addr)) return -HOOK_BAD_ADDRESS;
     if (is_bad_address((void *)hook->relo_addr)) return -HOOK_BAD_ADDRESS;
+
+    hook->relo_insts_num = 0;
 
     // backup origin instruction
     for (int i = 0; i < TRAMPOLINE_MAX_NUM; i++) {
@@ -762,6 +775,10 @@ hook_err_t hook_prepare(hook_t *hook)
     } else {
         hook->tramp_insts_num = branch_absolute(hook->tramp_insts, hook->replace_addr);
     }
+
+    if (hook->tramp_insts_num <= 0 ||
+        hook->tramp_insts_num > TRAMPOLINE_MAX_NUM)
+        return -HOOK_BAD_RELO;
 
     // relocate
     for (int i = 0; i < sizeof(hook->relo_insts) / sizeof(hook->relo_insts[0]); i++) {
@@ -777,11 +794,20 @@ hook_err_t hook_prepare(hook_t *hook)
         }
     }
 
-    // jump back
+    // Every branch-back form uses at most four words. Reserve that maximum
+    // before writing so malformed state can never overrun relo_insts.
+    const int capacity = sizeof(hook->relo_insts) / sizeof(hook->relo_insts[0]);
+    if (hook->relo_insts_num < 0 || hook->relo_insts_num > capacity ||
+        capacity - hook->relo_insts_num < 4)
+        return -HOOK_BAD_RELO;
+
     uint64_t back_src_addr = hook->relo_addr + hook->relo_insts_num * 4;
     uint64_t back_dst_addr = hook->origin_addr + hook->tramp_insts_num * 4;
     uint32_t *buf = hook->relo_insts + hook->relo_insts_num;
-    hook->relo_insts_num += branch_from_to(buf, back_src_addr, back_dst_addr);
+    int back_len = branch_from_to(buf, back_src_addr, back_dst_addr);
+    if (back_len <= 0 || back_len > 4)
+        return -HOOK_BAD_RELO;
+    hook->relo_insts_num += back_len;
     return HOOK_NO_ERR;
 }
 KP_EXPORT_SYMBOL(hook_prepare);
