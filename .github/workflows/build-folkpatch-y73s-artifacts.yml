@@ -112,6 +112,7 @@ jobs:
           tools/kptools --version
           python3 scripts/verify_bootimg_io_contract.py
           python3 scripts/verify_kptools_patch_bounds.py
+          python3 scripts/test_kptools_bootimg_roundtrip.py tools/kptools
 
       - name: Build Android ARM64 kptools
         run: |
