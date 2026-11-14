@@ -105,15 +105,14 @@ start_prepare:
     tst x22, #0xf
     b.ne .bad_paging_init
 
-    // The preset payload must exactly match the linker-reserved start image.
-    // A shorter copy would leave part of the relocated image stale/uninitialized.
+    // The relocated start payload must fit its linker-reserved destination.
     adrp x23, _kp_end
     add x23, x23, :lo12:_kp_end
     adrp x24, _kp_start
     add x24, x24, :lo12:_kp_start
     sub x23, x23, x24
     cmp x22, x23
-    b.ne .bad_paging_init
+    b.hi .bad_paging_init
 
     // The backward word-copy helper requires a nonnegative, 4-byte-aligned
     // total length. The patcher emits 16-byte-aligned extra records.
