@@ -375,8 +375,17 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
     if ((leaf_desc & 0x3ull) != 0x3ull) __builtin_trap();
     if (pa) {
         uint64_t pa_mask = ((1ull << (48 - page_shift)) - 1) << page_shift;
+        /*
+         * The destination must retain the kernel text memory type and have
+         * AF set before it is accessed. Do not edit a single member of a
+         * contiguous-hint group: its neighboring descriptors would need a
+         * coordinated update that this early mapper does not implement.
+         */
         if ((pa & (page_size - 1)) || (pa >> 48) ||
-            (pa & pa_mask) != (leaf_desc & pa_mask))
+            (pa & pa_mask) != (leaf_desc & pa_mask) ||
+            (leaf_desc & 0x1Cull) != (attr_indx & 0x1Cull) ||
+            !(leaf_desc & (1ull << 10)) ||
+            (leaf_desc & (1ull << 52)))
             __builtin_trap();
     }
     return pxd_entry_va;
