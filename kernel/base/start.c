@@ -419,10 +419,9 @@ static void prot_myself()
 
     for (uint64_t i = text_start; i < align_text_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
-        *pte = (*pte | PTE_SHARED) & ~PTE_PXN & ~PTE_GP;
-        if (separate_kimage_mapping) {
-            *pte = (*pte | PTE_RDONLY) & ~PTE_DBM;
-        }
+        /* KP text must be RO before the original WXN policy is restored. */
+        *pte = (*pte | PTE_SHARED | PTE_RDONLY) &
+               ~(PTE_PXN | PTE_GP | PTE_DBM);
     }
     flush_tlb_kernel_range(text_start, align_text_end);
 
@@ -434,10 +433,7 @@ static void prot_myself()
 
     for (uint64_t i = data_start; i < align_data_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
-        *pte = (*pte | PTE_DBM | PTE_SHARED) & ~PTE_RDONLY;
-        if (separate_kimage_mapping) {
-            *pte |= PTE_PXN;
-        }
+        *pte = (*pte | PTE_DBM | PTE_SHARED | PTE_PXN) & ~PTE_RDONLY;
     }
     flush_tlb_kernel_range(data_start, align_data_end);
 
@@ -760,7 +756,7 @@ static int start_init(uint64_t kimage_voff, uint64_t linear_voff)
 void symbol_init();
 int patch();
 
-int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_voff, uint64_t linear_voff)
+int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_voff, uint64_t linear_voff, uint64_t saved_wxn)
 {
     int rc = 0;
     // raw stash for post-mortem debugging: no vsnprintf available yet here
@@ -770,6 +766,19 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
     rc = start_init(kimage_voff, linear_voff);
     if (rc) return rc;
     prot_myself();
+    /*
+     * All KP text is now RO+X and all writable KP regions are PXN. Restore
+     * only the original WXN bit, preserving every other SCTLR_EL1 bit changed
+     * by the kernel during paging_init().
+     */
+    uint64_t current_sctlr = 0;
+    asm volatile("mrs %0, sctlr_el1" : "=r"(current_sctlr));
+    if (saved_wxn)
+        current_sctlr |= (1ull << 19);
+    else
+        current_sctlr &= ~(1ull << 19);
+    asm volatile("dsb ish\n\tmsr sctlr_el1, %0\n\tisb"
+                 : : "r"(current_sctlr) : "memory");
     // restore the map anchor (the sacrificed tcp_init_sock & friends) as
     // soon as KP's regions are up; the tail return below never executes
     // the anchor bytes again, so this is safe for every kernel
