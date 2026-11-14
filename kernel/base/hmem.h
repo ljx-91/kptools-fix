@@ -15,6 +15,8 @@ void hook_mem_retire(void *hook_mem);
 int hook_mem_claim_retire(void *hook_mem);
 void hook_mem_cancel_retire(void *hook_mem);
 void hook_mem_publish(void *hook_mem);
+int hook_mem_set_relo(void *hook_mem, void *exec_ptr);
+int hook_mem_set_transit(void *hook_mem, void *exec_ptr);
 void *hook_get_mem_from_origin(uint64_t origin_addr);
 void *hook_get_mem_from_origin_type(uint64_t origin_addr, enum hook_type type);
 
