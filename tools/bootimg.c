@@ -944,6 +944,10 @@ int repack_bootimg_mem(const char *orig_boot_path,
 
     uint32_t header_ver = hdr.unused[0];
     if (header_ver > 10){header_ver = 0;extracted_size = hdr.unused[0];}
+    if (header_ver == 2 && hdr.header_size != sizeof(hdr)) {
+        fclose(f_orig);
+        return -2;
+    }
     uint32_t page_size = (header_ver >= 3) ? 4096 : hdr.page_size;
     uint32_t fmt_size =  (header_ver >= 3) ? hdr.kernel_addr : hdr.ramdisk_size;
 
@@ -1542,6 +1546,10 @@ int patch_bootimg(const char *bootimg_path, const char *kpimg_path, const char *
 
     if (memcmp(hdr.magic, "ANDROID!", 8) != 0) {
         tools_loge("Invalid boot image magic.\n");
+        fclose(fp);
+        return -2;
+    }
+    if (hdr.unused[0] == 2 && hdr.header_size != sizeof(hdr)) {
         fclose(fp);
         return -2;
     }
