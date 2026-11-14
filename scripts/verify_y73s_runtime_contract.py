@@ -87,6 +87,10 @@ def main():
             probe, "probe reservation release failure must be detected")
 
     paging = function_body(map_c, "void __noinline _paging_init(")
+    require(r"\*\(volatile uint64_t \*\)entry\s*=\s*\*\(volatile uint64_t \*\)entry\s*&\s*0xFFDFFFFFFFFFFF7F",
+            paging, "kernel destination permissions must clear AP[2]/PXN without forcing DBM")
+    if "0x8000000000000" in paging:
+        raise AssertionError("optional ARM64 DBM bit must not be force-enabled on Y73S mappings")
     require(r"if\s*\(\(uint64_t\)data->start_img_size\s*>\s*\(uint64_t\)data->start_size\)\s*__builtin_trap\(\);",
             paging, "start image must not overlap the extra-data destination range")
     before(paging, "((paging_init_f)(paging_init_va))();",
