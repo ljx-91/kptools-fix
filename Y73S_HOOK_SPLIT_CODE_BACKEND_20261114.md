@@ -91,7 +91,7 @@ The unpublished-record cleanup path was also hardened. It now reserves the recor
 ## Validation status
 
 - ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully: [workflow run 43569779556](https://github.com/ljx-91/kptools-fix/actions/runs/43569779556).
-- Linux kptools host build and source audit completed successfully: [workflow run 43569394029](https://github.com/ljx-91/kptools-fix/actions/runs/43569394029).
+- Linux kptools host build and source audit completed successfully: [workflow run 43569779529](https://github.com/ljx-91/kptools-fix/actions/runs/43569779529).
 - The current static contract suite reports 28 passing Y73s split-Hook checks.
 
 Static source contracts and targeted instruction-word disassembly are not a substitute for:
