@@ -387,6 +387,19 @@ KP_EXPORT_SYMBOL(pgtable_phys);
 
 static void prot_myself()
 {
+    /*
+     * Keep the permission decision observable on early-boot failures.  The
+     * Y73S path derives linear_voffset only after paging_init(), so a stale
+     * or equal offset must not be silently mistaken for the normal vmalloc
+     * layout when reviewing ramoops/boot_log.
+     */
+    uint64_t sctlr_before = 0;
+    asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_before));
+    int separate_kimage_mapping = has_vmalloc_area();
+    log_boot("KP mapping offsets: kimage=%llx linear=%llx separate=%d WXN=%d\\n",
+             kimage_voffset, linear_voffset, separate_kimage_mapping,
+             (int)((sctlr_before >> 19) & 1));
+
     uint64_t *kpte = pgtable_entry_kernel(kernel_stext_va);
     log_boot("Kernel stext prot: %llx\n", *kpte);
 
@@ -407,7 +420,7 @@ static void prot_myself()
     for (uint64_t i = text_start; i < align_text_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_SHARED) & ~PTE_PXN & ~PTE_GP;
-        if (has_vmalloc_area()) {
+        if (separate_kimage_mapping) {
             *pte = (*pte | PTE_RDONLY) & ~PTE_DBM;
         }
     }
@@ -490,6 +503,18 @@ static void prot_myself()
         // }
     }
     flush_tlb_kernel_range(_kp_rox_start, _kp_rox_end);
+
+    /*
+     * Report the final leaf descriptors after all region-specific changes.
+     * This is diagnostic only; it deliberately does not alter permissions.
+     */
+    log_boot("KP final PTE: text=%llx data=%llx extra=%llx hook=%llx rw=%llx rox=%llx\\n",
+             *pgtable_entry_kernel(text_start),
+             *pgtable_entry_kernel(data_start),
+             *pgtable_entry_kernel(_kp_extra_start),
+             *pgtable_entry_kernel(_kp_hook_start),
+             *pgtable_entry_kernel(_kp_rw_start),
+             *pgtable_entry_kernel(_kp_rox_start));
 
     // add to vmalloc area
     void (*vm_area_add_early)(struct vm_struct *vm) =
