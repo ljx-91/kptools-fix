@@ -157,6 +157,12 @@ def main():
             pte, "new intermediate levels must use table descriptors")
     require(r"pxd_desc\s*=\s*pxd_pa\s*\|\s*attr_prot",
             pte, "new leaf levels must use leaf-page attributes")
+    require(r"\(leaf_desc\s*&\s*0x1Cull\)\s*!=\s*\(attr_indx\s*&\s*0x1Cull\)",
+            pte, "existing destination leaf must use the kernel text memory attribute index")
+    require(r"!\(leaf_desc\s*&\s*\(1ull\s*<<\s*10\)\)",
+            pte, "existing destination leaf must have AF set before early access")
+    require(r"leaf_desc\s*&\s*\(1ull\s*<<\s*52\)",
+            pte, "single-leaf permission changes must reject contiguous-hint mappings")
     require(r"if\s*\(block_flag\)\s*\{[\s\S]*?__builtin_trap\(\);",
             pte, "existing block mappings must fail closed rather than be overwritten as page descriptors")
 
