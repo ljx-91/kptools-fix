@@ -56,12 +56,36 @@ This is safe retention, not full reclamation. Repeated hook/unhook cycles consum
 
 The check is included in the Y73s ARM64 KPIMG build workflow.
 
-## Validation not yet claimed
+## Validation added
 
-Static source contracts are not a substitute for:
+`scripts/verify_y73s_hook_init_fail_closed.py` now checks:
 
-- successful ARM GNU GCC 14.2 compilation and link;
-- disassembly inspection of all generated transit and relocated-code paths;
+- RW-NX Hook control arena;
+- separate relocation and transit allocations;
+- RX sealing for Inline and Function Pointer paths;
+- unchanged public chain layouts and 12-argument API;
+- removal of transit-owner `container_of`;
+- unpublished cleanup and conservative retired-code retention;
+- reader/callback pinning and all four ABI dispatch entry points;
+- integer literal relocation loads from the correct literal slot;
+- SIMD/PRFM literal relocation loads from the correct literal slot and restores X16/X17 plus SP.
+
+A second-round instruction audit found and fixed two relocation defects in `relo_ldr()`:
+
+- Integer literal loads used `LDR Xt, #12`, which addressed the intervening NOP rather than the literal at `+16`; this is now encoded as `0x58000080 | Rt` (`LDR Xt, #16`).
+- SIMD/PRFM literal loads used `LDR X17, #16`, which addressed the NOP rather than the literal at `+20` from that instruction; this is now `0x580000B1` (`LDR X17, #20`). The old restore instruction decoded as `LDUR X17, [SP, #-8]`, leaving the stack frame unbalanced and X16 unrestored; it is now `0xA8C147F0` (`LDP X16, X17, [SP], #16`).
+
+The corrected instruction words were assembled/disassembled with the AArch64 LLVM toolchain, and the static regression checks passed in the Y73s KPIMG workflow.
+
+## Validation status
+
+- ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully: [workflow run 43568926760](https://github.com/ljx-91/kptools-fix/actions/runs/43568926760).
+- Linux kptools host build and source audit completed successfully: [workflow run 43568926767](https://github.com/ljx-91/kptools-fix/actions/runs/43568926767).
+- The current static contract suite reports 24 passing Y73s split-Hook checks.
+
+Static source contracts and targeted instruction-word disassembly are not a substitute for:
+
+- disassembly inspection of every generated transit and relocated-code path;
 - stress testing concurrent hook removal while callbacks are executing;
 - testing third-party KPM binaries against the unchanged public layouts;
 - booting and exercising the resulting image on the physical Y73s.
