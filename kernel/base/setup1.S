@@ -98,18 +98,17 @@ start_prepare:
     tst x4, #3
     b.ne .bad_paging_init
 
-    // The destination range must remain inside the enlarged Image footprint.
+    // The patcher extends Image.image_size to cover this appended copy.
+    // setup_kernel_size is the original Image.image_size and ends at or
+    // before start_offset; it is not an upper bound for the appended range.
+    // Validate the physical destination arithmetic instead.
     ldr x21, [x10, #setup_start_offset_offset]
+    tbnz x21, #63, .bad_paging_init
     tst x21, #0xfff
     b.ne .bad_paging_init
-    ldr x5, [x10, #setup_kernel_size_offset]
-    tbnz x5, #63, .bad_paging_init
-    cmp x21, x5
-    b.hi .bad_paging_init
-    sub x5, x5, x21
-    cmp x4, x5
-    b.hi .bad_paging_init
     adds x5, x19, x21
+    b.cs .bad_paging_init
+    adds x5, x5, x4
     b.cs .bad_paging_init
 
     // start_preset.kernel_version = setup_preset.kernel_version;
