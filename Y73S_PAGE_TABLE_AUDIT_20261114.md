@@ -66,3 +66,11 @@ The root TTBR1 table and each subsequently followed table descriptor also receiv
 Regression assertions in scripts/verify_y73s_runtime_contract.py now check the TCR geometry, canonical TTBR1 address, page-level bounds, child-table initialization/barrier/publication ordering, and table-address overflow guards.
 
 These are source-level hardening changes. The target's live TTBR1 value, actual descriptor hierarchy, and real-device execution remain unverified; no flash-ready claim is made.
+
+## Follow-up: do not force the optional DBM bit
+
+The Y73S mapping permission update previously ORed bit 51 into every destination PTE. Bit 51 is the Dirty Bit Modifier (DBM) field; hardware dirty-state updates are optional and are identified by ID_AA64MMFR1_EL1.HAFDBS. Linux also enables TCR_EL1.HD only when the CPU feature is present and the reported HAFDBS level supports dirty-state updates.
+
+The Y73S mapping update now clears AP[2] and PXN as required for the intended writable/executable kernel mapping, but does not force-set DBM. An existing descriptor's DBM state is preserved. This avoids imposing an optional hardware dirty-state feature on newly created mappings.
+
+The runtime source verifier rejects reintroduction of the unconditional DBM bit. This is a descriptor-level compatibility hardening; it does not replace validation against the device's live ID_AA64MMFR1_EL1 and TCR_EL1 values.
