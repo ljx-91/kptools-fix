@@ -37,6 +37,33 @@ rmemcpy32:
 
 .text
 .align 2
+.type dcache_clean_range, %function
+// Clean [x0, x0 + x1) to the Point of Unification.
+// The boot protocol permits D-cache to be enabled when entering the kernel;
+// stores made by this setup stub must therefore be made visible to instruction
+// fetch before returning to the restored kernel head or the relocated KP code.
+dcache_clean_range:
+    cbz x1, .dcache_clean_done
+    mrs x2, ctr_el0
+    ubfx x2, x2, #16, #4          // CTR_EL0.DminLine: log2(words per line)
+    mov x3, #4
+    lsl x3, x3, x2               // data-cache line size in bytes
+    sub x4, x3, #1
+    bic x5, x0, x4               // align start down
+    add x0, x0, x1
+    add x0, x0, x4
+    bic x0, x0, x4               // align end up
+.dcache_clean_loop:
+    dc cvau, x5
+    add x5, x5, x3
+    cmp x5, x0
+    b.lo .dcache_clean_loop
+    dsb ish
+.dcache_clean_done:
+    ret
+
+.text
+.align 2
 .type start_prepare, %function
 start_prepare:
     stp x29, x30, [sp, -16]!
@@ -232,6 +259,13 @@ start_prepare:
     add x2, x2, x22
     bl rmemcpy32
 
+    // The relocated start image and extras contain executable code/data.
+    // Clean the destination before the kernel can branch into this range.
+    add x0, x19, x21
+    ldr x1, [x10, #setup_extra_size_offset]
+    add x1, x1, x22
+    bl dcache_clean_range
+
     // Restore
     ldp x23, x24, [sp], 16 
     ldp x21, x22, [sp], 16 
@@ -342,6 +376,9 @@ map_prepare:
     b.ne .cmp_auti
     // *p = NOP
     stur w3, [x11, #-4]
+    sub x0, x11, #4
+    mov x1, #4
+    bl dcache_clean_range
 
 .backup:
     str w12, [x9, #map_paging_init_backup_offset]
@@ -369,6 +406,9 @@ map_prepare:
     mov w12, #0x14000000
     orr w15, w15, w12
     str w15, [x13]
+    mov x0, x13
+    mov x1, #4
+    bl dcache_clean_range
 
     // relocate map
     // memcpy(preset.map_offset + kernel_pa, (uint64_t)_map_start, (int64_t)(_map_end - _map_start));
@@ -379,6 +419,15 @@ map_prepare:
     sub x2, x2, x1
     add x0, x19, x14
     bl memcpy8
+
+    // Make the relocated setup.map instructions visible to instruction fetch.
+    add x0, x19, x14
+    adrp x1, _map_end
+    add x1, x1, :lo12:_map_end
+    adrp x2, _map_start
+    add x2, x2, :lo12:_map_start
+    sub x1, x1, x2
+    bl dcache_clean_range
 
     // Restore
     ldp x19, x20, [sp], 16
@@ -434,7 +483,12 @@ setup:
     mov x2, #HDR_BACKUP_SIZE
     bl memcpy8
 
-    // I-cache = on or off,
+    // The restored Image header contains the original entry instruction.
+    mov x0, x19
+    mov x1, #HDR_BACKUP_SIZE
+    bl dcache_clean_range
+
+    // All modified executable ranges are D-cache-clean before I-cache invalidation.
     dsb ish
     ic iallu
     dsb ish
