@@ -46,7 +46,11 @@ def main() -> None:
 
     start_prepare = block_between(disassembly, "start_prepare", "map_prepare")
     map_prepare = block_between(disassembly, "map_prepare", "setup")
-    setup = block_between(disassembly, "setup", "setup_entry")
+    setup_start = disassembly.find("<setup>:")
+    setup_end = disassembly.find("Disassembly of section", setup_start + 1)
+    if setup_start < 0:
+        fail("missing setup function disassembly")
+    setup = disassembly[setup_start:setup_end if setup_end >= 0 else None]
 
     if not re.search(r"bl\s+.*<dcache_clean_range>", start_prepare):
         fail("relocated start image/extra copy is not D-cache-cleaned")
