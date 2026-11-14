@@ -26,19 +26,21 @@ def main():
     preflight = body[:map_area]
 
     # KPIMG size must include its setup prefix; the copied start payload must
-    # fit the linker-reserved destination before any kernel-memory access.
+    # exactly match the linker-reserved destination before any kernel-memory access.
     checks_before_kernel_access = [
         "ldr x22, [x10, #setup_kpimg_size_offset]",
         "cmp x22, x23",
         "b.lo .bad_paging_init",
         "sub x22, x22, x23",
         "cmp x22, x23",
-        "b.hi .bad_paging_init",
+        "b.ne .bad_paging_init",
         "tst x22, #0xf",
         "b.ne .bad_paging_init",
     ]
     for item in checks_before_kernel_access:
         require(item in preflight, f"missing early-preset check: {item}")
+    require("b.hi .bad_paging_init" not in preflight,
+            "start payload guard must reject both undersized and oversized copies")
 
     # The patcher stores the original Image.image_size in setup_kernel_size,
     # but appends the temporary copy at start_offset >= that original size.
