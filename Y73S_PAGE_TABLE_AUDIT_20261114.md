@@ -39,3 +39,30 @@ Commits:
 
 This closes a static source-level mismatch hazard. It does not prove that the requested VA range is free of block descriptors or that the live TTBR1 hierarchy and physical RAM layout match the assumptions.
 The leaf output-address guard also rejects requested PAs with any bits above bit 47, because the current descriptor OA mask and implementation support at most a 48-bit output address. The regression verifier checks this bound. Latest verifier adjustment: 228502831a208e0f82773f52119506f57b79c6cb.
+
+## Follow-up: enforce the Y73S translation geometry
+
+The runtime walker previously consumed TCR_EL1.T1SZ and TG1 but did not reject a geometry that differed from the target assumptions. For the audited Y73s kernel layout, the supported configuration is:
+
+- TG1 == 0b10: 4-KiB translation granule.
+- T1SZ == 25: 39-bit TTBR1 virtual-address space.
+- page_shift == 12, va1_bits == 39.
+- The kernel VA handled by this walker must be canonical in the TTBR1 39-bit half (va >> 39 == 0x1ffffff).
+
+The Y73s path now fails closed if these conditions are not met. The page-level count is also range-checked before the walk. This prevents a different TCR configuration from silently reusing the Y73s-specific indexing assumptions.
+
+## Follow-up: initialize child tables before publishing them
+
+A further ordering issue was found in the intermediate-table allocation path. The old sequence wrote a valid parent Table Descriptor and only then zeroed the newly allocated child table. The sequence is now:
+
+1. Allocate and reserve the child table.
+2. Validate the physical-to-linear address conversion and the full table window.
+3. Zero the entire child table.
+4. Execute dsb ishst.
+5. Publish the parent Table Descriptor through a volatile store.
+
+The root TTBR1 table and each subsequently followed table descriptor also receive physical/linear address overflow checks before dereference.
+
+Regression assertions in scripts/verify_y73s_runtime_contract.py now check the TCR geometry, canonical TTBR1 address, page-level bounds, child-table initialization/barrier/publication ordering, and table-address overflow guards.
+
+These are source-level hardening changes. The target's live TTBR1 value, actual descriptor hierarchy, and real-device execution remain unverified; no flash-ready claim is made.
