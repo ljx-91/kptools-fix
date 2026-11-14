@@ -68,14 +68,15 @@ The check is included in the Y73s ARM64 KPIMG build workflow.
 - unpublished cleanup and conservative retired-code retention;
 - reader/callback pinning and all four ABI dispatch entry points;
 - integer literal relocation loads from the correct literal slot;
-- SIMD/PRFM literal relocation loads from the correct literal slot and restores X16/X17 plus SP.
+- SIMD/PRFM literal relocation loads from the correct literal slot and restores X16/X17 plus SP;
+- zero-register integer literal loads use a preserved scratch register, perform the original memory access, restore SP, and account for the expanded seven-instruction sequence.
 
 A second-round instruction audit found and fixed two relocation defects in `relo_ldr()`:
 
 - Integer literal loads used `LDR Xt, #12`, which addressed the intervening NOP rather than the literal at `+16`; this is now encoded as `0x58000080 | Rt` (`LDR Xt, #16`).
 - SIMD/PRFM literal loads used `LDR X17, #16`, which addressed the NOP rather than the literal at `+20` from that instruction; this is now `0x580000B1` (`LDR X17, #20`). The old restore instruction decoded as `LDUR X17, [SP, #-8]`, leaving the stack frame unbalanced and X16 unrestored; it is now `0xA8C147F0` (`LDP X16, X17, [SP], #16`).
 
-The corrected instruction words were assembled/disassembled with the AArch64 LLVM toolchain, and the static regression checks passed in the Y73s KPIMG workflow.
+The corrected instruction words were assembled/disassembled with the AArch64 LLVM toolchain. A subsequent edge-case fix handles `Rt == 31` (`WZR`/`XZR`) for 32-bit, 64-bit, and sign-extending integer literal loads: it preserves X16/X17, performs the actual memory read through X17, restores the original stack pointer, and branches over the embedded address literal. Its relocated length is seven words rather than six, and `relo_in_tramp()` now accounts for that per-instruction expansion. The new static regression checks distinguish the valid `+16` zero-register literal from the SIMD/PRFM `+20` literal.
 
 The generated-code publication path also had a cache-coherency gap: `flush_icache_all()` broadcasts I-cache invalidation but does not clean dirty D-cache lines to PoU. The Inline relocation page and Inline/FP transit pages now use this order before RX sealing:
 
@@ -90,9 +91,9 @@ The unpublished-record cleanup path was also hardened. It now reserves the recor
 
 ## Validation status
 
-- ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully: [workflow run 43569779556](https://github.com/ljx-91/kptools-fix/actions/runs/43569779556).
-- Linux kptools host build and source audit completed successfully: [workflow run 43569779529](https://github.com/ljx-91/kptools-fix/actions/runs/43569779529).
-- The current static contract suite reports 28 passing Y73s split-Hook checks.
+- ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully on the current source/test revision: [workflow run 43571248031](https://github.com/ljx-91/kptools-fix/actions/runs/43571248031).
+- Linux kptools host build and source audit completed successfully on the same revision: [workflow run 43571248004](https://github.com/ljx-91/kptools-fix/actions/runs/43571248004).
+- The current static contract suite reports 30 passing Y73s split-Hook checks.
 
 Static source contracts and targeted instruction-word disassembly are not a substitute for:
 
