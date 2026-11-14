@@ -96,3 +96,23 @@ Arm's AArch64 memory attributes guide explains that access permissions and execu
 APTable[0] and UXNTable are not rejected by this check because they further restrict EL0 access/execution, which is consistent with the intended EL1-only kernel mapping. This remains a conservative source-level guard; the actual Y73S page-table hierarchy has not yet been captured from a running device.
 
 Existing destination leaves are also required to be Inner Shareable (SH[1:0] == 0b11). The destination RAM can have a normal-memory linear-map alias, and Arm recommends compatible cacheability and shareability attributes for aliases of the same physical location. A non-Inner-Shareable pre-existing leaf is therefore rejected rather than silently reused.
+
+
+## Follow-up: do not force PBHA on newly-created leaf mappings
+
+A descriptor audit found that the former leaf template `0x40000000000703` set bit 62. For a final-level AArch64 stage-1 page descriptor, bits [62:59] are the PBHA / implementation-defined hardware-use field when FEAT_HPDS2 is implemented; bit 62 is not an ordinary page permission bit.
+
+The Cortex-A76 and Cortex-A55 technical reference manuals both document HPDS value `0x2`, which supports handing final-level descriptor bits [62:59] to implementation-defined hardware use. Whether those bits are actually consumed depends on the active TCR controls, which have not been captured from the Y73S runtime.
+
+### Fix
+
+- `kernel/base/map.c`: new leaf descriptors now use `0x703 | attr_indx`, leaving PBHA[3:0] clear instead of forcing PBHA[3].
+- Existing valid leaves retain their existing upper-attribute bits; this change does not rewrite or normalize an inherited mapping.
+- `scripts/verify_y73s_runtime_contract.py`: regression assertion prevents reintroduction of the old PBHA-setting template.
+
+This is a conservative descriptor compatibility fix. It does not prove the device's live HPD1/HWU settings, nor does it replace a target page-table dump or a real-device boot test.
+
+References:
+- Arm Cortex-A76 TRM, ID_AA64MMFR1_EL1.HPDS: https://www.easymanua.ls/arm/cortex-a76-core/manual?p=224
+- Arm Cortex-A55 TRM, ID_AA64MMFR1_EL1.HPDS: https://documentation-service.arm.com/static/5e7e09f6a3736a0d2e862d2f
+- Arm ID_AA64MMFR1_EL1 HPDS field description: https://www.df.lth.se/~getz/ARM/SysReg/AArch64-id_aa64mmfr1_el1.html
