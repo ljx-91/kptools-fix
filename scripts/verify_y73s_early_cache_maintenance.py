@@ -60,7 +60,7 @@ def main() -> None:
         r"dc\s+cvau,\s*x5",
         r"add\s+x5,\s*x5,\s*x3",
         r"cmp\s+x5,\s*x0",
-        r"b\.lo\s+",
+        r"b\.(?:lo|cc)\s+",
         r"dsb\s+ish",
     ), "dcache_clean_range")
 
