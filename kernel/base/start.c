@@ -750,7 +750,8 @@ static int start_init(uint64_t kimage_voff, uint64_t linear_voff)
 void symbol_init();
 int patch();
 
-int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_voff, uint64_t linear_voff, uint64_t saved_wxn)
+int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_voff, uint64_t linear_voff,
+                                                                      uint64_t saved_wxn, uint64_t runtime_tcr_el1)
 {
     int rc = 0;
     // raw stash for post-mortem debugging: no vsnprintf available yet here
@@ -759,6 +760,12 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
     ((uint64_t *)boot_log)[2] = linear_voff;
     rc = start_init(kimage_voff, linear_voff);
     if (rc) return rc;
+    uint64_t id_aa64mmfr1_el1 = 0;
+    asm volatile("mrs %0, id_aa64mmfr1_el1" : "=r"(id_aa64mmfr1_el1));
+    log_boot("Y73S TCR_EL1=%016llx HPDS=%u HPD1=%u HWU159_162=%x\\n",
+             runtime_tcr_el1, (unsigned int)((id_aa64mmfr1_el1 >> 12) & 0xf),
+             (unsigned int)((runtime_tcr_el1 >> 42) & 1),
+             (unsigned int)((runtime_tcr_el1 >> 47) & 0xf));
     prot_myself();
     /*
      * All KP text is now RO+X and all writable KP regions are PXN. Restore
