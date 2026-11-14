@@ -393,6 +393,7 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
         if ((pa & (page_size - 1)) || (pa >> 48) ||
             (pa & pa_mask) != (leaf_desc & pa_mask) ||
             (leaf_desc & 0x1Cull) != (attr_indx & 0x1Cull) ||
+            ((leaf_desc >> 8) & 0x3ull) != 0x3ull ||
             !(leaf_desc & (1ull << 10)) ||
             (leaf_desc & (1ull << 52)))
             __builtin_trap();
