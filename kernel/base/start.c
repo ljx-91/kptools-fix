@@ -456,14 +456,16 @@ static void prot_myself()
     }
     flush_tlb_kernel_range(_kp_extra_start, align_extra_end);
 
-    // rwx for hook
+    // Hook records are control data only: keep the arena RW-NX.
+    // Generated transit and relocation code is allocated separately from the
+    // executable page-run allocator and sealed RX before it is published.
     _kp_hook_start = (uint64_t)align_extra_end;
     _kp_hook_end = _kp_hook_start + HOOK_ALLOC_SIZE;
-    log_boot("Hook: %llx, %llx\n", _kp_hook_start, _kp_hook_end);
+    log_boot("Hook RW-NX: %llx, %llx\n", _kp_hook_start, _kp_hook_end);
 
     for (uint64_t i = _kp_hook_start; i < _kp_hook_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
-        *pte = (*pte | PTE_DBM | PTE_SHARED) & ~PTE_PXN & ~PTE_RDONLY & ~PTE_GP;
+        *pte = (*pte | PTE_DBM | PTE_SHARED | PTE_PXN) & ~PTE_RDONLY & ~PTE_GP;
     }
     flush_tlb_kernel_range(_kp_hook_start, _kp_hook_end);
     int hook_mem_rc = hook_mem_add(_kp_hook_start, HOOK_ALLOC_SIZE);
