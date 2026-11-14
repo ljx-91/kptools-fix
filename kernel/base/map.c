@@ -300,7 +300,6 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
     for (uint64_t lv = 4 - page_level; lv < 4; lv++) {
         uint64_t pxd_shift = (page_shift - 3) * (4 - lv) + 3;
         uint64_t pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
-        uint64_t alloc_flag = 0;
         uint64_t block_flag = 0;
 
         pxd_entry_va = pxd_va + pxd_index * 8;
@@ -322,24 +321,32 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
             if (!pa) __builtin_trap();
             if (lv != 3) {
                 pxd_pa = map_phys_alloc(data, page_size, page_size);
-                if (!pxd_pa) __builtin_trap();
-                alloc_flag = 1;
+                if (!pxd_pa || pxd_pa > ~(uint64_t)0 - data->linear_voffset)
+                    __builtin_trap();
+                pxd_va = phys_to_lm(data, pxd_pa);
+                if (pxd_va > ~(uint64_t)0 - page_size) __builtin_trap();
+
+                /*
+                 * Initialize the child table completely before publishing
+                 * its address in the parent. The store barrier prevents a
+                 * hardware table walk from observing a valid descriptor
+                 * before the zeroed child-table contents are visible.
+                 */
+                for (uint64_t i = pxd_va; i < pxd_va + page_size; i += 8)
+                    *(volatile uint64_t *)i = 0;
+                asm volatile("dsb ishst" : : : "memory");
+                pxd_desc = pxd_pa | 0x3ull;
             } else {
                 pxd_pa = pa;
+                pxd_desc = pxd_pa | attr_prot;
             }
             /*
              * Intermediate levels require a table descriptor, not leaf-page
              * attributes. Keep the descriptor type explicit at each level.
              */
-            pxd_desc = pxd_pa | (lv == 3 ? attr_prot : 0x3ull);
-            *((uint64_t *)pxd_entry_va) = pxd_desc;
+            *(volatile uint64_t *)pxd_entry_va = pxd_desc;
         }
         pxd_va = phys_to_lm(data, pxd_pa);
-        if (alloc_flag) {
-            for (uint64_t i = pxd_va; i < pxd_va + page_size; i += 8) {
-                *(uint64_t *)i = 0;
-            }
-        }
         if (block_flag) {
             /*
              * The caller updates a leaf page descriptor. Returning a block
