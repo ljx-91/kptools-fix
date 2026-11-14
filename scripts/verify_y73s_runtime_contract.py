@@ -170,7 +170,7 @@ def main():
     require(r"if\s*\(block_flag\)\s*\{[\s\S]*?__builtin_trap\(\);",
             pte, "existing block mappings must fail closed rather than be overwritten as page descriptors")
 
-    require(r"else\s*\{\s*/\* invalid, alloc \*/[\s\S]*?if\s*\(!pa\)\s*__builtin_trap\(\);[\s\S]*?if\s*\(lv\s*!=\s*3\)",
+    require(r"else\s*\{\s*// invalid, alloc[\s\S]*?if\s*\(!pa\)\s*__builtin_trap\(\);[\s\S]*?if\s*\(lv\s*!=\s*3\)",
             pte, "lookup-only walks must fail on missing descriptors without allocating or mapping PA 0")
 
     require(r"uint64_t leaf_desc = \*\(uint64_t \*\)pxd_entry_va;", pte,
