@@ -124,16 +124,14 @@ def main():
     before(paging, "data->alloc_size = (sctlr_el1 >> 19) & 1ull;",
            "sctlr_el1 &= ~(1ull << 19);",
            "original WXN state must be saved before clearing")
-    require(r'asm volatile\("mov x2, %0"', paging,
-            "saved WXN must be handed to start in x2 without changing the C ABI")
-    require(r"\(\(start_f\)sctlr_el1\)\(data->kimage_voffset,\s*data->linear_voffset\)", paging,
-            "relocated image entry must use the validated destination virtual address")
+    require(r"\(\(start_f\)sctlr_el1\)\(data->kimage_voffset,\s*data->linear_voffset,\s*\(uint64_t\)data->alloc_size\)", paging,
+            "relocated image entry must receive the saved WXN bit as its third ABI argument")
     require(r"if\s*\(data->alloc_size\).*?1ull\s*<<\s*19", paging,
             "failure return must restore the saved WXN state")
     start_c = source("kernel/base/start.c")
     start_fn = function_body(start_c, "int __attribute__((section(\".start.text\"))) __noinline start(")
-    require(r'mov %0, x2', start_fn,
-            "relocated start must capture the WXN handoff before calling start_init")
+    require(r"start\(uint64_t kimage_voff, uint64_t linear_voff, uint64_t saved_wxn\)", start_fn,
+            "relocated start must receive saved WXN through the explicit third argument")
     before(start_fn, "prot_myself();", "msr sctlr_el1",
            "KP text/data permissions must be sealed before restoring WXN")
     prot_fn = function_body(start_c, "static void prot_myself()")
