@@ -49,10 +49,10 @@ def main() -> None:
     require_patterns(helper, (
         r"cbz\s+x1",
         r"mrs\s+x2,\s*ctr_el0",
-        r"ubfx\s+x2,\s*x2,\s*#16,\s*#4",
-        r"mov\s+x3,\s*#4",
+        r"ubfx\s+x2,\s*x2,\s*#(?:0x)?10,\s*#(?:0x)?4",
+        r"mov\s+x3,\s*#(?:0x)?4",
         r"lsl\s+x3,\s*x3,\s*x2",
-        r"sub\s+x4,\s*x3,\s*#1",
+        r"sub\s+x4,\s*x3,\s*#(?:0x)?1",
         r"bic\s+x5,\s*x0,\s*x4",
         r"add\s+x0,\s*x0,\s*x1",
         r"add\s+x0,\s*x0,\s*x4",
@@ -80,7 +80,7 @@ def main() -> None:
     map_clean = call_positions(map_prepare, "dcache_clean_range")
     if len(map_clean) != 3:
         fail(f"expected 3 map_prepare cache-clean calls (PAC, branch, map), got {len(map_clean)}")
-    pac_store = re.search(r"stur\s+w3,\s*\[x11,\s*#-4\]", map_prepare)
+    pac_store = re.search(r"stur\s+w3,\s*\[x11,\s*#-(?:0x)?4\]", map_prepare)
     branch_store = re.search(r"str\s+w15,\s*\[x13\]", map_prepare)
     map_copy = map_prepare.rfind("<memcpy8>")
     if not pac_store or not (pac_store.start() < map_clean[0] < branch_store.start() if branch_store else False):
