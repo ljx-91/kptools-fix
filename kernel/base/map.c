@@ -364,11 +364,17 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
         if (pxd_va > ~(uint64_t)0 - page_size) __builtin_trap();
         if (block_flag) {
             /*
-             * The caller updates a leaf page descriptor. Returning a block
-             * descriptor here would overwrite a larger mapping with a page
-             * descriptor and corrupt neighboring translations. Splitting a
-             * block requires preserving its attributes and is not implemented.
+             * pa == 0 is a strictly read-only descriptor lookup used to read
+             * the kernel text AttrIndx. A valid block descriptor already
+             * describes the requested VA, so return its own slot directly;
+             * the caller only reads the descriptor and never writes it.
+             *
+             * Mapping requests (pa != 0) must remain fail-closed: replacing a
+             * block with a page descriptor would corrupt neighboring VAs.
+             * Splitting a live block while preserving all attributes is not
+             * implemented here.
              */
+            if (!pa) return pxd_entry_va;
             __builtin_trap();
         }
     }
