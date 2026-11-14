@@ -329,6 +329,7 @@ static hook_err_t hook_chain_prepare(fp_hook_chain_t *chain,
         return -HOOK_TRANSIT_NO_MEM;
     flush_icache_range((unsigned long)transit,
                        (unsigned long)transit + 64);
+    flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */
     if (kp_exec_seal(transit))
         return -HOOK_TRANSIT_NO_MEM;
     *transit_out = transit;
