@@ -157,7 +157,7 @@ def main():
             mem_proc_fn, "Y73S must fail closed unless TCR_EL1 selects 4-KiB / 39-bit TTBR1 geometry")
 
     pte = function_body(map_c, "static uint64_t __noinline get_or_create_pte(")
-    require(r"uint64_t attr_prot = 0x703ull \\| attr_indx;", pte,
+    require(r"uint64_t attr_prot = 0x703ull \| attr_indx;", pte,
             "new Y73S leaf mappings must leave PBHA[3:0] clear")
     if "0x40000000000703" in pte:
         raise AssertionError("new Y73S leaf mappings must not force PBHA[3]")
