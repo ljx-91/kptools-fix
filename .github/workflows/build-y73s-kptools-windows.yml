@@ -9,6 +9,7 @@ on:
       - 'tools/**'
       - 'scripts/verify_bootimg_io_contract.py'
       - 'scripts/verify_kptools_patch_bounds.py'
+      - 'scripts/test_kptools_bootimg_roundtrip.py'
       - '.github/workflows/build-y73s-kptools-windows.yml'
 
 permissions:
@@ -45,6 +46,7 @@ jobs:
           tools/kptools.exe --version
           python scripts/verify_bootimg_io_contract.py
           python scripts/verify_kptools_patch_bounds.py
+          python scripts/test_kptools_bootimg_roundtrip.py tools/kptools.exe
           file tools/kptools.exe
           objdump -f tools/kptools.exe | grep -E 'file format pei-x86-64|architecture: i386:x86-64'
 
@@ -55,11 +57,13 @@ jobs:
           mkdir -p artifacts
           cp tools/kptools.exe artifacts/kptools-windows-x86_64.exe
           sha256sum artifacts/kptools-windows-x86_64.exe > artifacts/SHA256SUMS.txt
+          printf '%s\n' "$GITHUB_SHA" > artifacts/SOURCE_COMMIT.txt
           cat > artifacts/README.txt <<'EOF'
           Windows x86_64 host build of Y73s-adapted KernelPatch kptools.
-          Built from the same repository commit as the matching Y73s KPIMG.
-          Use this tool on Windows to inspect, patch, unpack, or repack Android boot images.
-          Pair it only with kpimg-android from the same workflow run.
+          Built and round-trip tested from the recorded source commit.
+          Pair this executable only with kpimg-android built from the exact same
+          SOURCE_COMMIT.txt revision. The KPIMG artifact is published by the
+          Y73s KPIMG workflow as a separate Actions artifact for that commit.
           This executable is not an Android device binary.
           EOF
 
