@@ -41,7 +41,7 @@ def main() -> None:
         r"dsb\s+ish",
     )
     for pattern in required:
-        if not re.search(pattern, helper):
+        if not re.search(pattern, helper, re.IGNORECASE):
             fail(f"dcache_clean_range missing instruction pattern: {pattern}")
 
     start_prepare = block_between(disassembly, "start_prepare", "map_prepare")
