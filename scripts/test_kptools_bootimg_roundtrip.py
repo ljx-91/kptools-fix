@@ -44,7 +44,7 @@ def boot_id_digest(path):
 
     kernel_off = page
     ramdisk_off = align(kernel_off + ksz)
-    fmt_size = struct.unpack_from("<I", data, 44)[0] if version >= 3 else rsz
+    fmt_size = struct.unpack_from("<I", data, 12)[0] if version >= 3 else rsz
     id_field = data[576:608]
     words = struct.unpack("<8I", id_field)
     use_sha256 = not any(words[:6]) or bool(words[6] or words[7])
