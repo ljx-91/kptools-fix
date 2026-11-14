@@ -4,12 +4,7 @@
  */
 
 #include "setup.h"
-/* Arguments for the assembly bridge; kept inside the non-relocated .setup.map. */
-volatile uint64_t map_start_target __attribute__((section(".map.data")));
-volatile uint64_t map_start_arg0 __attribute__((section(".map.data")));
-volatile uint64_t map_start_arg1 __attribute__((section(".map.data")));
-volatile uint64_t map_start_wxn __attribute__((section(".map.data")));
-extern void map_start_call(void);
+extern void map_start_call(map_data_t *data);
 #define NUMA_NO_NODE (-1)
 
 typedef uint64_t phys_addr_t;
@@ -869,13 +864,17 @@ void __noinline _paging_init()
      * has no external PC-relative references. It passes WXN in x2 while
      * keeping _paging_init's verified two-argument call/frame shape.
      */
-    map_start_target = sctlr_el1;
-    map_start_arg0 = data->kimage_voffset;
-    map_start_arg1 = data->linear_voffset;
-    map_start_call();
+    /*
+     * Reuse fields that are dead after the final kernel-text PTE lookup:
+     * paging_init_relo carries the relocated start entry, and page_shift
+     * carries the original WXN bit into the assembly bridge.
+     */
+    data->paging_init_relo = sctlr_el1;
+    data->page_shift = original_wxn;
+    map_start_call(data);
     uint64_t current_sctlr = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(current_sctlr));
-    if (map_start_wxn)
+    if (original_wxn)
         current_sctlr |= (1ull << 19);
     else
         current_sctlr &= ~(1ull << 19);
