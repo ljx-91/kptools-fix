@@ -309,7 +309,16 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
 
         uint64_t pxd_desc = *((uint64_t *)pxd_entry_va);
 
-        if ((pxd_desc & 0b11) == 0b11) { // table
+        if ((pxd_desc & 0b11) == 0b11) { // table or final page
+            /*
+             * Ancestor table descriptors can further restrict leaf access.
+             * APTable[1] (bit 62) forces read-only and PXNTable (bit 59)
+             * prevents EL1 instruction fetches. This mapper does not rewrite
+             * ancestor descriptors, so reject either restriction rather
+             * than assuming the leaf AP/PXN update can override it.
+             */
+            if (lv != 3 && (pxd_desc & ((1ull << 62) | (1ull << 59))))
+                __builtin_trap();
             pxd_pa = pxd_desc & (((1ul << (48 - page_shift)) - 1) << page_shift);
         } else if ((pxd_desc & 0b11) == 0b01) { // block
             // 4k page: lv1, lv2. 16k and 64k page: only lv2.
