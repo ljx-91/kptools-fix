@@ -860,8 +860,8 @@ void __noinline _paging_init()
      */
     /*
      * alloc_size is dead after all_size was computed. Reuse it for WXN and
-     * place the value in x2 immediately before the original two-argument
-     * call, preserving the verified _paging_init frame and tail-return ABI.
+     * pass it as the third ABI argument, preserving the audited register-save
+     * slots while accounting for the measured 0x140-byte _paging_init frame.
      */
     ((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset,
                                (uint64_t)data->alloc_size);
