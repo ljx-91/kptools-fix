@@ -80,24 +80,24 @@ def main() -> None:
     map_clean = call_positions(map_prepare, "dcache_clean_range")
     if len(map_clean) != 3:
         fail(f"expected 3 map_prepare cache-clean calls (PAC, branch, map), got {len(map_clean)}")
-    pac_store = map_prepare.find("stur\\tw3, [x11, #-4]")
-    branch_store = map_prepare.find("str\\tw15, [x13]")
+    pac_store = re.search(r"stur\s+w3,\s*\[x11,\s*#-4\]", map_prepare)
+    branch_store = re.search(r"str\s+w15,\s*\[x13\]", map_prepare)
     map_copy = map_prepare.rfind("<memcpy8>")
-    if pac_store < 0 or not (pac_store < map_clean[0] < branch_store):
+    if not pac_store or not (pac_store.start() < map_clean[0] < branch_store.start() if branch_store else False):
         fail("PAC/AUT instruction patch is not cleaned before the paging_init branch patch")
-    if branch_store < 0 or not (map_clean[0] < branch_store < map_clean[1]):
+    if not branch_store or not (map_clean[0] < branch_store.start() < map_clean[1]):
         fail("paging_init branch patch is not followed by its D-cache clean")
     if not (map_clean[1] < map_copy < map_clean[2]):
         fail("relocated .setup.map copy is not followed by its D-cache clean")
 
     header_copy = setup.find("<memcpy8>")
     setup_clean = call_positions(setup, "dcache_clean_range")
-    icache = setup.find("ic\\s+iallu")
+    icache = re.search(r"ic\s+iallu", setup)
     if header_copy < 0 or len(setup_clean) != 1 or setup_clean[0] <= header_copy:
         fail("restored Image header is not followed by exactly one D-cache clean")
-    if icache < 0 or icache <= setup_clean[0]:
+    if not icache or icache.start() <= setup_clean[0]:
         fail("I-cache invalidation is not ordered after the final D-cache clean")
-    if not re.search(r"dsb\\s+ish[\\s\\S]*ic\\s+iallu[\\s\\S]*dsb\\s+ish[\\s\\S]*isb", setup, re.IGNORECASE):
+    if not re.search(r"dsb\s+ish[\s\S]*ic\s+iallu[\s\S]*dsb\s+ish[\s\S]*isb", setup, re.IGNORECASE):
         fail("final DSB / I-cache invalidate / DSB / ISB handoff sequence is incomplete")
 
     print("PASS: CTR_EL0-sized, cache-line-aligned DC CVAU range cleaner is present")
