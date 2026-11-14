@@ -254,3 +254,38 @@ from the available kernel binary. The strongest confirmed static failure
 candidate remains the lookup-only PMD-block rejection described above. The
 uploaded patched kernel predates these source commits; it must not be treated
 as containing either correction.
+
+
+## 2026-11-14 additional binary/source comparison
+
+The user-supplied embedded KPIMG was extracted from the 47,826,896-byte
+kernel image (SHA-256
+`e52b1937baa7c1aad4d063e351dd1613b14385b9c8ebca96725b59e25f327754`).
+Its KPIMG starts at file offset `0x2d52000`; the code entry is at
+`0x2d53000`. Raw AArch64 disassembly confirms the earlier block-descriptor
+failure path remains in this artifact: `get_or_create_pte` branches to
+`BRK #0x3e8` at file offset `0x2d53a48` when it encounters a block.
+
+A second, independent binary/source discrepancy was found in the destination
+PTE permission update. The supplied artifact at `0x2d53d78` uses an AND mask
+that clears SH[0], DBM, and PXN, then explicitly sets DBM (bit 51). It does not
+clear AP[2:1]. The current branch source instead applies
+`0xFFDFFFFFFFFFFF3F`, which clears AP[2:1] and PXN while preserving the
+existing DBM and shareability state; its source contract explicitly rejects
+forcing DBM on. This is a stale-artifact discrepancy, not proof by itself of
+the observed boot failure: newly created destination leaf descriptors start
+with AP[2:1] clear, and runtime page-table state is unavailable.
+
+The embedded KPIMG also contains fail-closed BRK sites at
+`0x2d53b5c` (missing required Y73S memblock probe functions),
+`0x2d53e38` (early mapping/allocation/overflow contract failure), and
+`0x2d566d0` (map-anchor restore range/geometry failure). The supplied preset
+values previously recovered satisfy the visible static offset/range
+constraints for the latter path; the runtime return values and live allocator
+state cannot be established from this binary alone.
+
+No new deterministic boot blocker beyond the block-descriptor lookup was
+proven in this pass. The uploaded kernel was compiled at 2026-11-14 04:31,
+before the current branch's later source fixes. It must not be treated as a
+build of the current HEAD. The current branch's CI status query returned no
+reported status checks, so a fresh successful build is still unverified.
