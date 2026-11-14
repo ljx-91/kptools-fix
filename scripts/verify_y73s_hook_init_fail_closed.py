@@ -16,6 +16,7 @@ hook_h = read("kernel/include/hook.h")
 hook_c = read("kernel/base/hook.c")
 fphook_c = read("kernel/base/fphook.c")
 exec_alloc = read("kernel/base/exec_alloc.c")
+map_c = read("kernel/base/map.c")
 kpmalloc_h = read("kernel/include/kpmalloc.h")
 cache_s = read("kernel/base/cache.S")
 
@@ -135,6 +136,17 @@ checks = {
     "branch-back emission reserves and validates its maximum output":
         "capacity - hook->relo_insts_num < 4" in hook_c and
         "back_len <= 0 || back_len > 4" in hook_c,
+    "lookup-only AttrIndx accepts an existing block descriptor without modifying it":
+        bool(re.search(
+            r"if \(block_flag\) \{[\s\S]*?if \(!pa\) return pxd_entry_va;[\s\S]*?__builtin_trap\(\);",
+            map_c)),
+    "mapping requests still reject block descriptors rather than splitting live mappings":
+        bool(re.search(
+            r"if \(block_flag\) \{[\s\S]*?if \(!pa\) return pxd_entry_va;\s*__builtin_trap\(\);",
+            map_c)) and
+        "Splitting a live block while preserving all attributes is not" in map_c,
+    "ordinary 4-KiB leaf lookup still validates the page descriptor":
+        "if ((leaf_desc & 0x3ull) != 0x3ull) __builtin_trap();" in map_c,
     "legacy structure transit capacity remains unchanged":
         "#define TRANSIT_INST_NUM 0x70" in hook_h,
 }
