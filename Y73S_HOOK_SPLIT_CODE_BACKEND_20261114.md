@@ -69,6 +69,7 @@ The check is included in the Y73s ARM64 KPIMG build workflow.
 - reader/callback pinning and all four ABI dispatch entry points;
 - integer literal relocation loads from the correct literal slot;
 - SIMD/PRFM literal relocation loads from the correct literal slot and restores X16/X17 plus SP;
+- TBZ/TBNZ relocation preserves direct-branch target semantics rather than imposing a BTI indirect-jump landing-pad requirement;
 - zero-register integer literal loads use a preserved scratch register, perform the original memory access, restore SP, and account for the expanded seven-instruction sequence.
 
 A second-round instruction audit found and fixed two relocation defects in `relo_ldr()`:
@@ -77,6 +78,8 @@ A second-round instruction audit found and fixed two relocation defects in `relo
 - SIMD/PRFM literal loads used `LDR X17, #16`, which addressed the NOP rather than the literal at `+20` from that instruction; this is now `0x580000B1` (`LDR X17, #20`). The old restore instruction decoded as `LDUR X17, [SP, #-8]`, leaving the stack frame unbalanced and X16 unrestored; it is now `0xA8C147F0` (`LDP X16, X17, [SP], #16`).
 
 The corrected instruction words were assembled/disassembled with the AArch64 LLVM toolchain. A subsequent edge-case fix handles `Rt == 31` (`WZR`/`XZR`) for 32-bit, 64-bit, and sign-extending integer literal loads: it preserves X16/X17, performs the actual memory read through X17, restores the original stack pointer, and branches over the embedded address literal. Its relocated length is seven words rather than six, and `relo_in_tramp()` now accounts for that per-instruction expansion. The new static regression checks distinguish the valid `+16` zero-register literal from the SIMD/PRFM `+20` literal.
+
+A further branch-semantics review found that the TBZ/TBNZ relocation path used `BR X17`, unlike the B/B.cond and CBZ/CBNZ paths which use `RET X17`. Since the original TBZ/TBNZ is a direct branch and may target an ordinary instruction label, turning it into a BTI-checked indirect jump can introduce a landing-pad requirement that did not exist in the original code. The TBZ/TBNZ stub now uses `RET X17` to match the other direct-branch emulation paths and avoid adding that BTI constraint; a regression contract guards this encoding.
 
 The generated-code publication path also had a cache-coherency gap: `flush_icache_all()` broadcasts I-cache invalidation but does not clean dirty D-cache lines to PoU. The Inline relocation page and Inline/FP transit pages now use this order before RX sealing:
 
