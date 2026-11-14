@@ -497,16 +497,10 @@ static void prot_myself()
     if (exec_alloc_rc)
         log_boot("KP executable allocator init failed: %d\n", exec_alloc_rc);
 
-    for (uint64_t i = _kp_rox_start; i < _kp_rox_end; i += page_size) {
-        uint64_t *pte = pgtable_entry_kernel(i);
-        *pte = (*pte | PTE_SHARED) & ~PTE_PXN & ~PTE_GP;
-        // todo: tlsf malloc block_split will write to alloced memory
-        // if (separate_kimage_mapping) {
-        // *pte |= PTE_RDONLY;
-        // *pte &= ~PTE_DBM;
-        // }
-    }
-    flush_tlb_kernel_range(_kp_rox_start, _kp_rox_end);
+    /*
+     * kp_exec_allocator_init() preflights and marks both KIMG and linear
+     * aliases RW-NX. Do not reopen this arena as RWX here.
+     */
 
     /*
      * Report the final leaf descriptors after all region-specific changes.
