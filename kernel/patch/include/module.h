@@ -64,6 +64,7 @@ struct module
     unsigned int size;
     unsigned int text_size;
     unsigned int ro_size;
+    unsigned int symtab_start;
 
     void *start;
 
