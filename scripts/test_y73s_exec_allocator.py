@@ -13,9 +13,18 @@ MAKEFILE = (ROOT / "kernel/Makefile").read_text()
 REQUIRED_SOURCE = (
     "KP_EXEC_MAX_PAGES 1024U",
     "KP_EXEC_PAGE_INTERIOR 0xffffU",
+    "KP_EXEC_PAGE_BUSY 0xfffeU",
+    "KP_EXEC_FLAG_FINALIZED",
+    "KP_EXEC_TABLE_RESTRICT_MASK",
+    "exec_walk_leaf",
+    "linear_ptes[KP_EXEC_MAX_PAGES]",
+    "flush_tlb_kernel_range(base, base + bytes)",
+    "KP_EXEC_RX",
+    "KP_EXEC_RO_NX",
+    "KP_EXEC_RW_NX",
     "kp_private_spin_lock(&exec_allocator_lock)",
     "offset % a->page_bytes",
-    "pages == KP_EXEC_PAGE_INTERIOR",
+    "pages >= KP_EXEC_PAGE_BUSY",
     "bytes > (size_t)-1 - (a->page_bytes - 1)",
     "return -EOVERFLOW",
     "requested_pages > a->page_count",
@@ -30,8 +39,17 @@ assert "return kp_exec_memalign(align, bytes);" in HEADER
 assert "return kp_exec_realloc(ptr, size);" in HEADER
 assert "kp_exec_free(ptr);" in HEADER
 assert "kp_rox_mem" not in START
+assert "Do not reopen this arena as RWX here." in START
 assert "kp_exec_allocator_init((void *)_kp_rox_start" in START
 assert "BASE_SRCS += base/exec_alloc.c" in MAKEFILE
+MODULE_H = (ROOT / "kernel/patch/include/module.h").read_text()
+MODULE_C = (ROOT / "kernel/patch/module/module.c").read_text()
+assert "unsigned int symtab_start;" in MODULE_H
+assert "mod->symtab_start = mod->size;" in MODULE_C
+assert "kp_exec_protect_module(mod->start, mod->size, mod->text_size," in MODULE_C
+assert MODULE_C.find("flush_icache_range(") < MODULE_C.find("kp_exec_protect_module(")
+assert "if (linear_va != kimg_va)" in SOURCE
+assert "expected_pa" in SOURCE and "exec_leaf_valid(linear_pte, expected_pa" in SOURCE
 
 
 class PageRunAllocator:
