@@ -159,6 +159,8 @@ def main():
             pte, "new leaf levels must use leaf-page attributes")
     require(r"\(leaf_desc\s*&\s*0x1Cull\)\s*!=\s*\(attr_indx\s*&\s*0x1Cull\)",
             pte, "existing destination leaf must use the kernel text memory attribute index")
+    require(r"\(\(leaf_desc\s*>>\s*8\)\s*&\s*0x3ull\)\s*!=\s*0x3ull",
+            pte, "existing destination leaf must be inner-shareable like normal kernel RAM")
     require(r"!\(leaf_desc\s*&\s*\(1ull\s*<<\s*10\)\)",
             pte, "existing destination leaf must have AF set before early access")
     require(r"leaf_desc\s*&\s*\(1ull\s*<<\s*52\)",
