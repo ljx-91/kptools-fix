@@ -808,6 +808,19 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     }
     if ((rc = move_module(mod, info))) { set_load_error(info, "module allocation failed"); goto free_mod; }
     if ((rc = simplify_symbols(mod, info)) || (rc = apply_relocations(mod, info))) goto free_mod;
+    /*
+     * flush_icache_all() only invalidates instruction caches. Clean the
+     * relocated text from D-cache to PoU first, then broadcast I-cache
+     * invalidation so every CPU observes the final instruction stream.
+     */
+    if (!mod->text_size || mod->text_size > mod->size ||
+        mod->text_size > (unsigned long)-1 - (unsigned long)mod->start) {
+        set_load_error(info, "invalid executable module extent");
+        rc = -ENOEXEC;
+        goto free_mod;
+    }
+    flush_icache_range((unsigned long)mod->start,
+                       (unsigned long)mod->start + mod->text_size);
     flush_icache_all();
 
     flags = module_lock_acquire();
