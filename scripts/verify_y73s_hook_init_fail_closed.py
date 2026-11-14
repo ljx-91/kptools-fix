@@ -123,6 +123,10 @@ checks = {
     "SIMD literal relocation restores X16/X17 and balances SP":
         "buf[3] = 0xA8C147F0; // LDP X16, X17, [SP], #0x10" in hook_c and
         "buf[3] = 0xF85F83F1" not in hook_c,
+    "linear-map block aliases must already be RO with DBM disabled and PXN":
+        "!(desc & PTE_RDONLY) || (desc & PTE_DBM)" in exec_alloc and
+        "!(desc & PTE_PXN)" in exec_alloc and
+        "Writable block aliases are rejected fail-closed." in exec_alloc,
     "legacy structure transit capacity remains unchanged":
         "#define TRANSIT_INST_NUM 0x70" in hook_h,
 }
