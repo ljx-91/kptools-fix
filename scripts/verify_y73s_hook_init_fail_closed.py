@@ -107,7 +107,16 @@ checks = {
         "buf[0] = 0x58000060u | rt" not in hook_c,
     "SIMD literal relocation loads the literal at the correct PC-relative offset":
         "buf[1] = 0x580000B1; // LDR X17, #20" in hook_c and
-        "buf[1] = 0x58000091" not in hook_c,
+        "At buf[1] (+4), the 64-bit literal starts at buf[6] (+24): +20." in hook_c,
+    "zero-register integer literal relocation preserves scratch registers and stack":
+        "if (rt == 31)" in hook_c and
+        "buf[0] = 0xA9BF47F0; // STP X16, X17, [SP, #-0x10]!" in hook_c and
+        "buf[1] = 0x58000091; // LDR X17, #16 (literal at buf[5])" in hook_c and
+        "buf[3] = 0xA8C147F0; // LDP X16, X17, [SP], #0x10" in hook_c and
+        "buf[4] = 0x14000003; // B #12" in hook_c,
+    "zero-register integer literal relocation expands to seven instructions":
+        "return 7;" in hook_c and
+        "buf[6] = addr >> 32u;" in hook_c,
     "SIMD literal relocation restores X16/X17 and balances SP":
         "buf[3] = 0xA8C147F0; // LDP X16, X17, [SP], #0x10" in hook_c and
         "buf[3] = 0xF85F83F1" not in hook_c,
