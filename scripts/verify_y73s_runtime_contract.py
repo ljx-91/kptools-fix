@@ -126,7 +126,7 @@ def main():
     require(r"map_start_call\(data\)", paging,
             "relocated image entry must use the local map assembly bridge")
     map_bridge = source("kernel/base/map1.S")
-    require(r"ldr\s+x2,\s*\[x9,\s*#map_page_shift_offset\][\s\S]*?blr\s+x16", map_bridge,
+    require(r"ldr\s+x2,\s*\[x9,\s*#(?:136|184)\][\s\S]*?blr\s+x16", map_bridge,
             "map bridge must pass the saved WXN bit in x2 to relocated start")
     require(r"str\s+x30,\s*\[sp,\s*#-16\]!.*?ldr\s+x30,\s*\[sp\],\s*#16", map_bridge,
             "map bridge must preserve its return address without changing x29")
