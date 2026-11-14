@@ -469,7 +469,7 @@ static void prot_myself()
     int hook_mem_rc = hook_mem_add(_kp_hook_start, HOOK_ALLOC_SIZE);
     if (hook_mem_rc) {
         /* hook_mem_zalloc() fails closed while the arena is unavailable. */
-        log_boot("Hook engine disabled: hook_mem_add failed (%d)\\n", hook_mem_rc);
+        log_boot("Hook engine disabled: hook_mem_add failed (%d)\n", hook_mem_rc);
     }
 
     // rw memory
