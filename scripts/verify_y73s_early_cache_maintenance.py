@@ -49,7 +49,7 @@ def main() -> None:
     require_patterns(helper, (
         r"cbz\s+x1",
         r"mrs\s+x2,\s*ctr_el0",
-        r"ubfx\s+x2,\s*x2,\s*#(?:0x)?10,\s*#(?:0x)?4",
+        r"ubfx\s+x2,\s*x2,\s*#16,\s*#4",
         r"mov\s+x3,\s*#(?:0x)?4",
         r"lsl\s+x3,\s*x3,\s*x2",
         r"sub\s+x4,\s*x3,\s*#(?:0x)?1",
