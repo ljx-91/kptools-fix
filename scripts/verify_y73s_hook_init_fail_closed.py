@@ -55,11 +55,11 @@ checks = {
         "KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)exec_relo" in hook_c and
         "KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)transit" in hook_c,
     "flush_icache_range cleans D-cache to PoU and invalidates I-cache":
-        bool(re.search(r"ENTRY\\(flush_icache_range\\)(.*?)ENDPROC\\(flush_icache_range\\)", cache_s, re.S)) and
-        bool(re.search(r"dc\\s+cvau", re.search(r"ENTRY\\(flush_icache_range\\)(.*?)ENDPROC\\(flush_icache_range\\)", cache_s, re.S).group(1))) and
-        bool(re.search(r"ic\\s+ivau", re.search(r"ENTRY\\(flush_icache_range\\)(.*?)ENDPROC\\(flush_icache_range\\)", cache_s, re.S).group(1))) and
-        bool(re.search(r"dsb\\s+ish", re.search(r"ENTRY\\(flush_icache_range\\)(.*?)ENDPROC\\(flush_icache_range\\)", cache_s, re.S).group(1))) and
-        bool(re.search(r"isb", re.search(r"ENTRY\\(flush_icache_range\\)(.*?)ENDPROC\\(flush_icache_range\\)", cache_s, re.S).group(1))),
+        bool(re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S)) and
+        bool(re.search(r"dc\s+cvau", re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S).group(1))) and
+        bool(re.search(r"ic\s+ivau", re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S).group(1))) and
+        bool(re.search(r"dsb\s+ish", re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S).group(1))) and
+        bool(re.search(r"isb", re.search(r"ENTRY\(flush_icache_range\)(.*?)ENDPROC\(flush_icache_range\)", cache_s, re.S).group(1))),
     "generated FP transit code is D-cache-cleaned to PoU before RX sealing":
         "flush_icache_range((unsigned long)transit" in fphook_c and
         "flush_icache_all();\n    if (kp_exec_seal(transit))" not in fphook_c,
