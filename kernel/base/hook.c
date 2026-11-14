@@ -238,7 +238,8 @@ static __noinline hook_err_t relo_ldr(hook_t *hook, uint64_t inst_addr, uint32_t
     addr = relo_in_tramp(hook, addr);
 
     if (type == INST_LDR_32 || type == INST_LDR_64 || type == INST_LDRSW_LIT) {
-        buf[0] = 0x58000060u | rt; // LDR Xt, #12
+        /* At buf[0], the 64-bit literal starts at buf[4] (+16). */
+        buf[0] = 0x58000080u | rt; // LDR Xt, #16
         if (type == INST_LDR_32) {
             buf[1] = 0xB9400000 | rt | (rt << 5u); // LDR Wt, [Xt]
         } else if (type == INST_LDR_64) {
