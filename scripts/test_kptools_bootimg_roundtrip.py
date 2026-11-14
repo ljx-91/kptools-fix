@@ -34,7 +34,7 @@ def make_boot(path):
     hdr[:8] = b"ANDROID!"
     struct.pack_into("<10I", hdr, 8, len(kernel_blob), 0x80080000, 0, 0, 0, 0,
                      0x80000100, PAGE, 2, 0)
-    hdr[48:64] = b"Y73S-WIN-TEST\\0".ljust(16, b"\\0")
+    hdr[48:64] = b"Y73S-WIN-TEST\0".ljust(16, b"\0")
     struct.pack_into("<I", hdr, 1632, 0)
     struct.pack_into("<Q", hdr, 1636, 0)
     struct.pack_into("<I", hdr, 1644, HEADER_SIZE)
@@ -50,7 +50,7 @@ def run(exe, args, cwd):
     p = subprocess.run([str(exe), *args], cwd=cwd, stdout=subprocess.PIPE,
                        stderr=subprocess.STDOUT, text=True)
     if p.returncode:
-        raise RuntimeError(f"command failed ({p.returncode}): {args}\\n{p.stdout}")
+        raise RuntimeError(f"command failed ({p.returncode}): {args}\n{p.stdout}")
     return p.stdout
 
 def boot_components(path):
