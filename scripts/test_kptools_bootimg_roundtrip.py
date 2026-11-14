@@ -23,7 +23,72 @@ def make_fdt():
     struct.pack_into(">I", fdt, 68, 9)
     return bytes(fdt)
 
-def make_boot(path):
+def boot_id_digest(path):
+    """Recompute the Android boot header ID over the serialized components."""
+    data = Path(path).read_bytes()
+    ksz = struct.unpack_from("<I", data, 8)[0]
+    rsz = struct.unpack_from("<I", data, 16)[0]
+    ssz = struct.unpack_from("<I", data, 24)[0]
+    page = struct.unpack_from("<I", data, 36)[0]
+    raw_version = struct.unpack_from("<I", data, 40)[0]
+    recovery_dtbo_size = struct.unpack_from("<I", data, 1632)[0]
+    dtb_size = struct.unpack_from("<I", data, 1648)[0]
+    version = raw_version
+    extracted_size = 0
+    if version > 10:
+        version = 0
+        extracted_size = raw_version
+
+    def align(n):
+        return (n + page - 1) // page * page
+
+    kernel_off = page
+    ramdisk_off = align(kernel_off + ksz)
+    fmt_size = struct.unpack_from("<I", data, 44)[0] if version >= 3 else rsz
+    id_field = data[576:608]
+    words = struct.unpack("<8I", id_field)
+    use_sha256 = not any(words[:6]) or bool(words[6] or words[7])
+    algorithm = "sha256" if use_sha256 else "sha1"
+    h = hashlib.sha256() if use_sha256 else hashlib.sha1()
+
+    def add_component(offset, size):
+        if offset < 0 or size < 0 or offset > len(data) or size > len(data) - offset:
+            raise AssertionError("boot ID component exceeds image bounds")
+        h.update(data[offset:offset + size])
+        h.update(struct.pack("<I", size))
+
+    add_component(kernel_off, ksz)
+    add_component(ramdisk_off, fmt_size)
+    checksum_aligned = align(fmt_size)
+    cursor = ramdisk_off + checksum_aligned
+    add_component(cursor, ssz)
+    cursor += align(ssz)
+    if extracted_size:
+        add_component(cursor, page)
+        h.update(struct.pack("<I", extracted_size))
+        cursor += align(extracted_size)
+    if version in (1, 2):
+        add_component(cursor, recovery_dtbo_size)
+        cursor += align(recovery_dtbo_size)
+    if version == 2:
+        add_component(cursor, dtb_size)
+    digest = h.digest()
+    return digest, id_field[:len(digest)], algorithm
+
+
+def set_boot_id(path, algorithm):
+    data = bytearray(Path(path).read_bytes())
+    data[576:608] = (b"\x00" * 32) if algorithm == "sha256" else (b"\x01" + b"\x00" * 31)
+    Path(path).write_bytes(data)
+    digest, _, detected = boot_id_digest(path)
+    if detected != algorithm:
+        raise AssertionError(f"failed to select {algorithm} boot ID mode")
+    data = bytearray(Path(path).read_bytes())
+    data[576:608] = digest.ljust(32, b"\x00")
+    Path(path).write_bytes(data)
+
+
+def make_boot(path, id_algorithm="sha256"):
     raw = bytearray(4096)
     struct.pack_into("<I", raw, 0, 0x14000008)
     struct.pack_into("<Q", raw, 8, 0x80000)
@@ -59,6 +124,7 @@ def make_boot(path):
         f.write(bytes(64))  # reserved footer-sized area used by the repacker
         used = PAGE + ((len(kernel_blob) + PAGE - 1) // PAGE * PAGE) + len(dtb_table) + 128
         f.write(bytes((-used) % PAGE))
+    set_boot_id(path, id_algorithm)
 
 
 def run(exe, args, cwd):
@@ -114,40 +180,49 @@ def main():
         raise SystemExit(f"kptools executable not found: {exe}")
     with tempfile.TemporaryDirectory(prefix="kptools-y73s-win-") as td:
         root = Path(td)
-        source = root / "source-boot.img"
         if a.boot_image:
-            shutil.copy2(Path(a.boot_image).resolve(), source)
+            cases = [("supplied", Path(a.boot_image).resolve())]
         else:
-            make_boot(source)
-        before = boot_components(source)
-        first = root / "first"
-        first.mkdir()
-        run(exe, ["unpack", str(source)], first)
-        raw1 = (first / "kernel").read_bytes()
-        if raw1 != before["kernel"]:
-            raise AssertionError("first unpack differs from source kernel")
-        run(exe, ["repack", str(source)], first)
-        repacked = first / "new-boot.img"
-        if not repacked.is_file():
-            raise AssertionError("repack did not produce new-boot.img")
-        after = boot_components(repacked)
-        for key in ("kernel", "dtb", "tail_dtb", "ramdisk", "second_size"):
-            if before[key] != after[key]:
-                raise AssertionError(f"{key} changed across round-trip")
-        second = root / "second"
-        second.mkdir()
-        run(exe, ["unpack", str(repacked)], second)
-        raw2 = (second / "kernel").read_bytes()
-        if raw1 != raw2:
-            raise AssertionError("unpack/repack/unpack kernel mismatch")
-        print("[PASS] Windows kptools unpack/repack/unpack")
-        print(f"[PASS] kernel SHA256: {hashlib.sha256(raw2).hexdigest()}")
-        print(f"[PASS] appended kernel DTB bytes: {len(after['dtb'])}")
-        print(f"[PASS] boot-v2 tail DTB table bytes: {len(after['tail_dtb'])}")
-        print(f"[PASS] ramdisk bytes: {len(after['ramdisk'])}")
-        print(f"[PASS] second-stage bytes: {after['second_size']}")
-        if a.boot_image:
-            print("[NOTE] AVB metadata/signature was not validated or regenerated.")
+            cases = []
+            for algorithm in ("sha1", "sha256"):
+                source = root / f"source-boot-{algorithm}.img"
+                make_boot(source, algorithm)
+                cases.append((algorithm, source))
+
+        for label, source in cases:
+            before = boot_components(source)
+            first = root / f"first-{label}"
+            first.mkdir()
+            run(exe, ["unpack", str(source)], first)
+            raw1 = (first / "kernel").read_bytes()
+            if raw1 != before["kernel"]:
+                raise AssertionError("first unpack differs from source kernel")
+            run(exe, ["repack", str(source)], first)
+            repacked = first / "new-boot.img"
+            if not repacked.is_file():
+                raise AssertionError("repack did not produce new-boot.img")
+            after = boot_components(repacked)
+            for key in ("kernel", "dtb", "tail_dtb", "ramdisk", "second_size"):
+                if before[key] != after[key]:
+                    raise AssertionError(f"{key} changed across round-trip")
+            digest, stored, algorithm = boot_id_digest(repacked)
+            if digest != stored:
+                raise AssertionError(f"repacked Android boot header ID mismatch ({algorithm})")
+            second = root / f"second-{label}"
+            second.mkdir()
+            run(exe, ["unpack", str(repacked)], second)
+            raw2 = (second / "kernel").read_bytes()
+            if raw1 != raw2:
+                raise AssertionError("unpack/repack/unpack kernel mismatch")
+            print(f"[PASS] {label}: unpack/repack/unpack")
+            print(f"[PASS] {label}: Android boot header ID ({algorithm})")
+            print(f"[PASS] {label}: kernel SHA256 {hashlib.sha256(raw2).hexdigest()}")
+            print(f"[PASS] {label}: appended kernel DTB bytes {len(after['dtb'])}")
+            print(f"[PASS] {label}: boot-v2 tail DTB table bytes {len(after['tail_dtb'])}")
+            print(f"[PASS] {label}: ramdisk bytes {len(after['ramdisk'])}")
+            print(f"[PASS] {label}: second-stage bytes {after['second_size']}")
+            if a.boot_image:
+                print("[NOTE] AVB metadata/signature was not validated or regenerated.")
 
 if __name__ == "__main__":
     main()
