@@ -18,7 +18,7 @@ RESTORE = [
     0xA9446959, 0xA945715B, 0xF940015D, 0xF940055E,
 ]
 RET = 0xD65F03C0
-EXPECTED_FRAME_SIZE = 0x130
+EXPECTED_FRAME_SIZE = 0x140
 EXPECTED_SAVES = {
     (19, 20): 0x10,
     (21, 22): 0x20,
@@ -138,12 +138,12 @@ def main(path):
     sw = words_for(blob, start)
 
     # _paging_init must establish the exact frame pointer used by start's inline
-    # assembly. The tail code hardcodes 0x130, so any other frame is incompatible.
+    # assembly. The tail code hardcodes 0x140, so any other frame is incompatible.
     if len(pw) < 2:
         raise ValueError("_paging_init is too short to contain its frame prologue")
     first = decode_stp_x(pw[0])
     if first != ("preindex", 29, 30, 31, -EXPECTED_FRAME_SIZE):
-        raise ValueError("_paging_init does not save x29/x30 with the expected 0x130-byte SP frame")
+        raise ValueError("_paging_init does not save x29/x30 with the expected 0x140-byte SP frame")
     if (pw[1] & MOV_FP_SP_MASK) != MOV_FP_SP:
         raise ValueError("_paging_init does not establish x29 = SP immediately after its frame save")
 
