@@ -145,8 +145,10 @@ def main():
            "child page-table initialization must be ordered before descriptor construction")
     before(pte, "pxd_desc = pxd_pa | 0x3ull", "*(volatile uint64_t *)pxd_entry_va = pxd_desc;",
            "parent table descriptor must only be published after the child is initialized")
-    require(r"pxd_desc\s*=\s*pxd_pa\s*\|\s*\(lv\s*==\s*3\s*\?\s*attr_prot\s*:\s*0x3ull\)",
-            pte, "intermediate levels must use table descriptors; leaf attributes are leaf-only")
+    require(r"pxd_desc\s*=\s*pxd_pa\s*\|\s*0x3ull",
+            pte, "new intermediate levels must use table descriptors")
+    require(r"pxd_desc\s*=\s*pxd_pa\s*\|\s*attr_prot",
+            pte, "new leaf levels must use leaf-page attributes")
     require(r"if\s*\(block_flag\)\s*\{[\s\S]*?__builtin_trap\(\);",
             pte, "existing block mappings must fail closed rather than be overwritten as page descriptors")
 
