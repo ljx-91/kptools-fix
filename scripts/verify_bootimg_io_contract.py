@@ -43,11 +43,11 @@ def main():
     need(r"header_ver\s*==\s*2\s*&&\s*hdr\.header_size\s*!=\s*sizeof\(hdr\)",
          repack, "repack must reject malformed Android boot v2 header sizes")
 
-    if re.search(r"&hdr\\.(?:kernel_size|second_size|recovery_dtbo_size|dtb_size)", repack):
+    if re.search(r"&hdr\.(?:kernel_size|second_size|recovery_dtbo_size|dtb_size)", repack):
         raise AssertionError("packed boot header members must be copied to aligned locals before hashing")
-    need(r"memcpy\\(boot_id_words,\\s*hdr\\.id,\\s*sizeof\\(boot_id_words\\)\\)", repack,
+    need(r"memcpy\(boot_id_words,\s*hdr\.id,\s*sizeof\(boot_id_words\)\)", repack,
          "boot ID algorithm detection must use aligned local words")
-    if re.search(r"is_sha256\\(\\s*hdr\\.id\\s*\\)", repack):
+    if re.search(r"is_sha256\(\s*hdr\.id\s*\)", repack):
         raise AssertionError("do not pass the packed boot ID field directly to is_sha256")
     need(r"fread\(&hdr,\s*sizeof\(hdr\),\s*1,\s*f_orig\)\s*!=\s*1", repack,
          "repack must reject truncated boot headers")
