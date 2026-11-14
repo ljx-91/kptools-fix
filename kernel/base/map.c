@@ -321,7 +321,14 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
                 __builtin_trap();
             pxd_pa = pxd_desc & (((1ul << (48 - page_shift)) - 1) << page_shift);
         } else if ((pxd_desc & 0b11) == 0b01) { // block
-            // 4k page: lv1, lv2. 16k and 64k page: only lv2.
+            /*
+             * AArch64 does not permit block descriptors at the first or
+             * final translation level. With 4-KiB granules L1/L2 blocks are
+             * valid; with 16-KiB and 64-KiB granules only L2 is valid.
+             * Reject reserved descriptor encodings before interpreting OA.
+             */
+            if (lv == 0 || lv == 3 || (page_shift != 12 && lv != 2))
+                __builtin_trap();
             uint64_t block_bits = (3 - lv) * pxd_bits + page_shift;
             pxd_pa = pxd_desc & (((1ul << (48 - block_bits)) - 1) << block_bits);
             block_flag = 1;
