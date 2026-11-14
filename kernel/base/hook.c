@@ -252,8 +252,9 @@ static __noinline hook_err_t relo_ldr(hook_t *hook, uint64_t inst_addr, uint32_t
         buf[4] = addr & 0xFFFFFFFF;
         buf[5] = addr >> 32u;
     } else {
-        buf[0] = 0xA93F47F0; // STP X16, X17, [SP, -0x10]
-        buf[1] = 0x58000091; // LDR X17, #16
+        buf[0] = 0xA93F47F0; // STP X16, X17, [SP, #-0x10]!
+        /* At buf[1] (+4), the 64-bit literal starts at buf[6] (+24): +20. */
+        buf[1] = 0x580000B1; // LDR X17, #20
         if (type == INST_PRFM_LIT) {
             buf[2] = 0xF9800220 | rt; // PRFM Rt, [X17]
         } else if (type == INST_LDR_SIMD_32) {
@@ -264,7 +265,8 @@ static __noinline hook_err_t relo_ldr(hook_t *hook, uint64_t inst_addr, uint32_t
             // LDR_SIMD_128
             buf[2] = 0x3DC00220u | rt; // LDR Qt, [X17]
         }
-        buf[3] = 0xF85F83F1; // LDR X17, [SP, -0x8]
+        /* Restore both scratch registers and undo the 16-byte stack allocation. */
+        buf[3] = 0xA8C147F0; // LDP X16, X17, [SP], #0x10
         buf[4] = 0x14000004; // B #16
         buf[5] = ARM64_NOP;
         buf[6] = addr & 0xFFFFFFFF;
