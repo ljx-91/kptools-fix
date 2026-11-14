@@ -96,7 +96,7 @@ The unpublished-record cleanup path was also hardened. It now reserves the recor
 
 - ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully on the current source/test revision: [workflow run 43571248031](https://github.com/ljx-91/kptools-fix/actions/runs/43571248031).
 - Linux kptools host build and source audit completed successfully on the same revision: [workflow run 43571248004](https://github.com/ljx-91/kptools-fix/actions/runs/43571248004).
-- The current static contract suite reports 31 passing Y73s split-Hook checks after the TBZ/TBNZ BTI-semantics regression contract was added.
+- The current static contract suite reports 32 passing Y73s split-Hook checks after the TBZ/TBNZ BTI-semantics regression contract was added.
 
 Static source contracts and targeted instruction-word disassembly are not a substitute for:
 
