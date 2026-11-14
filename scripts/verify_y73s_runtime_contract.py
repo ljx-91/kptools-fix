@@ -167,8 +167,18 @@ def main():
             pte, "single-leaf permission changes must reject contiguous-hint mappings")
     require(r"if\s*\(lv\s*!=\s*3\s*&&\s*\(pxd_desc\s*&\s*\(\(1ull\s*<<\s*62\)\s*\|\s*\(1ull\s*<<\s*59\)\)\)\s*\)\s*__builtin_trap\(\);",
             pte, "ancestor table descriptors must not impose APTable read-only or PXNTable restrictions")
-    require(r"if\s*\(block_flag\)\s*\{[\s\S]*?__builtin_trap\(\);",
-            pte, "existing block mappings must fail closed rather than be overwritten as page descriptors")
+    # A valid block descriptor is legal for lookup-only kernel-text attribute
+    # reads. Return its descriptor slot without writing or splitting the live block;
+    # actual mapping requests must still fail closed.
+    block = function_body(pte, "if (block_flag)")
+    require(r"if\s*\(!pa\)\s*return\s+pxd_entry_va\s*;", block,
+            "lookup-only walks must return the existing legal block descriptor slot")
+    before(block, "return pxd_entry_va;", "__builtin_trap();",
+           "mapping requests must fail closed after the lookup-only block return")
+    if re.search(r"\*\s*\([^)]*\)\s*=", block):
+        raise AssertionError("block lookup path must not modify a live block descriptor")
+    require(r"if\s*\(lv\s*==\s*0\s*\|\|\s*lv\s*==\s*3\s*\|\|\s*\(page_shift\s*!=\s*12\s*&&\s*lv\s*!=\s*2\)\)\s*__builtin_trap\(\);",
+            pte, "block descriptors must be accepted only at architecturally legal levels")
 
     require(r"else\s*\{\s*// invalid, alloc[\s\S]*?if\s*\(!pa\)\s*__builtin_trap\(\);[\s\S]*?if\s*\(lv\s*!=\s*3\)",
             pte, "lookup-only walks must fail on missing descriptors without allocating or mapping PA 0")
