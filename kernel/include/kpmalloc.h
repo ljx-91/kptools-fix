@@ -13,6 +13,8 @@ void *kp_exec_realloc(void *ptr, size_t size);
 int kp_exec_free(void *ptr);
 int kp_exec_protect_module(void *ptr, size_t module_size, size_t text_size,
                            size_t ro_size, size_t symtab_start);
+/* Seal a newly generated executable allocation RX after cache maintenance. */
+int kp_exec_seal(void *ptr);
 
 static inline void *kp_malloc_exec(size_t bytes)
 {
