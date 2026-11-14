@@ -18,6 +18,7 @@ REQUIRED_SOURCE = (
     "pages == KP_EXEC_PAGE_INTERIOR",
     "bytes > (size_t)-1 - (a->page_bytes - 1)",
     "return -EOVERFLOW",
+    "requested_pages > a->page_count",
     "memcpy(replacement, ptr, copy_bytes)",
     "tlsf_malloc(kp_rw_mem, sizeof(*a))",
 )
