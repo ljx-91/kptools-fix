@@ -69,7 +69,7 @@ typedef struct
 #endif
 
 #ifndef __ASSEMBLY__
-typedef int (*start_f)(uint64_t kimage_voffset, uint64_t linear_voffset);
+typedef int (*start_f)(uint64_t kimage_voffset, uint64_t linear_voffset, uint64_t saved_wxn);
 extern void _start_kernel();
 extern void _paging_init();
 extern void _link_base();
