@@ -445,10 +445,7 @@ static void prot_myself()
 
     for (uint64_t i = _kp_extra_start; i < align_extra_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
-        *pte = (*pte | PTE_DBM | PTE_SHARED) & ~PTE_RDONLY;
-        if (separate_kimage_mapping) {
-            *pte |= PTE_PXN;
-        }
+        *pte = (*pte | PTE_DBM | PTE_SHARED | PTE_PXN) & ~PTE_RDONLY;
     }
     flush_tlb_kernel_range(_kp_extra_start, align_extra_end);
 
@@ -477,10 +474,7 @@ static void prot_myself()
 
     for (uint64_t i = _kp_rw_start; i < _kp_rw_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
-        *pte = (*pte | PTE_DBM | PTE_SHARED) & ~PTE_RDONLY;
-        if (separate_kimage_mapping) {
-            *pte |= PTE_PXN;
-        }
+        *pte = (*pte | PTE_DBM | PTE_SHARED | PTE_PXN) & ~PTE_RDONLY;
     }
     flush_tlb_kernel_range(_kp_rw_start, _kp_rw_end);
     kp_rw_mem = tlsf_create_with_pool((void *)_kp_rw_start, MEMORY_RW_SIZE);
