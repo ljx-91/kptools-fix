@@ -1063,12 +1063,12 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
     hook->func_addr = faddr;
     hook->origin_addr = origin;
 
-    err = hook_prepare_relo_exec(chain, hook);
-    if (err) goto fail;
     uint32_t *transit = NULL;
     err = hook_chain_prepare(chain, &transit, argno);
     if (err) goto fail;
     hook->replace_addr = (uint64_t)transit;
+    err = hook_prepare_relo_exec(chain, hook);
+    if (err) goto fail;
 
     flags = hook_engine_lock();
     err = hook_chain_add_locked(chain, before, after, udata);
