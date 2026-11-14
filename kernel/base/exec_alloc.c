@@ -212,7 +212,11 @@ void *kp_exec_realloc(void *ptr, size_t bytes)
     }
     copy_bytes = (size_t)old_pages * a->page_bytes;
     if (copy_bytes > bytes) copy_bytes = bytes;
+    /* Do not hold an IRQ-safe allocator lock while copying a large image. */
+    kp_private_spin_unlock(&exec_allocator_lock, flags);
     memcpy(replacement, ptr, copy_bytes);
+
+    flags = kp_private_spin_lock(&exec_allocator_lock);
     (void)exec_free_locked(ptr);
     kp_private_spin_unlock(&exec_allocator_lock, flags);
     return replacement;
