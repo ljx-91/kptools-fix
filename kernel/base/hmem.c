@@ -97,23 +97,38 @@ void hook_mem_free(void *hook_mem)
 {
     hook_mem_warp_t *warp;
     unsigned long flags;
+    void *exec_relo = NULL;
+    void *exec_transit = NULL;
+    int relo_rc = 0, transit_rc = 0;
+
     if (!hook_mem || !hook_locks_ready) return;
     warp = local_container_of(hook_mem, hook_mem_warp_t, chain);
     flags = kp_private_spin_lock(&hook_mem_lock);
-    void *exec_relo = NULL;
-    void *exec_transit = NULL;
     if (warp->using == 3) {
         exec_relo = warp->exec_relo;
         exec_transit = warp->exec_transit;
-        warp->exec_relo = NULL;
-        warp->exec_transit = NULL;
-        warp->using = 0;
-        warp->addr = 0;
-        warp->type = NONE;
+        /* Reserve the record while permission reset and page release run. */
+        warp->using = 4;
     }
     kp_private_spin_unlock(&hook_mem_lock, flags);
-    if (exec_relo) (void)kp_free_exec(exec_relo);
-    if (exec_transit) (void)kp_free_exec(exec_transit);
+
+    if (exec_relo) relo_rc = kp_free_exec(exec_relo);
+    if (exec_transit) transit_rc = kp_free_exec(exec_transit);
+
+    flags = kp_private_spin_lock(&hook_mem_lock);
+    if (warp->using == 4) {
+        if (!relo_rc) warp->exec_relo = NULL;
+        if (!transit_rc) warp->exec_transit = NULL;
+        if (!warp->exec_relo && !warp->exec_transit) {
+            warp->using = 0;
+            warp->addr = 0;
+            warp->type = NONE;
+        } else {
+            /* A failed RW-NX restore must never make this record reusable. */
+            warp->using = 2;
+        }
+    }
+    kp_private_spin_unlock(&hook_mem_lock, flags);
 }
 
 static int hook_mem_set_exec_ptr(void *hook_mem, void *exec_ptr, int transit)
