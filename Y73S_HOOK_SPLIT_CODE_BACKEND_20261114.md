@@ -85,12 +85,14 @@ The generated-code publication path also had a cache-coherency gap: `flush_icach
 
 The regression contract checks both the call order and the AArch64 `dc cvau` / `ic ivau` / barrier implementation in `kernel/base/cache.S`.
 
+The unpublished-record cleanup path was also hardened. It now reserves the record in a distinct cleanup state while executable pages are returned to RW-NX. If either permission reset/free fails, the failed page pointer remains attached to a quarantined record instead of being discarded and allowing the record to be reused. This avoids turning a failed cleanup into an unreachable allocator leak or unsafe record reuse.
+
 
 ## Validation status
 
-- ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully: [workflow run 43569394090](https://github.com/ljx-91/kptools-fix/actions/runs/43569394090).
+- ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully: [workflow run 43569779556](https://github.com/ljx-91/kptools-fix/actions/runs/43569779556).
 - Linux kptools host build and source audit completed successfully: [workflow run 43569394029](https://github.com/ljx-91/kptools-fix/actions/runs/43569394029).
-- The current static contract suite reports 27 passing Y73s split-Hook checks.
+- The current static contract suite reports 28 passing Y73s split-Hook checks.
 
 Static source contracts and targeted instruction-word disassembly are not a substitute for:
 
