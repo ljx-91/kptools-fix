@@ -87,6 +87,11 @@ jobs:
           aarch64-none-elf-readelf -h kpimg.elf
           aarch64-none-elf-objdump -d --disassemble=_paging_init kpimg.elf
           aarch64-none-elf-objdump -d --disassemble=start kpimg.elf
+          # Preserve the actual compiler output for the register-sensitive transit
+          # entry points; x16 carries the chain pointer into these C functions.
+          for sym in _transit0 _transit4 _transit8 _transit12 _fp_transit0 _fp_transit4 _fp_transit8 _fp_transit12; do
+            aarch64-none-elf-objdump -d --disassemble="$sym" kpimg.elf
+          done
           python3 ../scripts/verify_kpimg_elf_stack_frame.py kpimg.elf
           python3 ../scripts/verify_y73s_early_cache_maintenance.py kpimg.elf
           python3 ../scripts/verify_y73s_memblock_contract.py
