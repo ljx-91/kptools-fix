@@ -28,8 +28,6 @@
 #define align_ceil(x, align) (((uint64_t)(x) + (uint64_t)(align) - 1) & ~((uint64_t)(align) - 1))
 extern int cfi_bypass;
 start_preset_t start_preset __attribute__((section(".start.data")));
-/* Shared with the pre-relocation map hook; copied with .kp.data. */
-volatile uint64_t kp_saved_wxn __attribute__((section(".start.data")));
 
 setup_header_t *setup_header = 0;
 KP_EXPORT_SYMBOL(setup_header);
@@ -760,6 +758,9 @@ int patch();
 
 int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_voff, uint64_t linear_voff)
 {
+    uint64_t saved_wxn = 0;
+    /* x2 is supplied by the map hook without changing the C ABI/frame. */
+    asm volatile("mov %0, x2" : "=r"(saved_wxn));
     int rc = 0;
     // raw stash for post-mortem debugging: no vsnprintf available yet here
     ((uint64_t *)boot_log)[0] = 0x4b50565354415254ull; // "KPVSTART" marker
@@ -775,7 +776,7 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
      */
     uint64_t current_sctlr = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(current_sctlr));
-    if (kp_saved_wxn)
+    if (saved_wxn)
         current_sctlr |= (1ull << 19);
     else
         current_sctlr &= ~(1ull << 19);
