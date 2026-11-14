@@ -58,6 +58,7 @@ typedef struct
 #define map_extra_size_offset (map_start_img_size_offset + 8)
 #define map_alloc_size_offset (map_extra_size_offset + 8)
 #define map_kernel_pa_offset (map_alloc_size_offset + 8)
+#define map_paging_init_relo_offset (map_kernel_pa_offset + 8)
 #define map_map_symbol_offset (map_paging_init_relo_offset + 8)
 #ifdef MAP_DEBUG
 #define map_printk_relo_offset (map_map_symbol_offset + MAP_SYMBOL_SIZE)
