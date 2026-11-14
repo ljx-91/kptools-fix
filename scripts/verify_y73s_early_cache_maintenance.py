@@ -28,7 +28,7 @@ def require_patterns(block: str, patterns: tuple[str, ...], label: str) -> None:
 
 def call_positions(block: str, symbol: str) -> list[int]:
     return [m.start() for m in re.finditer(
-        rf"bl\\s+[^\\n]*<{re.escape(symbol)}>", block
+        rf"bl\s+[^\n]*<{re.escape(symbol)}>", block
     )]
 
 
@@ -47,21 +47,21 @@ def main() -> None:
 
     helper = block_between(disassembly, "dcache_clean_range", "start_prepare")
     require_patterns(helper, (
-        r"cbz\\s+x1",
-        r"mrs\\s+x2,\\s*ctr_el0",
-        r"ubfx\\s+x2,\\s*x2,\\s*#16,\\s*#4",
-        r"mov\\s+x3,\\s*#4",
-        r"lsl\\s+x3,\\s*x3,\\s*x2",
-        r"sub\\s+x4,\\s*x3,\\s*#1",
-        r"bic\\s+x5,\\s*x0,\\s*x4",
-        r"add\\s+x0,\\s*x0,\\s*x1",
-        r"add\\s+x0,\\s*x0,\\s*x4",
-        r"bic\\s+x0,\\s*x0,\\s*x4",
-        r"dc\\s+cvau,\\s*x5",
-        r"add\\s+x5,\\s*x5,\\s*x3",
-        r"cmp\\s+x5,\\s*x0",
-        r"b\\.lo\\s+",
-        r"dsb\\s+ish",
+        r"cbz\s+x1",
+        r"mrs\s+x2,\s*ctr_el0",
+        r"ubfx\s+x2,\s*x2,\s*#16,\s*#4",
+        r"mov\s+x3,\s*#4",
+        r"lsl\s+x3,\s*x3,\s*x2",
+        r"sub\s+x4,\s*x3,\s*#1",
+        r"bic\s+x5,\s*x0,\s*x4",
+        r"add\s+x0,\s*x0,\s*x1",
+        r"add\s+x0,\s*x0,\s*x4",
+        r"bic\s+x0,\s*x0,\s*x4",
+        r"dc\s+cvau,\s*x5",
+        r"add\s+x5,\s*x5,\s*x3",
+        r"cmp\s+x5,\s*x0",
+        r"b\.lo\s+",
+        r"dsb\s+ish",
     ), "dcache_clean_range")
 
     start_prepare = block_between(disassembly, "start_prepare", "map_prepare")
@@ -80,14 +80,14 @@ def main() -> None:
     map_clean = call_positions(map_prepare, "dcache_clean_range")
     if len(map_clean) != 3:
         fail(f"expected 3 map_prepare cache-clean calls (PAC, branch, map), got {len(map_clean)}")
-    pac_store = map_prepare.find("stur")
-    branch_store = map_prepare.find("str")
+    pac_store = map_prepare.find("stur\\tw3, [x11, #-4]")
+    branch_store = map_prepare.find("str\\tw15, [x13]")
     map_copy = map_prepare.rfind("<memcpy8>")
-    if pac_store < 0 or not (pac_store < map_clean[0] < map_clean[1]):
+    if pac_store < 0 or not (pac_store < map_clean[0] < branch_store):
         fail("PAC/AUT instruction patch is not cleaned before the paging_init branch patch")
     if branch_store < 0 or not (map_clean[0] < branch_store < map_clean[1]):
         fail("paging_init branch patch is not followed by its D-cache clean")
-    if map_copy < 0 or map_copy >= map_clean[2]:
+    if not (map_clean[1] < map_copy < map_clean[2]):
         fail("relocated .setup.map copy is not followed by its D-cache clean")
 
     header_copy = setup.find("<memcpy8>")
