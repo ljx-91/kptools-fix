@@ -106,6 +106,29 @@ static void flush_icache_all(void)
     asm volatile("isb" : : : "memory");
 }
 
+/*
+ * Stores into freshly relocated executable pages are not automatically
+ * visible to instruction fetch on ARM64. Clean every touched D-cache line
+ * to the Point of Unification before invalidating the instruction caches.
+ */
+static inline __attribute__((always_inline)) void clean_dcache_range_to_pou(uint64_t start, uint64_t size)
+{
+    if (!size) return;
+    if (start > ~(uint64_t)0 - size) __builtin_trap();
+
+    uint64_t ctr_el0 = 0;
+    asm volatile("mrs %0, ctr_el0" : "=r"(ctr_el0));
+    uint64_t line_size = 4ull << ((ctr_el0 >> 16) & 0xf);
+    uint64_t end = start + size;
+    if (end > ~(uint64_t)0 - (line_size - 1)) __builtin_trap();
+
+    uint64_t addr = start & ~(line_size - 1);
+    end = (end + line_size - 1) & ~(line_size - 1);
+    for (; addr < end; addr += line_size)
+        asm volatile("dc cvau, %0" : : "r"(addr) : "memory");
+    asm volatile("dsb ish" : : : "memory");
+}
+
 // The map region is copied to a different kernel address at boot, so it must be
 // self-contained: no `bl` may leave the region. GCC 14 lowers the 0xa0-byte
 // struct copy `*data = *get_data()` to a memcpy() call; that bl targets the
@@ -774,6 +797,7 @@ void __noinline _paging_init()
         *(uint32_t *)(paging_init_va) = data->paging_init_backup;
     }
 #endif // KP_TARGET_Y73S
+    clean_dcache_range_to_pou(paging_init_va, sizeof(uint32_t));
     flush_icache_all();
     ((paging_init_f)(paging_init_va))();
 #ifdef KP_TARGET_Y73S
@@ -854,6 +878,8 @@ void __noinline _paging_init()
                    paging_init_va + data->start_img_size,
                    (uint64_t)data->extra_size);
 
+    /* Clean the complete relocated allocation, including KP text and extras. */
+    clean_dcache_range_to_pou(sctlr_el1, all_size);
     flush_icache_all();
 
     // free old start
