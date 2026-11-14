@@ -285,6 +285,11 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
             pxd_pa = pxd_desc & (((1ul << (48 - block_bits)) - 1) << block_bits);
             block_flag = 1;
         } else { // invalid, alloc
+            /* pa == 0 is the lookup-only mode used for kernel text attributes.
+             * A missing descriptor is not a mapping request: never allocate
+             * intermediate tables or manufacture a valid mapping to PA 0.
+             */
+            if (!pa) __builtin_trap();
             if (lv != 3) {
                 pxd_pa = map_phys_alloc(data, page_size, page_size);
                 if (!pxd_pa) __builtin_trap();
