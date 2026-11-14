@@ -291,7 +291,14 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
     uint64_t baddr = ttbr1_el1 & 0xFFFFFFFFFFFE;
     uint64_t page_size = 1 << page_shift;
     uint64_t page_size_mask = ~(page_size - 1);
-    uint64_t attr_prot = 0x40000000000703 | attr_indx;
+    /*
+     * Leave PBHA[3:0] (descriptor bits 62:59) clear for newly-created
+     * final-level mappings. MT6853 Cortex-A76/A55-class cores can expose
+     * these bits to implementation-defined hardware use when HPDS2 and
+     * the matching TCR_EL1 controls are enabled; this mapper has no
+     * target-specific PBHA contract. Existing leaves are left untouched.
+     */
+    uint64_t attr_prot = 0x703ull | attr_indx;
 
     uint64_t pxd_pa = baddr & page_size_mask;
     if (!pxd_pa || pxd_pa > ~(uint64_t)0 - data->linear_voffset)
