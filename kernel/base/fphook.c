@@ -327,7 +327,8 @@ static hook_err_t hook_chain_prepare(fp_hook_chain_t *chain,
     transit[5] = (uint64_t)chain >> 32;
     if (branch_absolute(&transit[6], transit_start) <= 0)
         return -HOOK_TRANSIT_NO_MEM;
-    flush_icache_all();
+    flush_icache_range((unsigned long)transit,
+                       (unsigned long)transit + 64);
     if (kp_exec_seal(transit))
         return -HOOK_TRANSIT_NO_MEM;
     *transit_out = transit;
