@@ -264,20 +264,18 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
 {
     uint64_t page_shift = data->page_shift;
     uint64_t va_bits = data->va1_bits;
-    if (page_shift != 12 || va_bits != 39 || !pa) {
-        /*
-         * Y73S page-table construction is intentionally limited to its
-         * verified 4-KiB / 39-bit TTBR1 geometry. pa == 0 is reserved for
-         * the read-only AttrIndx lookup path and is handled separately.
-         */
+    /*
+     * Y73S page-table construction is intentionally limited to its
+     * verified 4-KiB / 39-bit TTBR1 geometry. pa == 0 remains a
+     * read-only AttrIndx lookup request; it does not relax geometry checks.
+     */
 #ifdef KP_TARGET_Y73S
-        if (page_shift != 12 || va_bits != 39) __builtin_trap();
+    if (page_shift != 12 || va_bits != 39) __builtin_trap();
 #else
-        if (va_bits <= 4 || va_bits > 48 ||
-            (page_shift != 12 && page_shift != 14 && page_shift != 16))
-            __builtin_trap();
+    if (va_bits <= 4 || va_bits > 48 ||
+        (page_shift != 12 && page_shift != 14 && page_shift != 16))
+        __builtin_trap();
 #endif
-    }
     uint64_t page_level = (va_bits - 4) / (page_shift - 3);
     if (!page_level || page_level > 4) __builtin_trap();
     uint64_t pxd_bits = page_shift - 3;
