@@ -61,6 +61,14 @@ typedef struct
 #define map_paging_init_relo_offset (map_kernel_pa_offset + 8)
 #define map_map_symbol_offset (map_paging_init_relo_offset + 8)
 #ifdef MAP_DEBUG
+#define map_va1_bits_offset (map_str_fmt_px_offset + 24)
+#else
+#define map_va1_bits_offset (map_map_symbol_offset + MAP_SYMBOL_SIZE)
+#endif
+#define map_page_shift_offset (map_va1_bits_offset + 8)
+#define map_kimage_voffset_offset (map_page_shift_offset + 8)
+#define map_linear_voffset_offset (map_kimage_voffset_offset + 8)
+#ifdef MAP_DEBUG
 #define map_printk_relo_offset (map_map_symbol_offset + MAP_SYMBOL_SIZE)
 #define map_tmp0_offset (map_printk_relo_offset + 8)
 #define map_tmp1_offset (map_tmp0_offset + 8)
