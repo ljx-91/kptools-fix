@@ -56,3 +56,18 @@ The repacked image is strictly an offline round-trip test artifact. It is not a 
 The host kptools implementation correctly unpacked and repacked the actual Y73s stock Boot image while preserving the decompressed kernel, appended DTB, and ramdisk byte-for-byte. This validates the tested host tool's basic Android Boot v2 I/O path for this image.
 
 It does **not** prove that the Windows executable itself has processed this exact stock image, does not validate AVB, does not prove KPIMG runtime compatibility, and does not establish that a patched image will boot on the device.
+
+
+## Matched Windows + KPIMG artifacts
+
+A matched package was assembled from the same source commit `939ddd03cb6d2290ff78176e473a8b6cddb1df30`.
+
+- Windows kptools x86-64 SHA-256: `0e51e9e23ad5846ffc49e5e4b0ee5ecf5526a5f3aacab6985ffc9c748980dbb8`
+- KPIMG payload SHA-256: `4ab1f2e9235cc404a9785842f29af29266aee3456aa29ceab37cb4b750f1a9ea`
+- KPIMG ELF SHA-256: `cf2c596ccc24f74a3da3ba963f69d42e8ffc5e324a762e7bdba1110e68a71cb0`
+
+Windows build run: https://github.com/ljx-91/kptools-fix/actions/runs/43557013491
+
+KPIMG build/audit run: https://github.com/ljx-91/kptools-fix/actions/runs/43557013440
+
+The Windows CI test uses a synthetic fixture, not the user's 96 MiB stock image. The actual stock-image round-trip was verified with the Linux host build. The test runner in `scripts/test_kptools_bootimg_roundtrip.py` now accepts `--boot-image` so the same Windows executable can be exercised locally against the supplied stock image.
