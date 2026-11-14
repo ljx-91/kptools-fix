@@ -294,7 +294,10 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
     uint64_t attr_prot = 0x40000000000703 | attr_indx;
 
     uint64_t pxd_pa = baddr & page_size_mask;
+    if (!pxd_pa || pxd_pa > ~(uint64_t)0 - data->linear_voffset)
+        __builtin_trap();
     uint64_t pxd_va = phys_to_lm(data, pxd_pa);
+    if (pxd_va > ~(uint64_t)0 - page_size) __builtin_trap();
     uint64_t pxd_entry_va = 0;
 
     for (uint64_t lv = 4 - page_level; lv < 4; lv++) {
@@ -346,7 +349,10 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
              */
             *(volatile uint64_t *)pxd_entry_va = pxd_desc;
         }
+        if (!pxd_pa || pxd_pa > ~(uint64_t)0 - data->linear_voffset)
+            __builtin_trap();
         pxd_va = phys_to_lm(data, pxd_pa);
+        if (pxd_va > ~(uint64_t)0 - page_size) __builtin_trap();
         if (block_flag) {
             /*
              * The caller updates a leaf page descriptor. Returning a block
