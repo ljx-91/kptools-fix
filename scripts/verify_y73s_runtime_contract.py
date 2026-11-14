@@ -115,7 +115,10 @@ def main():
             "relocated code/data must be cleaned to the Point of Unification")
     require(r"dsb ish", clean_cache,
             "D-cache clean must complete before I-cache invalidation")
-    if "clean_dcache_range_to_pou(paging_init_va, sizeof(uint32_t));\\n    flush_icache_all();" not in paging:
+    restore_clean = paging.find("clean_dcache_range_to_pou(paging_init_va, sizeof(uint32_t));")
+    restore_flush = paging.find("flush_icache_all();", restore_clean)
+    restore_call = paging.find("((paging_init_f)(paging_init_va))();", restore_flush)
+    if restore_clean < 0 or restore_flush <= restore_clean or restore_call <= restore_flush:
         raise AssertionError("restored paging_init instruction must be D-cache-clean before I-cache invalidation")
     copy_at = paging.find("copy_map_range(sctlr_el1 + data->start_size")
     clean_at = paging.find("clean_dcache_range_to_pou(sctlr_el1, all_size);", copy_at)
