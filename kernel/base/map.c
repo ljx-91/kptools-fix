@@ -4,6 +4,7 @@
  */
 
 #include "setup.h"
+extern volatile uint64_t kp_saved_wxn;
 #define NUMA_NO_NODE (-1)
 
 typedef uint64_t phys_addr_t;
@@ -805,7 +806,7 @@ void __noinline _paging_init()
     // SCTLR_EL1 bits while paging_init() runs.
     uint64_t sctlr_el1 = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
-    uint64_t original_wxn = (sctlr_el1 >> 19) & 1ull;
+    kp_saved_wxn = (sctlr_el1 >> 19) & 1ull;
     sctlr_el1 &= ~(1ull << 19);
     asm volatile("msr sctlr_el1, %0\n\tisb" : : "r"(sctlr_el1) : "memory");
 
@@ -858,11 +859,10 @@ void __noinline _paging_init()
      * If start_init() fails, it returns while relocated .start.text is still
      * RWX, so restore WXN here (not inside start()'s error branch).
      */
-    (void)((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset,
-                               original_wxn);
+    (void)((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset);
     uint64_t current_sctlr = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(current_sctlr));
-    if (original_wxn)
+    if (kp_saved_wxn)
         current_sctlr |= (1ull << 19);
     else
         current_sctlr &= ~(1ull << 19);
