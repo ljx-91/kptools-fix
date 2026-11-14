@@ -52,7 +52,7 @@ assert "mod->symtab_start = mod->size;" in MODULE_C
 assert "kp_exec_protect_module(mod->start, mod->size, mod->text_size," in MODULE_C
 assert MODULE_C.find("flush_icache_range(") < MODULE_C.find("kp_exec_protect_module(")
 assert "if (linear_va != kimg_va)" in SOURCE
-assert "expected_pa" in SOURCE and "exec_leaf_valid(linear_pte, expected_pa" in SOURCE
+assert "expected_pa" in SOURCE and "exec_walk_linear_alias(linear_va, expected_pa" in SOURCE
 
 
 class PageRunAllocator:
