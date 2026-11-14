@@ -1300,7 +1300,12 @@ int repack_bootimg_mem(const char *orig_boot_path,
         if (use_sha256){
             SHA256_CTX ctx;
             sha256_init(&ctx);
-            sha256_update(&ctx, (const BYTE *)final_k_buf, hdr.kernel_size);
+            /* The logical kernel segment is compressed bytes followed by the
+             * separately stored appended DTB. Hash each allocation explicitly:
+             * hdr.kernel_size includes both, but final_k_buf does not. */
+            sha256_update(&ctx, (const BYTE *)final_k_buf, final_k_size);
+            if (dtb_size)
+                sha256_update(&ctx, (const BYTE *)extracted_dtb, dtb_size);
             sha256_update(&ctx, (const BYTE *)&hdr.kernel_size, 4);
             sha256_update(&ctx, (const BYTE *)rest_buf, fmt_size);
             sha256_update(&ctx, (const BYTE *)&fmt_size, sizeof(fmt_size));
@@ -1338,7 +1343,11 @@ int repack_bootimg_mem(const char *orig_boot_path,
         }else{
             SHA1_CTX ctx;
             sha1_init(&ctx);
-            sha1_update(&ctx, (const BYTE *)final_k_buf, hdr.kernel_size);
+            /* Match the bytes written as the kernel segment without reading past
+             * final_k_buf when an appended DTB is stored separately. */
+            sha1_update(&ctx, (const BYTE *)final_k_buf, final_k_size);
+            if (dtb_size)
+                sha1_update(&ctx, (const BYTE *)extracted_dtb, dtb_size);
             sha1_update(&ctx, (const BYTE *)&hdr.kernel_size, 4);
             sha1_update(&ctx, (const BYTE *)rest_buf, fmt_size);
             sha1_update(&ctx, (const BYTE *)&fmt_size, sizeof(fmt_size));
