@@ -106,3 +106,42 @@ Static source contracts and targeted instruction-word disassembly are not a subs
 - booting and exercising the resulting image on the physical Y73s.
 
 No AVB changes are included. No claim of device boot success is made.
+
+
+## 2026-11-14 follow-up: linear-map block-alias W^X limitation
+
+A further audit of `kernel/base/exec_alloc.c` confirmed an important limitation in
+`exec_walk_linear_alias()`:
+
+- A 4-KiB linear-map leaf is recorded in `linear_ptes[]` and receives the same
+  permission transition as its KIMG alias.
+- A block descriptor (for example, a 2-MiB or 1-GiB mapping) is accepted when
+  it maps the expected physical page, has the expected memory attributes and
+  shareability/access-flag bits, and has PXN set. The walker returns success
+  without recording a leaf PTE.
+- Consequently, a writable PXN block alias is not changed when the KIMG alias
+  is sealed RX. Execution through the linear alias remains prohibited by PXN,
+  but writes through that alias may still modify the same physical page.
+
+This means the current implementation does **not** prove physical-page-wide
+strict W^X when a writable block linear alias is present. It only establishes
+that the block alias is PXN. The code deliberately does not split a live
+linear-map block descriptor because doing so safely requires device-specific
+page-table evidence, allocation of a replacement table, correct descriptor
+construction, synchronization, and TLB invalidation. Blindly changing a
+2-MiB/1-GiB descriptor would affect neighboring kernel pages.
+
+No speculative page-table rewrite was made in this audit. Before claiming
+strict W^X, collect the actual Y73s descriptors for both the KIMG and linear
+aliases of the executable arena (including AP[2], DBM, PXN, output address,
+and descriptor level), then choose either a verified block-splitting design
+or a fail-closed policy. This remains a device/runtime validation item, not
+a passing W^X guarantee.
+
+The allocator's state transitions were also reviewed: allocation, seal, free,
+and module-protection operations reserve a run with the BUSY marker while
+permission changes execute outside the allocator lock; the protection walker
+preflights all aliases before changing any descriptors under
+`exec_prot_lock`. No partial descriptor-write failure path was identified
+after successful preflight. This is a static source review, not a runtime
+concurrency proof.
