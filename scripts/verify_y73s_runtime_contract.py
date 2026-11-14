@@ -136,6 +136,15 @@ def main():
             "relocated start must capture the WXN handoff before calling start_init")
     before(start_fn, "prot_myself();", "msr sctlr_el1",
            "KP text/data permissions must be sealed before restoring WXN")
+    prot_fn = function_body(start_c, "static void prot_myself()")
+    require(r"\*pte\s*=\s*\(\*pte\s*\|\s*PTE_SHARED\s*\|\s*PTE_RDONLY\)\s*&\s*~\(PTE_PXN\s*\|\s*PTE_GP\s*\|\s*PTE_DBM\)", prot_fn,
+            "KP text must be read-only and executable before WXN is restored")
+    if "if (separate_kimage_mapping)" in prot_fn:
+        raise AssertionError("KP writable-region PXN protection must not depend on mapping layout")
+    if prot_fn.count("PTE_DBM | PTE_SHARED | PTE_PXN") < 3:
+        raise AssertionError("KP data, extra and RW regions must all be RW-NX")
+    before(paging, "((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset);",
+           "if (data->alloc_size)", "failure return must restore WXN after start returns")
     require(r"memblock_mark_nomap_f[^;]*\)\(start_pa,\s*all_size\)\)\s*__builtin_trap\(\);",
             paging, "NOMAP failure must stop before mapping/copying")
 
