@@ -77,11 +77,20 @@ A second-round instruction audit found and fixed two relocation defects in `relo
 
 The corrected instruction words were assembled/disassembled with the AArch64 LLVM toolchain, and the static regression checks passed in the Y73s KPIMG workflow.
 
+The generated-code publication path also had a cache-coherency gap: `flush_icache_all()` broadcasts I-cache invalidation but does not clean dirty D-cache lines to PoU. The Inline relocation page and Inline/FP transit pages now use this order before RX sealing:
+
+1. `flush_icache_range(start, end)` to clean D-cache lines to PoU, invalidate the local I-cache range, and execute the required barriers;
+2. `flush_icache_all()` to broadcast I-cache invalidation to the other CPUs;
+3. `kp_exec_seal()` to switch the executable allocation to RX.
+
+The regression contract checks both the call order and the AArch64 `dc cvau` / `ic ivau` / barrier implementation in `kernel/base/cache.S`.
+
+
 ## Validation status
 
-- ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully: [workflow run 43568926760](https://github.com/ljx-91/kptools-fix/actions/runs/43568926760).
-- Linux kptools host build and source audit completed successfully: [workflow run 43568926767](https://github.com/ljx-91/kptools-fix/actions/runs/43568926767).
-- The current static contract suite reports 24 passing Y73s split-Hook checks.
+- ARM GNU GCC 14.2 Y73s KPIMG build and audit completed successfully: [workflow run 43569394090](https://github.com/ljx-91/kptools-fix/actions/runs/43569394090).
+- Linux kptools host build and source audit completed successfully: [workflow run 43569394029](https://github.com/ljx-91/kptools-fix/actions/runs/43569394029).
+- The current static contract suite reports 27 passing Y73s split-Hook checks.
 
 Static source contracts and targeted instruction-word disassembly are not a substitute for:
 
