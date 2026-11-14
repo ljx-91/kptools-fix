@@ -4,7 +4,6 @@
  */
 
 #include "setup.h"
-extern void map_start_call(map_data_t *data);
 #define NUMA_NO_NODE (-1)
 
 typedef uint64_t phys_addr_t;
@@ -806,7 +805,7 @@ void __noinline _paging_init()
     // SCTLR_EL1 bits while paging_init() runs.
     uint64_t sctlr_el1 = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
-    uint64_t original_wxn = (sctlr_el1 >> 19) & 1ull;
+    data->alloc_size = (sctlr_el1 >> 19) & 1ull;
     sctlr_el1 &= ~(1ull << 19);
     asm volatile("msr sctlr_el1, %0\n\tisb" : : "r"(sctlr_el1) : "memory");
 
@@ -865,19 +864,17 @@ void __noinline _paging_init()
      * keeping _paging_init's verified two-argument call/frame shape.
      */
     /*
-     * Reuse fields that are dead after the final kernel-text PTE lookup:
-     * paging_init_relo carries the relocated start entry, and page_shift
-     * carries the original WXN bit into the assembly bridge.
+     * alloc_size is dead after all_size was computed. Reuse it for WXN and
+     * place the value in x2 immediately before the original two-argument
+     * call, preserving the verified _paging_init frame and tail-return ABI.
      */
-    data->paging_init_relo = sctlr_el1;
-    data->page_shift = original_wxn;
-    map_start_call(data);
-    uint64_t current_sctlr = 0;
-    asm volatile("mrs %0, sctlr_el1" : "=r"(current_sctlr));
-    if (original_wxn)
-        current_sctlr |= (1ull << 19);
+    asm volatile("mov x2, %0" : : "r"(data->alloc_size) : "x2", "memory");
+    ((start_f)sctlr_el1)(data->kimage_voffset, data->linear_voffset);
+    asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_el1));
+    if (data->alloc_size)
+        sctlr_el1 |= (1ull << 19);
     else
-        current_sctlr &= ~(1ull << 19);
+        sctlr_el1 &= ~(1ull << 19);
     asm volatile("dsb ish\n\tmsr sctlr_el1, %0\n\tisb"
-                 : : "r"(current_sctlr) : "memory");
+                 : : "r"(sctlr_el1) : "memory");
 }
