@@ -144,7 +144,7 @@ def run_tests():
     p0 = a.alloc(1)
     p1 = a.alloc(4097)
     assert p0 == a.base and p1 == a.base + a.page
-    assert not a.free(p0 + a.page)  # interior page is not a valid free base
+    assert not a.free(p1 + a.page)  # interior page is not a valid free base
     assert a.free(p0)
     assert not a.free(p0)  # double free
     assert a.alloc(1, 65536) % 65536 == 0
