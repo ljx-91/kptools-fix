@@ -792,13 +792,15 @@ void __noinline _paging_init()
     for (off = 0; off < all_size; off += page_size) {
         uint64_t entry = get_or_create_pte(data, sctlr_el1 + off, start_pa + off, attr_indx);
         /*
-         * Clear AP[2] (bit 7) to make the kernel mapping writable and
-         * clear PXN (bit 53) so the relocated kernel code is executable.
+         * Clear AP[2:1] (bits 7:6) to enforce EL1 RW / EL0 no-access.
+         * Clearing only AP[2] could leave AP=01 and grant EL0 access when
+         * AP[1] was inherited from an existing mapping. Clear PXN (bit 53)
+         * so the relocated kernel code is executable at EL1.
          * Do not force-set DBM (bit 51): hardware dirty-state management
          * is optional and is controlled by the CPU feature and TCR_EL1.HD.
          * Preserve the DBM state already present in an existing descriptor.
          */
-        *(volatile uint64_t *)entry = *(volatile uint64_t *)entry & 0xFFDFFFFFFFFFFF7F;
+        *(volatile uint64_t *)entry = *(volatile uint64_t *)entry & 0xFFDFFFFFFFFFFF3F;
     }
     flush_tlb_all();
 
