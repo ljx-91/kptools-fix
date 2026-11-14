@@ -119,8 +119,26 @@ def main():
             "start image must use the bounded copy helper")
     require(r"copy_map_range\(sctlr_el1\s*\+\s*data->start_size,\s*paging_init_va\s*\+\s*data->start_img_size,\s*\(uint64_t\)data->extra_size\)", paging,
             "extra payload must use the bounded copy helper")
-    require(r"\(\(start_f\)sctlr_el1\)", paging,
+    require(r"map_start_target\s*=\s*sctlr_el1", paging,
             "relocated image entry must use the validated destination virtual address")
+    require(r"map_start_call\(\)", paging,
+            "relocated image entry must use the local map assembly bridge")
+    map_bridge = source("kernel/base/map1.S")
+    require(r"ldr\s+x2,\s*\[x9\][\s\S]*?blr\s+x16", map_bridge,
+            "map bridge must pass the saved WXN bit in x2 to relocated start")
+    start_c = source("kernel/base/start.c")
+    start_fn = function_body(start_c, "int __attribute__((section(\".start.text\"))) __noinline start(")
+    require(r'mov %0, x2', start_fn,
+            "relocated start must capture the WXN handoff before calling start_init")
+    before(start_fn, "prot_myself();", "msr sctlr_el1",
+           "KP text/data permissions must be sealed before restoring WXN")
+    require(r"map_start_wxn\s*=\s*\(sctlr_el1\s*>>\s*19\)\s*&\s*1ull", paging,
+            "original WXN bit must be saved before temporary clearing")
+    before(paging, "map_start_wxn = (sctlr_el1 >> 19) & 1ull;",
+           "sctlr_el1 &= ~(1ull << 19);",
+           "original WXN state must be saved before clearing")
+    before(paging, "map_start_call();", "uint64_t current_sctlr",
+           "failure return from relocated start must restore WXN")
     require(r"memblock_mark_nomap_f[^;]*\)\(start_pa,\s*all_size\)\)\s*__builtin_trap\(\);",
             paging, "NOMAP failure must stop before mapping/copying")
 
