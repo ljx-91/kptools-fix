@@ -4,13 +4,11 @@
 
 This is an offline format and payload-preservation test using the user's original vivo Y73s stock `boot.img`. No image was flashed to the device.
 
-The Windows x86-64 `kptools.exe` passed a Windows CI synthetic Android Boot v2 round-trip test. The exact stock-image round-trip below was run with the Linux host kptools binary from commit `5471191b9026ab77213e06f6a31026e38cbf8ba5`, because this execution environment does not provide Windows or Wine.
+The Windows x86-64 `kptools.exe` passed a Windows CI synthetic Android Boot v2 round-trip test. The exact stock-image round-trip below was run with the Linux host kptools binary from commit `6a8846afa608a1bf8c8b63e4e0ed1ec6d560c9dc`, because this execution environment does not provide Windows or Wine.
 
-GitHub compare `5471191...aaf9c397` reports only two changed workflow files:
-- `.github/workflows/build-y73s-kpimg-gcc.yml`
-- `.github/workflows/build-y73s-kptools-windows.yml`
+GitHub compare `5471191...6a8846a` reports changes only in workflow files and the audit/test documentation and script; no source files under `tools/` changed. The stock-image round-trip was repeated with the Linux kptools artifact built from `6a8846a` itself. This still is not a direct execution of the Windows PE against the stock image.
 
-No source files under `tools/` changed between those revisions. This supports source-level equivalence of the host kptools implementation, but is not a direct execution of the Windows PE against the stock image.
+The Windows x86-64 executable passed a Windows CI Android Boot v2 fixture test at commit `6fa43cb0fa05de26c4b4b42b637292193ed8c97d`, including both an appended kernel DTB and a v2 tail DTB table. The reusable test script also accepts `--boot-image` to test a supplied real image on a Windows PC.
 
 ## Inputs and outputs
 
@@ -36,6 +34,14 @@ No source files under `tools/` changed between those revisions. This supports so
    - Size: 777,508 bytes
    - SHA-256: `f14df852dfc9d2dc7fe17edfbceedb564d616b19e2ace7ef0f633d94798065dc`
 9. Second-stage payload size remained zero.
+
+## Repeating the test on Windows
+
+From the repository root on a Windows PC, run:
+
+`py scripts\\test_kptools_bootimg_roundtrip.py .\\kptools-windows-x86_64.exe --boot-image .\\boot.img`
+
+This checks the supplied image's decompressed kernel, appended kernel DTB, Boot v2 tail DTB table, ramdisk, and second-stage size after unpack/repack/unpack. It does not validate or regenerate AVB metadata.
 
 ## AVB warning — do not flash
 
