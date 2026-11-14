@@ -396,7 +396,7 @@ static void prot_myself()
     uint64_t sctlr_before = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_before));
     int separate_kimage_mapping = has_vmalloc_area();
-    log_boot("KP mapping offsets: kimage=%llx linear=%llx separate=%d WXN=%d\\n",
+    log_boot("KP mapping offsets: kimage=%llx linear=%llx separate=%d WXN=%d\n",
              kimage_voffset, linear_voffset, separate_kimage_mapping,
              (int)((sctlr_before >> 19) & 1));
 
@@ -435,7 +435,7 @@ static void prot_myself()
     for (uint64_t i = data_start; i < align_data_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_DBM | PTE_SHARED) & ~PTE_RDONLY;
-        if (has_vmalloc_area()) {
+        if (separate_kimage_mapping) {
             *pte |= PTE_PXN;
         }
     }
@@ -450,7 +450,7 @@ static void prot_myself()
     for (uint64_t i = _kp_extra_start; i < align_extra_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_DBM | PTE_SHARED) & ~PTE_RDONLY;
-        if (has_vmalloc_area()) {
+        if (separate_kimage_mapping) {
             *pte |= PTE_PXN;
         }
     }
@@ -476,7 +476,7 @@ static void prot_myself()
     for (uint64_t i = _kp_rw_start; i < _kp_rw_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_DBM | PTE_SHARED) & ~PTE_RDONLY;
-        if (has_vmalloc_area()) {
+        if (separate_kimage_mapping) {
             *pte |= PTE_PXN;
         }
     }
@@ -497,7 +497,7 @@ static void prot_myself()
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_SHARED) & ~PTE_PXN & ~PTE_GP;
         // todo: tlsf malloc block_split will write to alloced memory
-        // if (has_vmalloc_area()) {
+        // if (separate_kimage_mapping) {
         // *pte |= PTE_RDONLY;
         // *pte &= ~PTE_DBM;
         // }
@@ -508,7 +508,7 @@ static void prot_myself()
      * Report the final leaf descriptors after all region-specific changes.
      * This is diagnostic only; it deliberately does not alter permissions.
      */
-    log_boot("KP final PTE: text=%llx data=%llx extra=%llx hook=%llx rw=%llx rox=%llx\\n",
+    log_boot("KP final PTE: text=%llx data=%llx extra=%llx hook=%llx rw=%llx rox=%llx\n",
              *pgtable_entry_kernel(text_start),
              *pgtable_entry_kernel(data_start),
              *pgtable_entry_kernel(_kp_extra_start),
