@@ -22,7 +22,7 @@ checks = {
     "failure is reported": "Hook engine disabled: hook_mem_add failed (%d)\\n" in start,
     "no unchecked hook_mem_add call remains": not bool(re.search(
         r"(?<![=\w])hook_mem_add\s*\(\s*_kp_hook_start\s*,\s*HOOK_ALLOC_SIZE\s*\)\s*;",
-        re.sub(r"int\s+hook_mem_rc\s*=\s*hook_mem_add", "int hook_mem_rc = hook_mem_add", start))),
+        re.sub(r"int\s+hook_mem_rc\s*=\s*hook_mem_add\s*\([^;]*;", "", start))),
     "allocator refuses use before initialization": bool(re.search(
         r"void\s*\*hook_mem_zalloc\s*\([^)]*\)\s*\{\s*[^}]*!hook_locks_ready",
         hmem, re.S)),
