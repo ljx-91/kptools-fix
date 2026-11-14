@@ -119,19 +119,17 @@ def main():
             "start image must use the bounded copy helper")
     require(r"copy_map_range\(sctlr_el1\s*\+\s*data->start_size,\s*paging_init_va\s*\+\s*data->start_img_size,\s*\(uint64_t\)data->extra_size\)", paging,
             "extra payload must use the bounded copy helper")
-    require(r"data->paging_init_relo\s*=\s*sctlr_el1", paging,
+    require(r"data->alloc_size\s*=\s*\(sctlr_el1\s*>>\s*19\)\s*&\s*1ull", paging,
+            "original WXN bit must be saved after alloc_size's last use")
+    before(paging, "data->alloc_size = (sctlr_el1 >> 19) & 1ull;",
+           "sctlr_el1 &= ~(1ull << 19);",
+           "original WXN state must be saved before clearing")
+    require(r'asm volatile\("mov x2, %0"', paging,
+            "saved WXN must be handed to start in x2 without changing the C ABI")
+    require(r"\(\(start_f\)sctlr_el1\)\(data->kimage_voffset,\s*data->linear_voffset\)", paging,
             "relocated image entry must use the validated destination virtual address")
-    require(r"data->page_shift\s*=\s*original_wxn", paging,
-            "saved WXN state must be handed off only after the final page-shift use")
-    require(r"map_start_call\(data\)", paging,
-            "relocated image entry must use the local map assembly bridge")
-    map_bridge = source("kernel/base/map1.S")
-    require(r"ldr\s+x2,\s*\[x9,\s*#(?:136|184)\][\s\S]*?blr\s+x16", map_bridge,
-            "map bridge must pass the saved WXN bit in x2 to relocated start")
-    require(r"str\s+x30,\s*\[sp,\s*#-16\]!.*?ldr\s+x30,\s*\[sp\],\s*#16", map_bridge,
-            "map bridge must preserve its return address without changing x29")
-    if re.search(r"\b(?:stp|str)\s+x29", map_bridge):
-        raise AssertionError("map bridge must leave _paging_init's frame pointer unchanged")
+    require(r"if\s*\(data->alloc_size\).*?1ull\s*<<\s*19", paging,
+            "failure return must restore the saved WXN state")
     start_c = source("kernel/base/start.c")
     start_fn = function_body(start_c, "int __attribute__((section(\".start.text\"))) __noinline start(")
     require(r'mov %0, x2', start_fn,
