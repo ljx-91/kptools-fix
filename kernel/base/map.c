@@ -859,11 +859,6 @@ void __noinline _paging_init()
      * RWX, so restore WXN here (not inside start()'s error branch).
      */
     /*
-     * The bridge lives wholly inside .setup.map, so the copied map section
-     * has no external PC-relative references. It passes WXN in x2 while
-     * keeping _paging_init's verified two-argument call/frame shape.
-     */
-    /*
      * alloc_size is dead after all_size was computed. Reuse it for WXN and
      * place the value in x2 immediately before the original two-argument
      * call, preserving the verified _paging_init frame and tail-return ABI.
