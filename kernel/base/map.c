@@ -872,6 +872,14 @@ void __noinline _paging_init()
     if (sctlr_el1 > ~(uint64_t)0 - all_size ||
         (sctlr_el1 & (page_size - 1)) || (paging_init_va & (page_size - 1)))
         __builtin_trap();
+#ifdef KP_TARGET_Y73S
+    /* The KIMG-offset alias extends into vmalloc; never create it in the module,
+     * vmemmap, or linear-map regions. VMALLOC_END is exclusive.
+     */
+    if (sctlr_el1 < KP_Y73S_VMALLOC_START || sctlr_el1 >= KP_Y73S_VMALLOC_END ||
+        all_size > KP_Y73S_VMALLOC_END - sctlr_el1)
+        __builtin_trap();
+#endif
 
     uint64_t off;
     for (off = 0; off < all_size; off += page_size) {
