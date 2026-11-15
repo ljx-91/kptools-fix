@@ -464,7 +464,7 @@ uint64_t pgtable_phys(uint64_t pgd, uint64_t va)
             continue;
         }
 
-        if (desc_type == 0x1ull && lv > 0 && lv < 3) {
+        if (desc_type == 0x1ull && pgtable_block_level_valid(lv)) {
             uint64_t block_bits = (3 - (uint64_t)lv) * pxd_bits +
                                   (uint64_t)page_shift;
             if (block_bits >= 48)
