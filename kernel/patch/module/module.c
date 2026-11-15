@@ -702,9 +702,9 @@ static struct module *find_module_locked(const char *name)
     struct module *pos;
     if (!name) return NULL;
     list_for_each_entry(pos, &modules.list, list)
-        if (!strcmp(name, pos->info.name)) return pos;
+        if (!strcmp(name, pos->name)) return pos;
     list_for_each_entry(pos, &quarantined_modules, quarantine_list)
-        if (!strcmp(name, pos->info.name)) return pos;
+        if (!strcmp(name, pos->name)) return pos;
     return NULL;
 }
 int kp_hook_owner_register(unsigned long addr, void **owner)
@@ -808,6 +808,10 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     memset(mod, 0, sizeof(*mod));
     INIT_LIST_HEAD(&mod->list);
     INIT_LIST_HEAD(&mod->quarantine_list);
+    /* setup_load_info() has validated and bounded the KPM name. Keep a copy
+     * outside the executable image so partial move_module() failures can
+     * still be identified and retried if NX restoration also fails. */
+    snprintf(mod->name, sizeof(mod->name), "%s", info->info.name);
     snprintf(mod->load_event, sizeof(mod->load_event), "%s", event ? event : "");
     snprintf(mod->load_source, sizeof(mod->load_source), "%s", source ? source : "embedded");
     if (args) {
@@ -902,7 +906,7 @@ free_mod:
             }
             module_lock_release(flags);
             logke("[%s] executable image quarantined after permission reset failure: %d\n",
-                  mod->info.name, free_rc);
+                  mod->name, free_rc);
         } else {
             flags = module_lock_acquire();
             if (!list_empty(&mod->list))
