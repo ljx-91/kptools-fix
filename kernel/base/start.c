@@ -713,24 +713,32 @@ void restore_map()
     log_boot("Restore: %llx, %llx\n", start, end);
 
     map_restored = 1;
-    for (uint64_t i = start; i < align_ceil(end, page_size); i += page_size) {
-        uint64_t *pte = pgtable_entry_kernel(i);
+    /*
+     * map_offset is only MAP_ALIGN-aligned, not page-aligned. Iterate over
+     * actual page bases: stepping from the unaligned start would make the
+     * first copy cross into the next page while only the first page's PTE
+     * had been made writable.
+     */
+    for (uint64_t page = align_floor(start, page_size); page < end;) {
+        if (page > (uint64_t)-1 - page_size) __builtin_trap();
+        uint64_t page_end = page + page_size;
+        uint64_t *pte = pgtable_entry_kernel(page);
+        if (!pte) __builtin_trap();
         uint64_t orig = *pte;
         *pte = (orig | PTE_DBM) & ~PTE_RDONLY;
-        flush_tlb_kernel_page(i);
+        flush_tlb_kernel_page(page);
         /*
          * Restore byte-exactly. The backup length is not required to be
          * 8-byte aligned, so a uint64_t tail store could overrun both arrays.
          */
-        uint64_t page_end = i + page_size;
-        if (page_end < i) __builtin_trap();
-        uint64_t copy_start = i > start ? i : start;
+        uint64_t copy_start = page > start ? page : start;
         uint64_t copy_end = page_end < end ? page_end : end;
         for (uint64_t j = copy_start; j < copy_end; ++j) {
             *(uint8_t *)j = start_preset.map_backup[j - start];
         }
         *pte = orig;
-        flush_tlb_kernel_page(i);
+        flush_tlb_kernel_page(page);
+        page = page_end;
     }
     flush_icache_all();
 }
