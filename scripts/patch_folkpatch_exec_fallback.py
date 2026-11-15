@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Apply and verify fail-closed native executable staging for Y73s FolkPatch."""
+"""Apply fail-closed executable staging and initialization checks to Y73s FolkPatch."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-OLD = '''        for (lib in libs) {
+OLD_STAGE = '''        for (lib in libs) {
             val name = lib.name.substring(3, lib.name.length - 3)
             try {
                 Os.symlink(lib.path, "$patchDir/$name")
@@ -16,7 +16,7 @@ OLD = '''        for (lib in libs) {
         }
 '''
 
-NEW = '''        val stagedExecutables = mutableSetOf<String>()
+NEW_STAGE = '''        val stagedExecutables = mutableSetOf<String>()
         for (lib in libs) {
             if (!lib.isFile || !lib.canRead() || !lib.canExecute()) {
                 throw IOException("Native executable is missing, unreadable, or non-executable: ${lib.path}")
@@ -45,6 +45,24 @@ NEW = '''        val stagedExecutables = mutableSetOf<String>()
         }
 '''
 
+OLD_READY = '''            prepared = true
+            return true
+'''
+NEW_READY = '''            if (error.isNotBlank()) {
+                throw IOException("Patch environment validation failed: ${error.trim()}")
+            }
+            prepared = true
+            return true
+'''
+
+def replace_once(source: str, old: str, new: str, label: str) -> str:
+    if new in source:
+        return source
+    count = source.count(old)
+    if count != 1:
+        raise SystemExit(f"Expected exactly one {label} block, found {count}; refusing to patch")
+    return source.replace(old, new, 1)
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("source", type=Path)
@@ -52,19 +70,12 @@ def main() -> None:
 
     source = args.source
     text = source.read_text(encoding="utf-8")
-    if NEW in text:
-        print("Y73s fail-closed executable staging already applied")
-        return
-    count = text.count(OLD)
-    if count != 1:
-        raise SystemExit(
-            f"Expected exactly one original executable staging block, found {count}; refusing to patch"
-        )
-    patched = text.replace(OLD, NEW, 1)
-    if "Cannot stage native executable $name via symlink" not in patched:
+    text = replace_once(text, OLD_STAGE, NEW_STAGE, "native executable staging")
+    text = replace_once(text, OLD_READY, NEW_READY, "prepared-state transition")
+    if NEW_STAGE not in text or NEW_READY not in text:
         raise SystemExit("Patched source verification failed")
-    source.write_text(patched, encoding="utf-8")
-    print("Applied Y73s fail-closed executable staging")
+    source.write_text(text, encoding="utf-8")
+    print("Applied Y73s fail-closed executable staging and initialization checks")
 
 if __name__ == "__main__":
     main()
