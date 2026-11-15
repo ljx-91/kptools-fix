@@ -85,6 +85,19 @@ checks = {
         "module_name, free_rc" in body(kpimg, "long unload_module(") and
         "module_name, retained_active, retained_hooks" in body(kpimg, "long unload_module(") and
         "mod->info.name, free_rc" not in body(kpimg, "long unload_module("),
+    "LKM load success and failure logs use a stack-owned module identity":
+        'snprintf(module_name, sizeof(module_name), "%s", info->info.name)' in
+        body(lkm, "long kp_load_module(") and
+        'logkfi("[%s] succeed with [%s]\\n", module_name' in
+        body(lkm, "long kp_load_module(") and
+        'logke("failed KPM init left hook refs' in body(lkm, "long kp_load_module(") and
+        "module_name, retained_hooks, retained_active" in body(lkm, "long kp_load_module("),
+    "LKM unload retained-reference logs snapshot counts and identity before unlock":
+        'snprintf(module_name, sizeof(module_name), "%s", mod->info.name)' in
+        body(lkm, "long kp_unload_module(") and
+        "module_name, retained_active, retained_hooks" in body(lkm, "long kp_unload_module(") and
+        "logkfi(\"name: %s, rc: %ld\\n\", module_name, rc)" in
+        body(lkm, "long kp_unload_module("),
     "LKM only permits nested kallsyms pins during an existing unload call":
         "!(pos->state == KP_MODULE_UNLOADING && pos->active_calls)" in
         body(lkm, "static struct kp_module *kp_module_get_by_addr("),
