@@ -420,10 +420,8 @@ static int kp_validate_leaf(uint64_t va)
 static void prot_myself()
 {
     /*
-     * Keep the permission decision observable on early-boot failures.  The
-     * Y73S path derives linear_voffset only after paging_init(), so a stale
-     * or equal offset must not be silently mistaken for the normal vmalloc
-     * layout when reviewing ramoops/boot_log.
+     * Keep the permission decision observable on early-boot failures. The
+     * Y73S path derives linear_voffset only after paging_init().
      */
     uint64_t sctlr_before = 0;
     asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr_before));
@@ -437,16 +435,27 @@ static void prot_myself()
         start_preset.extra_size > (uint64_t)-1 - (page_size - 1))
         __builtin_trap();
 
-    _kp_region_start = (uint64_t)_kp_text_start;
+    uint64_t text_start = (uint64_t)_kp_text_start;
+    uint64_t text_end = (uint64_t)_kp_text_end;
+    uint64_t data_start = (uint64_t)_kp_data_start;
+    uint64_t data_end = (uint64_t)_kp_data_end;
+    if (text_start > text_end || data_start > data_end ||
+        text_end > (uint64_t)-1 - (page_size - 1) ||
+        data_end > (uint64_t)-1 - (page_size - 1))
+        __builtin_trap();
+
+    uint64_t align_text_end = align_ceil(text_end, page_size);
+    uint64_t align_data_end = align_ceil(data_end, page_size);
     uint64_t extra_aligned_size = align_ceil(start_preset.extra_size, page_size);
     if (extra_aligned_size < start_preset.extra_size ||
         (uint64_t)_kp_end > (uint64_t)-1 - extra_aligned_size ||
         (uint64_t)_kp_end + extra_aligned_size > (uint64_t)-1 -
             (HOOK_ALLOC_SIZE + MEMORY_ROX_SIZE + MEMORY_RW_SIZE))
         __builtin_trap();
+
+    _kp_region_start = text_start;
     _kp_region_end = (uint64_t)_kp_end + extra_aligned_size + HOOK_ALLOC_SIZE +
                      MEMORY_ROX_SIZE + MEMORY_RW_SIZE;
-    log_boot("Region: %llx, %llx\\n", _kp_region_start, _kp_region_end);
 
     uint64_t extra_start = (uint64_t)_kp_end;
     uint64_t extra_end = extra_start + start_preset.extra_size;
@@ -458,7 +467,14 @@ static void prot_myself()
     uint64_t rox_start = rw_end;
     uint64_t rox_end = rox_start + MEMORY_ROX_SIZE;
 
-    /* Preflight all touched mappings before the first permission write. */
+    log_boot("Region: %llx, %llx\n", _kp_region_start, _kp_region_end);
+
+    /*
+     * pgtable_entry() can return a block descriptor when a walk stops at an
+     * intermediate level. Preflight every page, including its expected PA,
+     * before the first AP/PXN write so a bad later page cannot leave a
+     * partially reprotected KP image.
+     */
     if (kp_validate_leaf(kernel_stext_va) ||
         kp_validate_leaf_range(text_start, align_text_end) ||
         kp_validate_leaf_range(data_start, align_data_end) ||
@@ -471,69 +487,48 @@ static void prot_myself()
     uint64_t *kpte = pgtable_entry_kernel(kernel_stext_va);
     uint64_t *kppte = pgtable_entry_kernel(_kp_region_start);
     if (!kpte || !kppte) __builtin_trap();
-    log_boot("Kernel stext prot: %llx\\n", *kpte);
-    log_boot("KernelPatch start prot: %llx\\n", *kppte);
+    log_boot("Kernel stext prot: %llx\n", *kpte);
+    log_boot("KernelPatch start prot: %llx\n", *kppte);
 
-    // text, rodata
-    uint64_t text_start = (uint64_t)_kp_text_start;
-    uint64_t text_end = (uint64_t)_kp_text_end;
-    uint64_t align_text_end = align_ceil(text_end, page_size);
     log_boot("Text: %llx, %llx\n", text_start, text_end);
-
     for (uint64_t i = text_start; i < align_text_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
-        /* KP text must be RO before the original WXN policy is restored. */
         *pte = (*pte | PTE_SHARED | PTE_RDONLY) &
                ~(PTE_PXN | PTE_GP | PTE_DBM);
     }
     flush_tlb_kernel_range(text_start, align_text_end);
 
-    // data, bss
-    uint64_t data_start = (uint64_t)_kp_data_start;
-    uint64_t data_end = (uint64_t)_kp_data_end;
-    uint64_t align_data_end = align_ceil(data_end, page_size);
     log_boot("Data: %llx, %llx\n", data_start, data_end);
-
     for (uint64_t i = data_start; i < align_data_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_DBM | PTE_SHARED | PTE_PXN) & ~PTE_RDONLY;
     }
     flush_tlb_kernel_range(data_start, align_data_end);
 
-    // extra data
     _kp_extra_start = extra_start;
     _kp_extra_end = extra_end;
     log_boot("Extra: %llx, %llx\n", _kp_extra_start, _kp_extra_end);
-
     for (uint64_t i = _kp_extra_start; i < align_extra_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_DBM | PTE_SHARED | PTE_PXN) & ~PTE_RDONLY;
     }
     flush_tlb_kernel_range(_kp_extra_start, align_extra_end);
 
-    // Hook records are control data only: keep the arena RW-NX.
-    // Generated transit and relocation code is allocated separately from the
-    // executable page-run allocator and sealed RX before it is published.
     _kp_hook_start = hook_start;
     _kp_hook_end = hook_end;
     log_boot("Hook RW-NX: %llx, %llx\n", _kp_hook_start, _kp_hook_end);
-
     for (uint64_t i = _kp_hook_start; i < _kp_hook_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_DBM | PTE_SHARED | PTE_PXN) & ~PTE_RDONLY & ~PTE_GP;
     }
     flush_tlb_kernel_range(_kp_hook_start, _kp_hook_end);
     int hook_mem_rc = hook_mem_add(_kp_hook_start, HOOK_ALLOC_SIZE);
-    if (hook_mem_rc) {
-        /* hook_mem_zalloc() fails closed while the arena is unavailable. */
+    if (hook_mem_rc)
         log_boot("Hook engine disabled: hook_mem_add failed (%d)\n", hook_mem_rc);
-    }
 
-    // rw memory
     _kp_rw_start = rw_start;
     _kp_rw_end = rw_end;
     log_boot("RW: %llx, %llx\n", _kp_rw_start, _kp_rw_end);
-
     for (uint64_t i = _kp_rw_start; i < _kp_rw_end; i += page_size) {
         uint64_t *pte = pgtable_entry_kernel(i);
         *pte = (*pte | PTE_DBM | PTE_SHARED | PTE_PXN) & ~PTE_RDONLY;
@@ -541,11 +536,6 @@ static void prot_myself()
     flush_tlb_kernel_range(_kp_rw_start, _kp_rw_end);
     kp_rw_mem = tlsf_create_with_pool((void *)_kp_rw_start, MEMORY_RW_SIZE);
 
-    /*
-     * Executable KPM images use page runs, not TLSF. TLSF writes block
-     * headers into free/allocated pool memory and therefore cannot support
-     * independent text/rodata page permissions.
-     */
     _kp_rox_start = rox_start;
     _kp_rox_end = rox_end;
     log_boot("ROX: %llx, %llx\n", _kp_rox_start, _kp_rox_end);
@@ -555,15 +545,6 @@ static void prot_myself()
     if (exec_alloc_rc)
         log_boot("KP executable allocator init failed: %d\n", exec_alloc_rc);
 
-    /*
-     * kp_exec_allocator_init() preflights and marks both KIMG and linear
-     * aliases RW-NX. Do not reopen this arena as RWX here.
-     */
-
-    /*
-     * Report the final leaf descriptors after all region-specific changes.
-     * This is diagnostic only; it deliberately does not alter permissions.
-     */
     log_boot("KP final PTE: text=%llx data=%llx extra=%llx hook=%llx rw=%llx rox=%llx\n",
              *pgtable_entry_kernel(text_start),
              *pgtable_entry_kernel(data_start),
@@ -572,10 +553,8 @@ static void prot_myself()
              *pgtable_entry_kernel(_kp_rw_start),
              *pgtable_entry_kernel(_kp_rox_start));
 
-    // add to vmalloc area
     void (*vm_area_add_early)(struct vm_struct *vm) =
         (typeof(vm_area_add_early))kallsyms_lookup_name("vm_area_add_early");
-
     if (vm_area_add_early) {
         kp_vm.addr = (void *)_kp_region_start;
         kp_vm.phys_addr = kp_kimg_to_phys(_kp_region_start);
