@@ -539,6 +539,7 @@ static void prot_myself()
     _kp_rox_start = rox_start;
     _kp_rox_end = rox_end;
     log_boot("ROX: %llx, %llx\n", _kp_rox_start, _kp_rox_end);
+    /* Do not reopen this arena as RWX here. */
     int exec_alloc_rc = kp_exec_allocator_init((void *)_kp_rox_start,
                                                 MEMORY_ROX_SIZE,
                                                 (size_t)page_size);
