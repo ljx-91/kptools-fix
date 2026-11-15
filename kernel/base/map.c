@@ -65,8 +65,18 @@ static uint64_t map_phys_alloc(map_data_t *data, uint64_t size, uint64_t align)
     if (!size || !align || (align & (align - 1))) return 0;
 
     if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_PHYS_ALLOC_TRY_NID) {
-        return ((memblock_phys_alloc_try_nid_f)data->map_symbol.memblock_phys_alloc_relo)(size, align,
-                                                                                         NUMA_NO_NODE);
+        uint64_t pa =
+            ((memblock_phys_alloc_try_nid_f)data->map_symbol.memblock_phys_alloc_relo)(size, align,
+                                                                                       NUMA_NO_NODE);
+        /*
+         * The descriptor encoder below supports at most 48-bit output
+         * addresses. Reject an allocator result outside that PA window
+         * before it can be published as a table descriptor.
+         */
+        if (!pa || (pa & (align - 1)) || pa >= (1ull << 48) ||
+            size > (1ull << 48) - pa || pa > ~(uint64_t)0 - size)
+            return 0;
+        return pa;
     }
 
     if (data->map_symbol.memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_FIND_IN_RANGE) {
@@ -79,7 +89,9 @@ static uint64_t map_phys_alloc(map_data_t *data, uint64_t size, uint64_t align)
          */
         uint64_t pa = ((memblock_find_in_range_f)data->map_symbol.memblock_phys_alloc_relo)(
             0, 0, size, align);
-        if (!pa || (pa & (align - 1)) || pa > ~(uint64_t)0 - size) return 0;
+        if (!pa || (pa & (align - 1)) || pa >= (1ull << 48) ||
+            size > (1ull << 48) - pa || pa > ~(uint64_t)0 - size)
+            return 0;
 
         if (((memblock_reserve_f)data->map_symbol.memblock_reserve_relo)(pa, size)) return 0;
         return pa;
