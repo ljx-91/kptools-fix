@@ -278,9 +278,14 @@ jobs:
           # Keep the separately downloaded optional KMI modules pinned to the published 0.13.9 release.
           sed -i 's/project.ext.set("kernelPatchVersion", "0.13.9")/project.ext.set("kernelPatchVersion", "0.13.10")/' FolkPatch/build.gradle.kts
           sed -i 's@releases/download/$kernelPatchVersion/${kmi}_kernelpatch.ko@releases/download/0.13.9/${kmi}_kernelpatch.ko@' FolkPatch/app/build.gradle.kts
-          # Compile against the available API 36 platform; keep targetSdk 36.
+          # Compile against API 36, but target API 29 for the Android 10 Y73s.
+          # This is required for requestLegacyExternalStorage=true to retain the
+          # legacy shared-storage behavior on Android 10; API 30+ all-files access
+          # is not available on this device and is guarded in the app UI.
           sed -i 's/androidCompileSdkVersion by extra(37)/androidCompileSdkVersion by extra(36)/' FolkPatch/build.gradle.kts
+          sed -i 's/androidTargetSdkVersion by extra(36)/androidTargetSdkVersion by extra(29)/' FolkPatch/build.gradle.kts
           grep -F 'androidCompileSdkVersion by extra(36)' FolkPatch/build.gradle.kts
+          grep -F 'androidTargetSdkVersion by extra(29)' FolkPatch/build.gradle.kts
           sed -i 's/android:label="FolkPatch"/android:label="FolkPatch Y73s Patcher"/' FolkPatch/app/src/main/AndroidManifest.xml
           grep -F 'applicationId = "me.yuki.folk.y73s.patcher"' FolkPatch/app/build.gradle.kts
           grep -F 'kernelPatchVersion", "0.13.10"' FolkPatch/build.gradle.kts
