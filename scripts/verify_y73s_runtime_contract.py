@@ -65,6 +65,30 @@ def main():
             "Y73S executable allocator must continue validating every KIMG leaf PTE")
 
     start_c = source("kernel/base/start.c")
+    walk_init = function_body(start_c, "static int pgtable_walk_init(")
+    require(r"page_shift != 12.*?page_shift != 14.*?page_shift != 16",
+            walk_init, "page-table lookup must reject unsupported granule sizes before shifting")
+    require(r"page_size != \(1ll << page_shift\).*?va_bits <= 4.*?va_bits > 52.*?page_level < 1.*?page_level > 4",
+            walk_init, "page-table lookup must validate page geometry and level count")
+    require(r"pgd < linear_voffset.*?root_pa = pgd - linear_voffset.*?root_pa.*?page_size.*?root_pa >> 48",
+            walk_init, "page-table root must be aligned and bounded before dereference")
+    require(r"#ifdef KP_TARGET_Y73S.*?page_shift != 12.*?va_bits != 39.*?page_level != 3.*?va >> 39",
+            walk_init, "Y73S lookup must enforce canonical 4-KiB/39-bit TTBR1 geometry")
+    table_addr = function_body(start_c, "static int pgtable_table_address(")
+    require(r"pa_mask.*?desc & pa_mask.*?pa.*?page_size.*?pa >> 48.*?pa > \(uint64_t\)-1 - linear_voffset",
+            table_addr, "table descriptor output PA and linear-map conversion must be validated")
+    pte_lookup = function_body(start_c, "uint64_t *pgtable_entry(")
+    require(r"pgtable_walk_init\(pgd, va, &pxd_va\)", pte_lookup,
+            "pgtable_entry must validate the root and geometry before touching page tables")
+    require(r"lv == 3.*?leaf_pa.*?if \(!leaf_pa\).*?return 0",
+            pte_lookup, "final-level page descriptors must have a nonzero output address")
+    require(r"desc_type == 0x1ull && lv > 0 && lv < 3",
+            pte_lookup, "pgtable_entry must reject reserved L0 blocks and preserve legal L1/L2 block lookup")
+    pte_phys = function_body(start_c, "uint64_t pgtable_phys(")
+    require(r"pgtable_walk_init\(pgd, va, &pxd_va\)", pte_phys,
+            "pgtable_phys must share the validated root/geometry checks")
+    require(r"block_bits >= 48.*?block_pa.*?offset.*?block_pa > \(uint64_t\)-1 - offset",
+            pte_phys, "block physical translation must validate block size and offset overflow")
     vm_add = start_c[start_c.index("vm_area_add_early(&kp_vm)") - 420:
                      start_c.index("vm_area_add_early(&kp_vm)") + 80]
     require(r"kp_vm\.addr\s*=.*?kp_vm\.size\s*=.*?kp_vm\.flags\s*=",
