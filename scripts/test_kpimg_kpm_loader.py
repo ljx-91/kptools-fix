@@ -134,17 +134,17 @@ static void reset_fixture(struct load_info *info)
 
     sh[2].sh_name = name_offset(".kpm.init");
     sh[2].sh_type = SHT_PROGBITS;
-    sh[2].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+    sh[2].sh_flags = SHF_ALLOC | SHF_WRITE;
     sh[2].sh_offset = 1200;
-    sh[2].sh_size = 16;
-    sh[2].sh_addralign = 16;
+    sh[2].sh_size = sizeof(void *);
+    sh[2].sh_addralign = sizeof(void *);
 
     sh[3].sh_name = name_offset(".kpm.exit");
     sh[3].sh_type = SHT_PROGBITS;
-    sh[3].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+    sh[3].sh_flags = SHF_ALLOC | SHF_WRITE;
     sh[3].sh_offset = 1216;
-    sh[3].sh_size = 16;
-    sh[3].sh_addralign = 16;
+    sh[3].sh_size = sizeof(void *);
+    sh[3].sh_addralign = sizeof(void *);
 
     sh[4].sh_name = name_offset(".kpm.info");
     sh[4].sh_type = SHT_PROGBITS;
@@ -214,8 +214,8 @@ static void empty_info(struct load_info *info)
 { ((Elf_Shdr *)(image + SHOFF))[4].sh_size = 0; }
 static void unterminated_info(struct load_info *info)
 { image[1248 + 31] = 'X'; }
-static void nonexec_init(struct load_info *info)
-{ ((Elf_Shdr *)(image + SHOFF))[2].sh_flags = SHF_ALLOC; }
+static void undersized_init(struct load_info *info)
+{ ((Elf_Shdr *)(image + SHOFF))[2].sh_size = sizeof(void *) - 1; }
 static void empty_name(struct load_info *info)
 { memcpy(image + 1248, "name=\0version=1.0\0", 18); }
 static void empty_version(struct load_info *info)
@@ -254,7 +254,7 @@ int main(void)
     failed |= expect_setup_error("[PASS] non-PROGBITS .kpm.info rejected", bad_info_type);
     failed |= expect_setup_error("[PASS] empty .kpm.info rejected", empty_info);
     failed |= expect_setup_error("[PASS] unterminated .kpm.info rejected", unterminated_info);
-    failed |= expect_setup_error("[PASS] non-executable .kpm.init rejected", nonexec_init);
+    failed |= expect_setup_error("[PASS] undersized .kpm.init callback slot rejected", undersized_init);
     failed |= expect_setup_error("[PASS] empty module name rejected", empty_name);
     failed |= expect_setup_error("[PASS] empty module version rejected", empty_version);
     failed |= expect_setup_error("[PASS] malformed RELA entry size rejected before layout", bad_rela_entsize);
