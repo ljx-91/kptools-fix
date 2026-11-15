@@ -46,6 +46,7 @@ def before(text, first, second, message):
 
 def main():
     map_c = source("kernel/base/map.c")
+    start_c = source("kernel/base/start.c")
     symbol_c = source("tools/symbol.c")
     hotpatch_c = source("kernel/base/hotpatch.c")
     hook_c = source("kernel/base/hook.c")
