@@ -378,6 +378,7 @@ def main():
     taskob_c = source("kernel/patch/common/taskob.c")
     accctl_c = source("kernel/patch/common/accctl.c")
     taskcred_c = source("kernel/patch/ksyms/task_cred.c")
+    y73s_symbols = source("scripts/fixtures/y73s_4.14.141_kallsyms.txt")
 
     valid_ext = function_body(taskext_h, "static inline bool task_ext_valid(")
     require(r"if\s*\(!ext\s*\|\|\s*IS_ERR\(ext\)\)", valid_ext,
@@ -454,6 +455,8 @@ def main():
             "live credential scan must also respect the fixed scratch-layout ceiling")
     require(r'kallsyms_lookup_name\("ksize"\)', resolve_cred_fn,
             "Y73S credential resolver must dynamically resolve ksize")
+    require(r"0x01914a40 t ksize", y73s_symbols,
+            "Y73S 4.14.141 profile must pin the verified ksize implementation")
     require(r"cred_scan_len\(new_cred,\s*cred_size\)", resolve_cred_fn,
             "every live cred object extent must be queried through the bounded helper")
     require(r"i\s*\+\s*\(int\)sizeof\(uid_t\)\s*<=\s*suid_scan_len", resolve_cred_fn,
