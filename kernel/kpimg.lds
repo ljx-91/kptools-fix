@@ -2,7 +2,17 @@ OUTPUT_ARCH(aarch64)
 
 _link_base = 64k - 3 * 4k;
 
-SECTIONS 
+PHDRS
+{
+    setup_data PT_LOAD FLAGS(6);
+    setup_text PT_LOAD FLAGS(5);
+    map_data PT_LOAD FLAGS(6);
+    map_text PT_LOAD FLAGS(5);
+    kp_text PT_LOAD FLAGS(5);
+    kp_data PT_LOAD FLAGS(6);
+}
+
+SECTIONS
 {
     /DISCARD/ : { *(.discard) *(.discard.*) }
     /DISCARD/ : {
@@ -19,26 +29,31 @@ SECTIONS
         base/setup.o(.setup.preset)
         base/setup.o(.setup.data)
         . = _setup_start + 4K;
-    }
-    
+    } :setup_data
+
     .setup.text : {
         base/setup1.o(.entry.text)
         base/setup1.o(.text)
         base/setup.o(.text)
         _setup_end = .;
-    }
+    } :setup_text
 
     . = ALIGN(16);
-    .setup.map : {
+    .setup.map.data : {
         _map_start = .;
+        _map_data = .;
         base/map.o(.map.data)
+    } :map_data
+
+    .setup.map.text : {
+        _map_text = .;
         base/map.o(.map.text)
         base/map.o(.text)
         base/map1.o(.text)
         . = ALIGN(16);
         _map_end = .;
-    }
-    ASSERT(SIZEOF(.setup.map) < 0x1000, "Size too large of .setup.map!")
+    } :map_text
+    ASSERT((_map_end - _map_start) < 0x1000, "Size too large of .setup.map!")
 
     . = ALIGN(64K);
     _kp_start = .;
@@ -75,7 +90,7 @@ SECTIONS
 
         . = ALIGN(16);
         _kp_text_end = .;
-    }
+    } :kp_text
 
     . = ALIGN(64k);
     .kp.data : {
@@ -90,7 +105,7 @@ SECTIONS
         *(.kp.symbol)
         _kp_symbol_end = .;
         _kp_data_end = .;
-    }
+    } :kp_data
 
     .got.plt : { *(.got.plt) }
     ASSERT(SIZEOF(.got.plt) == 0, "Unexpected GOT/PLT entries detected!")
