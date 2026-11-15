@@ -74,6 +74,9 @@ def main():
             walk_init, "page-table root must be aligned and bounded before dereference")
     require(r"#ifdef KP_TARGET_Y73S.*?page_shift != 12.*?va_bits != 39.*?page_level != 3.*?va >> 39",
             walk_init, "Y73S lookup must enforce canonical 4-KiB/39-bit TTBR1 geometry")
+    block_levels = function_body(start_c, "static int pgtable_block_level_valid(")
+    require(r"page_shift == 12.*?level == 1 \|\| level == 2.*?return level == 2",
+            block_levels, "ARM64 block descriptor levels must follow granule-specific architectural rules")
     table_addr = function_body(start_c, "static int pgtable_table_address(")
     require(r"pa_mask.*?desc & pa_mask.*?pa.*?page_size.*?pa >> 48.*?pa > \(uint64_t\)-1 - linear_voffset",
             table_addr, "table descriptor output PA and linear-map conversion must be validated")
@@ -82,13 +85,13 @@ def main():
             "pgtable_entry must validate the root and geometry before touching page tables")
     require(r"lv == 3.*?leaf_pa.*?if \(!leaf_pa\).*?return 0",
             pte_lookup, "final-level page descriptors must have a nonzero output address")
-    require(r"desc_type == 0x1ull && lv > 0 && lv < 3",
-            pte_lookup, "pgtable_entry must reject reserved L0 blocks and preserve legal L1/L2 block lookup")
+    require(r"desc_type == 0x1ull && pgtable_block_level_valid\(lv\)",
+            pte_lookup, "pgtable_entry must preserve only granule-valid block descriptor levels")
     pte_phys = function_body(start_c, "uint64_t pgtable_phys(")
     require(r"pgtable_walk_init\(pgd, va, &pxd_va\)", pte_phys,
             "pgtable_phys must share the validated root/geometry checks")
-    require(r"block_bits >= 48.*?block_pa.*?offset.*?block_pa > \(uint64_t\)-1 - offset",
-            pte_phys, "block physical translation must validate block size and offset overflow")
+    require(r"desc_type == 0x1ull && pgtable_block_level_valid\(lv\).*?block_bits >= 48.*?block_pa.*?offset.*?block_pa > \(uint64_t\)-1 - offset",
+            pte_phys, "block physical translation must validate descriptor level, size and offset overflow")
     vm_add = start_c[start_c.index("vm_area_add_early(&kp_vm)") - 420:
                      start_c.index("vm_area_add_early(&kp_vm)") + 80]
     require(r"kp_vm\.addr\s*=.*?kp_vm\.size\s*=.*?kp_vm\.flags\s*=",
