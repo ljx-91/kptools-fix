@@ -552,8 +552,8 @@ static int setup_load_info(struct load_info *info)
             info->sechdrs[exit_idx].sh_type != SHT_PROGBITS ||
             !(info->sechdrs[init_idx].sh_flags & SHF_ALLOC) ||
             !(info->sechdrs[exit_idx].sh_flags & SHF_ALLOC) ||
-            info->sechdrs[init_idx].sh_size < sizeof(mod_initcall_t) ||
-            info->sechdrs[exit_idx].sh_size < sizeof(mod_exitcall_t)) {
+            info->sechdrs[init_idx].sh_size < sizeof(void *) ||
+            info->sechdrs[exit_idx].sh_size < sizeof(void *)) {
             set_load_error(info, "missing or invalid .kpm.init/.kpm.exit callback slots");
             return -ENOEXEC;
         }
