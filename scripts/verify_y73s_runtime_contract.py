@@ -505,6 +505,20 @@ def main():
 
     print("[PASS] SU profile record sizes and bounded SELinux context copy")
 
+    # Panic-path boot-log formatting must flush bounded chunks even when
+    # the source contains no newline, and must emit a final unterminated tail.
+    bootlog = function_body(patch_c, "void print_bootlog()")
+    require(r"if\s*\(!log\)\s*return;", bootlog,
+            "panic boot-log printer must tolerate a missing log buffer")
+    require(r"off\s*==\s*sizeof\(buf\)\s*-\s*1", bootlog,
+            "panic boot-log printer must flush before the stack buffer fills")
+    require(r"if\s*\(c\s*==\s*'\\n'\s*\|\|\s*off\s*==\s*sizeof\(buf\)\s*-\s*1\)",
+            bootlog, "panic boot-log printer must flush on newline or bounded chunk")
+    require(r"if\s*\(off\)\s*\{\s*buf\[off\]\s*=\s*'\\0';\s*printk",
+            bootlog, "panic boot-log printer must emit the final unterminated chunk")
+
+    print("[PASS] panic boot-log output is bounded and handles unterminated records")
+
     print("[NOTE] Source checks do not independently prove binary ABI or device boot")
 
 
