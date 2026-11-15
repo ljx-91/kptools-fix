@@ -398,6 +398,6 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
 rollback:
     if (targethdr->sh_size)
         memcpy((void *)targethdr->sh_addr, backup, targethdr->sh_size);
-    vfree(backup);
+    kp_module_free(backup)
     return ret;
 }
