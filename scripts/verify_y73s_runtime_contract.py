@@ -168,6 +168,19 @@ def main():
             "relocated start must receive saved WXN through the explicit third argument")
     before(start_fn, "prot_myself();", "msr sctlr_el1",
            "KP text/data permissions must be sealed before restoring WXN")
+    # Every PTE touched by prot_myself must be preflighted as a 4-KiB
+    # KIMG leaf with the expected PA before the first permission mutation.
+    leaf_check = function_body(start_c, "static int kp_validate_leaf_range(")
+    require(r"page_size != 4096.*?page_level != 3", leaf_check,
+            "Y73S permission preflight must enforce 4-KiB/39-bit leaf geometry")
+    require(r"if\s*\(!pte\s*\|\|\s*\(\(\*pte\s*&\s*0x3ull\)\s*!=\s*0x3ull\)", leaf_check,
+            "permission preflight must reject null and block descriptors")
+    require(r"\*pte\s*&\s*pa_mask.*?expected_pa", leaf_check,
+            "permission preflight must verify the exact KIMG physical page")
+    before(prot_fn, "kp_validate_leaf_range(text_start", "*pte =",
+           "all touched ranges must be preflighted before the first PTE write")
+    require(r"kp_validate_leaf\(kernel_stext_va\)", prot_fn,
+            "kernel stext PTE must be checked before diagnostic dereference")
     prot_fn = function_body(start_c, "static void prot_myself()")
     require(r"\*pte\s*=\s*\(\*pte\s*\|\s*PTE_SHARED\s*\|\s*PTE_RDONLY\)\s*&\s*~\(PTE_PXN\s*\|\s*PTE_GP\s*\|\s*PTE_DBM\)", prot_fn,
             "KP text must be read-only and executable before WXN is restored")
