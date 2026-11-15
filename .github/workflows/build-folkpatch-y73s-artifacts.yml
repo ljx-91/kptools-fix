@@ -285,6 +285,7 @@ jobs:
           python3 scripts/patch_folkpatch_exec_fallback.py FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
           grep -F 'Cannot stage native executable $name via symlink' FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
           grep -F 'Required native executables missing' FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
+          grep -F 'Patch environment validation failed' FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
 
       - name: Build FolkPatch Y73s patcher APK
         working-directory: FolkPatch
