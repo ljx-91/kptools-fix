@@ -50,8 +50,7 @@
 
 #define ARCH_SHF_SMALL 0
 
-/* The minimal KPIMG Linux headers intentionally expose only a subset of the
- * slab helpers. Keep these wrappers local and overflow-safe. */
+/* KPM metadata is allocated from the KP-owned early-boot arena. */
 void *kp_module_alloc(size_t size);
 void kp_module_free(void *ptr);
 
