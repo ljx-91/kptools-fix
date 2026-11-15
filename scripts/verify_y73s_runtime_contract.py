@@ -69,7 +69,7 @@ def main():
 
     start_c = source("kernel/base/start.c")
     restore_map = function_body(start_c, "void restore_map(")
-    require(r"for\s*\(uint64_t page\s*=\s*align_floor\(start,\s*page_size\);\s*page\s*<\s*end;",
+    require(r"for\s*\(uint64_t page\s*=\s*start\s*&\s*~\(\(uint64_t\)page_size\s*-\s*1\);\s*page\s*<\s*end;",
             restore_map, "map restoration must iterate from aligned page bases")
     require(r"page_end\s*=\s*page\s*\+\s*page_size.*?pgtable_entry_kernel\(page\)",
             restore_map, "each restored byte range must be covered by the PTE for its actual page")
