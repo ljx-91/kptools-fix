@@ -19,7 +19,7 @@ static long diagnostic_init(const char *args, const char *event, void *__user re
 
     pr_info("[Y73S-DIAG] init name=y73s-boot-diagnostic version=1.0.0\n");
     pr_info("[Y73S-DIAG] event=%s\n", event ? event : "(null)");
-    pr_info("[Y73S-DIAG] kpver=0x%x args=%s\n", kpver, args ? args : "(null)");
+    pr_info("[Y73S-DIAG] args=%s\n", args ? args : "(null)");
     return 0;
 }
 
