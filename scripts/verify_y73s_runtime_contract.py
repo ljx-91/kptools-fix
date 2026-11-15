@@ -45,6 +45,12 @@ def before(text, first, second, message):
 
 
 def main():
+    kernel_make = source("kernel/Makefile")
+    require(r"ifdef Y73S_TARGET\\s*CFLAGS \\+= -DKP_TARGET_Y73S=1",
+            kernel_make, "Y73S_TARGET must define KP_TARGET_Y73S for every KPIMG C translation unit")
+    y73s_workflow = source(".github/workflows/build-y73s-kpimg-gcc.yml")
+    require(r"export Y73S_TARGET=1", y73s_workflow,
+            "Y73S KPIMG workflow must select the Y73S compile-time target")
     map_c = source("kernel/base/map.c")
     exec_alloc_c = source("kernel/base/exec_alloc.c")
     exec_prepare = function_body(exec_alloc_c, "static int exec_prepare_pages(")
