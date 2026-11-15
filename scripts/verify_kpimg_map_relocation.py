@@ -60,8 +60,8 @@ def parse_elf(path):
         raise ValueError("copied map sections must be file-backed")
     if not data["size"] or not code["size"]:
         raise ValueError("copied map data/code section is empty")
-    if data["addr"] + data["size"] != code["addr"] or data["offset"] + data["size"] != code["offset"]:
-        raise ValueError("map data/code must remain exactly contiguous in VMA and file")
+    if data["addr"] + data["size"] != code["addr"]:
+        raise ValueError("map data must immediately precede map code in virtual address space")
     if data["flags"] != (SHF_ALLOC | SHF_WRITE) or code["flags"] != (SHF_ALLOC | SHF_EXECINSTR):
         raise ValueError("map data/code section permissions are not WA/AX")
     m = {"addr": data["addr"], "offset": data["offset"], "size": data["size"] + code["size"]}
@@ -107,7 +107,10 @@ def parse_elf(path):
                 continue
             if value < m["addr"] or value + size > m["addr"] + m["size"]:
                 raise ValueError("function symbol escapes copied map data/code span")
-            funcs.append((value, size))
+            code_off = code["offset"] + (value - code["addr"])
+            if code_off + size > code["offset"] + code["size"]:
+                raise ValueError("map function bytes escape the executable map section")
+            funcs.append((value, size, code_off))
     if not funcs:
         raise ValueError("no function symbols found in copied map code")
     return blob, m, funcs
@@ -149,8 +152,7 @@ def main(path):
     bad = []
     refs_checked = 0
     bad_refs = []
-    for value, size in funcs:
-        off = sec["offset"] + (value - lo)
+    for value, size, off in funcs:
         for i in range(0, size - 3, 4):
             word = struct.unpack_from("<I", blob, off + i)[0]
             pc = value + i
