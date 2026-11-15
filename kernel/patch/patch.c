@@ -1,3 +1,19 @@
+#include <log.h>
+#include <ksyms.h>
+#include <kallsyms.h>
+#include <hook.h>
+#include <hotpatch.h>
+#include <accctl.h>
+#include <linux/sched.h>
+#include <linux/sched/task.h>
+#include <linux/cred.h>
+#include <linux/capability.h>
+#include <syscall.h>
+#include <module.h>
+#include <predata.h>
+#include <symbol.h>
+#include <linux/string.h>
+
 void print_bootlog()
 {
     const char *log = get_boot_log();
