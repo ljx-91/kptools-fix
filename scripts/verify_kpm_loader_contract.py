@@ -53,6 +53,11 @@ def main():
             "device parser must bound symbol string offsets")
     require(r"memchr\(info->strtab", setup,
             "device parser must require NUL-terminated symbol names")
+    require(r"strlen\(name\)\s*>=\s*KPM_NAME_LEN", setup,
+            "device parser must reject module names that would truncate in the registry")
+    require(r"strlen\(name\)\s*>=\s*KPM_NAME_LEN",
+            function_body(read("lkm/kpm/module.c"), "static int setup_load_info("),
+            "LKM parser must reject overlong KPM names consistently")
 
     require(r"(symsec->sh_flags & SHF_ALLOC)", setup,
             "device parser must reject allocatable SYMTAB before dedicated symbol layout")
