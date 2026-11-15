@@ -69,11 +69,11 @@ def main():
 
     start_c = source("kernel/base/start.c")
     restore_map = function_body(start_c, "void restore_map(")
-    require(r"for\\s*\\(uint64_t page\\s*=\\s*align_floor\\(start,\\s*page_size\\);\\s*page\\s*<\\s*end;",
+    require(r"for\s*\(uint64_t page\s*=\s*align_floor\(start,\s*page_size\);\s*page\s*<\s*end;",
             restore_map, "map restoration must iterate from aligned page bases")
-    require(r"page_end\\s*=\\s*page\\s*\\+\\s*page_size.*?pgtable_entry_kernel\\(page\\)",
+    require(r"page_end\s*=\s*page\s*\+\s*page_size.*?pgtable_entry_kernel\(page\)",
             restore_map, "each restored byte range must be covered by the PTE for its actual page")
-    require(r"copy_start\\s*=\\s*page\\s*>\\s*start\\s*\\?\\s*page\\s*:\\s*start.*?copy_end\\s*=\\s*page_end\\s*<\\s*end\\s*\\?\\s*page_end\\s*:\\s*end",
+    require(r"copy_start\s*=\s*page\s*>\s*start\s*\?\s*page\s*:\s*start.*?copy_end\s*=\s*page_end\s*<\s*end\s*\?\s*page_end\s*:\s*end",
             restore_map, "map restoration must clip each copy to its page boundaries")
     if "for (uint64_t i = start;" in restore_map:
         raise AssertionError("unaligned map restore loop can write into a second page without opening its PTE")
@@ -621,7 +621,7 @@ def main():
     add_profile = function_body(sucompat_c, "int su_add_allow_uid(")
     require(r"strncpy\(profile\.scontext,\s*scontext,\s*sizeof\(profile\.scontext\)\s*-\s*1\)",
             add_profile, "SU context copy must not read a fixed-size span past a short string")
-    require(r"profile\.scontext\[sizeof\(profile\.scontext\)\s*-\s*1\]\s*=\s*'\\0'",
+    require(r"profile\.scontext\[sizeof\(profile\.scontext\)\s*-\s*1\]\s*=\s*'\0'",
             add_profile, "SU context copy must always terminate the stored string")
 
     print("[PASS] SU profile record sizes and bounded SELinux context copy")
@@ -633,9 +633,9 @@ def main():
             "panic boot-log printer must tolerate a missing log buffer")
     require(r"off\s*==\s*sizeof\(buf\)\s*-\s*1", bootlog,
             "panic boot-log printer must flush before the stack buffer fills")
-    require(r"if\s*\(c\s*==\s*'\\n'\s*\|\|\s*off\s*==\s*sizeof\(buf\)\s*-\s*1\)",
+    require(r"if\s*\(c\s*==\s*'\n'\s*\|\|\s*off\s*==\s*sizeof\(buf\)\s*-\s*1\)",
             bootlog, "panic boot-log printer must flush on newline or bounded chunk")
-    require(r"if\s*\(off\)\s*\{\s*buf\[off\]\s*=\s*'\\0';\s*printk",
+    require(r"if\s*\(off\)\s*\{\s*buf\[off\]\s*=\s*'\0';\s*printk",
             bootlog, "panic boot-log printer must emit the final unterminated chunk")
 
     print("[PASS] panic boot-log output is bounded and handles unterminated records")
