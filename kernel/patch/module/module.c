@@ -693,6 +693,7 @@ static int elf_header_check(struct load_info *info)
 }
 
 struct module modules = { 0 };
+static struct list_head quarantined_modules;
 static spinlock_t module_lock;
 static unsigned long module_lock_acquire(void) { return kp_private_spin_lock(&module_lock); }
 static void module_lock_release(unsigned long flags) { kp_private_spin_unlock(&module_lock, flags); }
@@ -701,6 +702,8 @@ static struct module *find_module_locked(const char *name)
     struct module *pos;
     if (!name) return NULL;
     list_for_each_entry(pos, &modules.list, list)
+        if (!strcmp(name, pos->info.name)) return pos;
+    list_for_each_entry(pos, &quarantined_modules, quarantine_list)
         if (!strcmp(name, pos->info.name)) return pos;
     return NULL;
 }
@@ -802,7 +805,9 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     if ((rc = elf_header_check(info)) || (rc = setup_load_info(info))) goto out;
     mod = vmalloc(sizeof(*mod));
     if (!mod) { set_load_error(info, "allocate module state failed"); rc = -ENOMEM; goto out; }
-    memset(mod, 0, sizeof(*mod)); INIT_LIST_HEAD(&mod->list);
+    memset(mod, 0, sizeof(*mod));
+    INIT_LIST_HEAD(&mod->list);
+    INIT_LIST_HEAD(&mod->quarantine_list);
     snprintf(mod->load_event, sizeof(mod->load_event), "%s", event ? event : "");
     snprintf(mod->load_source, sizeof(mod->load_source), "%s", source ? source : "embedded");
     if (args) {
@@ -878,18 +883,35 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
               mod->info.name, mod->hook_refs, mod->active_calls);
         rc = -EBUSY; goto out;
     }
-    list_del_init(&mod->list); mod->state = KP_MODULE_DEAD;
+    /* Keep the module discoverable while its executable pages are released. */
+    mod->state = KP_MODULE_EXITING;
     module_lock_release(flags);
 free_mod:
     if (mod) {
-        if (mod->args) kvfree(mod->args);
-        if (mod->start) {
-            int free_rc = kp_free_exec(mod->start);
-            if (free_rc)
-                logke("[%s] executable image retained after permission reset failure: %d\n",
-                      mod->info.name, free_rc);
+        int free_rc = mod->start ? kp_free_exec(mod->start) : 0;
+        if (free_rc) {
+            flags = module_lock_acquire();
+            if (list_empty(&mod->list)) {
+                mod->state = KP_MODULE_QUARANTINED;
+                list_add_tail(&mod->quarantine_list, &quarantined_modules);
+            } else {
+                /* A failed init remains listed and can be retried by unload_module(). */
+                mod->state = KP_MODULE_UNLOADING;
+            }
+            module_lock_release(flags);
+            logke("[%s] executable image quarantined after permission reset failure: %d\n",
+                  mod->info.name, free_rc);
+        } else {
+            flags = module_lock_acquire();
+            if (!list_empty(&mod->list))
+                list_del_init(&mod->list);
+            if (!list_empty(&mod->quarantine_list))
+                list_del_init(&mod->quarantine_list);
+            mod->state = KP_MODULE_DEAD;
+            module_lock_release(flags);
+            if (mod->args) kvfree(mod->args);
+            kvfree(mod);
         }
-        kvfree(mod);
     }
 out:
     set_kpm_load_result(reserved, rc, rc ? load_error(info, "load module failed") : "module loaded");
@@ -901,21 +923,54 @@ out:
  * their chain readers drain and their slots are retired. */
 long unload_module(const char *name, void *__user reserved)
 {
-    struct module *mod; unsigned long flags; long rc = 0;
+    struct module *mod;
+    unsigned long flags;
+    long rc = 0;
+    int free_rc;
+
     if (!name) return -EINVAL;
-    flags = module_lock_acquire(); mod = find_module_locked(name);
-    if (!mod) { module_lock_release(flags); return -ENOENT; }
-    if (mod->state == KP_MODULE_LOADING) { module_lock_release(flags); return -EBUSY; }
-    if (mod->state == KP_MODULE_LIVE) mod->state = KP_MODULE_UNLOADING;
-    if (mod->state != KP_MODULE_UNLOADING && mod->state != KP_MODULE_EXITING) {
-        module_lock_release(flags); return -ENOENT;
+    flags = module_lock_acquire();
+    mod = find_module_locked(name);
+    if (!mod) {
+        module_lock_release(flags);
+        return -ENOENT;
     }
-    /* EXITING with exit_called=false is owned by the thread currently
-     * executing the exit callback outside module_lock. */
-    if (mod->state == KP_MODULE_EXITING && !mod->exit_called) {
-        module_lock_release(flags); return -EBUSY;
+
+    /* A quarantined image never ran init/exit and is only awaiting a safe
+     * RW-NX transition. Serialize retries without exposing it as LIVE. */
+    if (mod->state == KP_MODULE_QUARANTINED) {
+        mod->state = KP_MODULE_EXITING;
+        module_lock_release(flags);
+        free_rc = kp_free_exec(mod->start);
+        flags = module_lock_acquire();
+        if (free_rc) {
+            mod->state = KP_MODULE_QUARANTINED;
+            module_lock_release(flags);
+            return free_rc;
+        }
+        list_del_init(&mod->quarantine_list);
+        mod->state = KP_MODULE_DEAD;
+        module_lock_release(flags);
+        if (mod->args) kvfree(mod->args);
+        kvfree(mod);
+        logkfi("name: %s, quarantined image reclaimed\n", name);
+        return 0;
     }
-    if (mod->active_calls) { module_lock_release(flags); return -EBUSY; }
+
+    if (mod->state == KP_MODULE_LOADING || mod->state == KP_MODULE_EXITING) {
+        module_lock_release(flags);
+        return -EBUSY;
+    }
+    if (mod->state == KP_MODULE_LIVE)
+        mod->state = KP_MODULE_UNLOADING;
+    if (mod->state != KP_MODULE_UNLOADING) {
+        module_lock_release(flags);
+        return -ENOENT;
+    }
+    if (mod->active_calls) {
+        module_lock_release(flags);
+        return -EBUSY;
+    }
     if (!mod->exit_called) {
         mod->state = KP_MODULE_EXITING;
         module_lock_release(flags);
@@ -935,15 +990,26 @@ long unload_module(const char *name, void *__user reserved)
               name, mod->active_calls, mod->hook_refs);
         return -EBUSY;
     }
-    list_del_init(&mod->list); mod->state = KP_MODULE_DEAD;
+
+    /* Keep the registry node and metadata until the allocator confirms that
+     * every page has returned to RW-NX. A failed transition remains retryable. */
+    mod->state = KP_MODULE_EXITING;
     module_lock_release(flags);
-    if (mod->args) kvfree(mod->args);
-    if (mod->start) {
-        int free_rc = kp_free_exec(mod->start);
-        if (free_rc)
-            logke("[%s] executable image retained after permission reset failure: %d\n",
-                  mod->info.name, free_rc);
+    free_rc = mod->start ? kp_free_exec(mod->start) : 0;
+
+    flags = module_lock_acquire();
+    if (free_rc) {
+        mod->state = KP_MODULE_UNLOADING;
+        module_lock_release(flags);
+        logke("[%s] executable image retained for retry after permission reset failure: %d\n",
+              mod->info.name, free_rc);
+        return free_rc;
     }
+    list_del_init(&mod->list);
+    mod->state = KP_MODULE_DEAD;
+    module_lock_release(flags);
+
+    if (mod->args) kvfree(mod->args);
     kvfree(mod);
     logkfi("name: %s, rc: %ld\n", name, rc);
     return rc;
@@ -1164,5 +1230,6 @@ int get_module_info(const char *name, char *out_info, int size)
 void module_init()
 {
     INIT_LIST_HEAD(&modules.list);
+    INIT_LIST_HEAD(&quarantined_modules);
     spin_lock_init(&module_lock);
 }
