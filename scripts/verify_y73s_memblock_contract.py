@@ -74,9 +74,23 @@ def main():
             probe, "linear probe reservation must be released and checked")
 
     paging = function_body(map_c, "void __noinline _paging_init(")
+    alloc_call = paging.find("uint64_t start_pa = map_phys_alloc(data, all_size, page_size);")
+    nomap_call = paging.find(
+        "((memblock_mark_nomap_f)data->map_symbol.memblock_mark_nomap_relo)(start_pa, all_size)"
+    )
     paging_call = paging.find("((paging_init_f)(paging_init_va))();")
     probe_call = paging.find("detect_y73s_linear_voffset(data);")
-    if paging_call < 0 or probe_call <= paging_call:
+    if not (0 <= alloc_call < nomap_call < paging_call):
+        raise AssertionError(
+            "Y73S destination must be allocated and marked NOMAP before paging_init builds the linear map"
+        )
+    require(
+        r"if \(\(\(memblock_mark_nomap_f\)data->map_symbol\.memblock_mark_nomap_relo\)"
+        r"\(start_pa,\s*all_size\)\)\s*__builtin_trap\(\);",
+        paging,
+        "failed destination NOMAP marking must fail closed before paging_init",
+    )
+    if probe_call <= paging_call:
         raise AssertionError("Y73S linear-map probe must run only after paging_init returns")
 
     fill = function_body(symbol_c, "int fillin_map_symbol(")
@@ -101,6 +115,7 @@ def main():
 
 
     print("[PASS] obsolete virtual-return memblock_alloc_try_nid fallback is not selected")
+    print("[PASS] Y73S destination NOMAP is set before paging_init and checked")
     print("[PASS] Y73S memblock API, allocation, linear-probe, and preset source contracts")
     print("[NOTE] Source contract checks do not prove runtime boot compatibility")
 
