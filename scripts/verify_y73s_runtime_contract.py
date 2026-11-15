@@ -45,6 +45,15 @@ def before(text, first, second, message):
 
 
 def main():
+    symbol_c = source("tools/symbol.c")
+    branch_hole_guard = function_body(symbol_c, "static bool map_hole_is_branch_thunk_table(")
+    require(r"\(insn\s*&\s*0xFC000000u\)\s*==\s*0x14000000u",
+            branch_hole_guard, "map-hole guard must identify AArch64 unconditional B-immediate entries")
+    require(r"branches\s*\*\s*100u\s*>=\s*total\s*\*\s*90u",
+            branch_hole_guard, "map-hole guard must reject a dense branch-thunk table")
+    map_selector = function_body(symbol_c, "void select_map_area(")
+    require(r"map_hole_is_branch_thunk_table\(image_buf,\s*imglen,\s*\*map_start,\s*hole_size\)",
+            map_selector, "GKI and non-GKI map holes must reject CFI branch-thunk tables")
     kernel_make = source("kernel/Makefile")
     require(r"ifdef Y73S_TARGET\s*CFLAGS \+= -DKP_TARGET_Y73S=1",
             kernel_make, "Y73S_TARGET must define KP_TARGET_Y73S for every KPIMG C translation unit")
