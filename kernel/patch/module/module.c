@@ -854,7 +854,7 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     }
 
     flags = module_lock_acquire();
-    if (find_module_locked(mod->info.name)) {
+    if (find_module_locked(module_name)) {
         module_lock_release(flags); set_load_error(info, "module already exists or is loading");
         rc = -EEXIST; goto free_mod;
     }
