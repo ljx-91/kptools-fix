@@ -37,9 +37,29 @@ checks = {
     "LKM refuses concurrent exit callback execution":
         "mod->state == KP_MODULE_EXITING && !mod->exit_called" in
         body(lkm, "long kp_unload_module("),
-    "KPIMG refuses concurrent exit callback execution":
-        "mod->state == KP_MODULE_EXITING && !mod->exit_called" in
+    "KPIMG serializes both exit callbacks and executable-image reclamation":
+        "mod->state == KP_MODULE_EXITING" in
         body(kpimg, "long unload_module("),
+    "KPIMG module metadata has a dedicated quarantine list node":
+        "struct list_head quarantine_list;" in kpimg_h and
+        "KP_MODULE_QUARANTINED" in kpimg_h,
+    "KPIMG name lookup includes quarantined executable images":
+        "list_for_each_entry(pos, &quarantined_modules, quarantine_list)" in
+        body(kpimg, "static struct module *find_module_locked("),
+    "KPIMG load failure retains metadata when executable permission reset fails":
+        "mod->state = KP_MODULE_QUARANTINED" in body(kpimg, "long load_module_ex(") and
+        "list_add_tail(&mod->quarantine_list, &quarantined_modules)" in
+        body(kpimg, "long load_module_ex(") and
+        "executable image quarantined after permission reset failure" in
+        body(kpimg, "long load_module_ex("),
+    "KPIMG normal unload keeps registry metadata until executable free succeeds":
+        body(kpimg, "long unload_module(").find("kp_free_exec(mod->start)") <
+        body(kpimg, "long unload_module(").find("list_del_init(&mod->list)") and
+        "mod->state = KP_MODULE_UNLOADING" in body(kpimg, "long unload_module(") and
+        "return free_rc;" in body(kpimg, "long unload_module("),
+    "KPIMG quarantined images can be retried without re-running init or exit":
+        "mod->state == KP_MODULE_QUARANTINED" in body(kpimg, "long unload_module(") and
+        "list_del_init(&mod->quarantine_list)" in body(kpimg, "long unload_module("),
     "LKM only permits nested kallsyms pins during an existing unload call":
         "!(pos->state == KP_MODULE_UNLOADING && pos->active_calls)" in
         body(lkm, "static struct kp_module *kp_module_get_by_addr("),
