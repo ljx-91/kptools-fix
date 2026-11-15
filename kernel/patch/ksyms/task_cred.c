@@ -257,6 +257,11 @@ int resolve_cred_offset()
         return -EINVAL;
     }
     int resolve_rc = 0;
+    /*
+     * Resolve the unsuffixed CFI canonical entry ("ksize"), not the
+     * implementation symbol ("ksize.cfi"), so the indirect call enters
+     * through the kernel's type-checked jump-table slot.
+     */
     cred_ksize_fn_t cred_size =
         (cred_ksize_fn_t)kallsyms_lookup_name("ksize");
 
