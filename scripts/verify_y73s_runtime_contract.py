@@ -68,6 +68,15 @@ def main():
             "Y73S executable allocator must continue validating every KIMG leaf PTE")
 
     start_c = source("kernel/base/start.c")
+    restore_map = function_body(start_c, "void restore_map(")
+    require(r"for\\s*\\(uint64_t page\\s*=\\s*align_floor\\(start,\\s*page_size\\);\\s*page\\s*<\\s*end;",
+            restore_map, "map restoration must iterate from aligned page bases")
+    require(r"page_end\\s*=\\s*page\\s*\\+\\s*page_size.*?pgtable_entry_kernel\\(page\\)",
+            restore_map, "each restored byte range must be covered by the PTE for its actual page")
+    require(r"copy_start\\s*=\\s*page\\s*>\\s*start\\s*\\?\\s*page\\s*:\\s*start.*?copy_end\\s*=\\s*page_end\\s*<\\s*end\\s*\\?\\s*page_end\\s*:\\s*end",
+            restore_map, "map restoration must clip each copy to its page boundaries")
+    if "for (uint64_t i = start;" in restore_map:
+        raise AssertionError("unaligned map restore loop can write into a second page without opening its PTE")
     walk_init = function_body(start_c, "static int pgtable_walk_init(")
     require(r"page_shift != 12.*?page_shift != 14.*?page_shift != 16",
             walk_init, "page-table lookup must reject unsupported granule sizes before shifting")
