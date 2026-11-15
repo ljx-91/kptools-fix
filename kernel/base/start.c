@@ -324,6 +324,11 @@ static int pgtable_walk_init(uint64_t pgd, uint64_t va,
     if ((uint64_t)((va_bits - 4) / (int64_t)pxd_bits) != (uint64_t)page_level)
         return -1;
 
+    /* This walker uses the TTBR1 root; reject lower-half/noncanonical VAs. */
+    uint64_t ttbr1_top_mask = (1ull << (64 - (uint64_t)va_bits)) - 1;
+    if ((va >> va_bits) != ttbr1_top_mask)
+        return -1;
+
 #ifdef KP_TARGET_Y73S
     if (page_shift != 12 || page_size != 4096 || va_bits != 39 ||
         page_level != 3 || (va >> 39) != 0x1FFFFFFull)
