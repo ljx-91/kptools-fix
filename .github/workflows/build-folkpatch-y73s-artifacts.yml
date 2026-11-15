@@ -279,10 +279,20 @@ jobs:
           grep -F 'kernelPatchVersion", "0.13.10"' FolkPatch/build.gradle.kts
           grep -F 'releases/download/0.13.9/${kmi}_kernelpatch.ko' FolkPatch/app/build.gradle.kts
 
+      # The APK job checks out FolkPatch above, not this KernelPatch repository.
+      # Fetch the exact triggering revision so its deterministic source patcher is available.
+      - uses: actions/checkout@v4
+        with:
+          repository: ljx-91/kptools-fix
+          ref: ${{ github.sha }}
+          path: kptools-fix
+          sparse-checkout: scripts/patch_folkpatch_exec_fallback.py
+          sparse-checkout-cone-mode: false
+
       - name: Harden FolkPatch executable staging for Android 10
         run: |
           set -euxo pipefail
-          python3 scripts/patch_folkpatch_exec_fallback.py FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
+          python3 kptools-fix/scripts/patch_folkpatch_exec_fallback.py FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
           grep -F 'Cannot stage native executable $name via symlink' FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
           grep -F 'Required native executables missing' FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
           grep -F 'Patch environment validation failed' FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
