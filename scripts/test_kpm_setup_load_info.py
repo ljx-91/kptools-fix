@@ -51,6 +51,7 @@ def main():
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#define KPM_NAME_LEN 32
 typedef Elf64_Ehdr Elf_Ehdr;
 typedef Elf64_Shdr Elf_Shdr;
 typedef Elf64_Sym Elf_Sym;
