@@ -445,10 +445,31 @@ def main():
     require(r"goto cleanup;.*?cleanup:\s*revert_current\(backup\);.*?vfree\(cred\);.*?uninit_bllist\(\);",
             resolve_cred_fn, "failed early credential-layout probe must restore current and free scratch buffers")
 
-    require(r"cred_size\s*\?\s*cred_size\(new_cred\)\s*:\s*0", taskcred_c,
-            "cap_ambient scan must fail closed when slab object size is unavailable")
-    require(r"if\s*\(ambient_scan_len\s*>\s*CRED_MAX_SIZE\)\s*ambient_scan_len\s*=\s*CRED_MAX_SIZE;",
-            taskcred_c, "cap_ambient scan must be bounded by both allocator size and scratch limit")
+    cred_scan_fn = function_body(taskcred_c, "static unsigned long cred_scan_len(")
+    require(r"if\s*\(!target\s*\|\|\s*!size_fn\)\s*return 0;", cred_scan_fn,
+            "live credential scan must fail closed without a valid object or ksize helper")
+    require(r"len\s*=\s*size_fn\(target\);", cred_scan_fn,
+            "live credential scan length must come from the actual slab object")
+    require(r"if\s*\(len\s*>\s*CRED_MAX_SIZE\)\s*len\s*=\s*CRED_MAX_SIZE;", cred_scan_fn,
+            "live credential scan must also respect the fixed scratch-layout ceiling")
+    require(r'kallsyms_lookup_name\("ksize"\)', resolve_cred_fn,
+            "Y73S credential resolver must dynamically resolve ksize")
+    require(r"cred_scan_len\(new_cred,\s*cred_size\)", resolve_cred_fn,
+            "every live cred object extent must be queried through the bounded helper")
+    require(r"i\s*\+\s*\(int\)sizeof\(uid_t\)\s*<=\s*suid_scan_len", resolve_cred_fn,
+            "suid scan must stay within the actual setresuid cred allocation")
+    require(r"i\s*\+\s*\(int\)sizeof\(gid_t\)\s*<=\s*sgid_scan_len", resolve_cred_fn,
+            "sgid scan must stay within the actual setresgid cred allocation")
+    require(r"if\s*\(raw_syscall3\(__NR_setresuid,\s*0,\s*0,\s*1158\)\)", resolve_cred_fn,
+            "failed setresuid probe must stop before reading an unverified cred pointer")
+    require(r"if\s*\(raw_syscall3\(__NR_setresgid,\s*0,\s*0,\s*1158\)\)", resolve_cred_fn,
+            "failed setresgid probe must stop before reading an unverified cred pointer")
+    require(r"\(unsigned long\)cred_offset\.cap_effective_offset\s*\+\s*sizeof\(kernel_cap_t\)\s*>\s*cap_probe_len",
+            resolve_cred_fn, "capability writes must fit inside the current live cred object")
+    require(r"\(unsigned long\)cred_offset\.securebits_offset\s*\+\s*sizeof\(unsigned\)\s*>\s*cap_probe_len",
+            resolve_cred_fn, "securebits write must fit inside the current live cred object")
+    require(r"ambient_scan_len\s*=\s*cred_scan_len\(new_cred,\s*cred_size\)", resolve_cred_fn,
+            "cap_ambient scan must use the same bounded live-object helper")
     if "cred_size(new_cred) : CRED_MAX_SIZE" in taskcred_c:
         raise AssertionError("unbounded slab credential scan fallback reintroduced")
 
