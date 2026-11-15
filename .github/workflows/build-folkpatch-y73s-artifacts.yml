@@ -168,15 +168,22 @@ jobs:
           cp user/version artifacts/version
           cat > artifacts/README-FOLKPATCH-Y73S.txt <<'EOF'
           Y73S-specific FolkPatch 115404 KernelPatch artifacts.
-          kptools-android is an Android ARM64 PIE executable. FolkPatch stores it
-          as app/libs/arm64-v8a/libkptools.so, then copies and executes it.
+          kptools-android is an Android ARM64 PIE executable. FolkPatch packages it
+          as app/libs/arm64-v8a/libkptools.so and stages it through a symlink to
+          the extracted native library before execution. If symlink staging or
+          executable validation fails, initialization fails closed; there is no
+          copy-to-app-private-data fallback because that location may be no-exec.
           kpimg-android is the matching Y73S KP payload. Both files were built
           from the same repository commit; do not mix with artifacts from another run.
           The trusted manager is the official me.yuki.folk package signed by the
           certificate in FolkPatch_0f3f42ba.apk.
           EOF
-          sha256sum artifacts/kptools-android artifacts/kpimg-android artifacts/kpimg-android.elf artifacts/preset.h artifacts/version > artifacts/SHA256SUMS
-          (cd artifacts && zip -q FolkPatch-Y73S-artifacts.zip kptools-android kpimg-android kpimg-android.elf preset.h version SHA256SUMS README-FOLKPATCH-Y73S.txt)
+          (
+            cd artifacts
+            sha256sum kptools-android kpimg-android kpimg-android.elf preset.h version > SHA256SUMS
+            sha256sum -c SHA256SUMS
+            zip -q FolkPatch-Y73S-artifacts.zip kptools-android kpimg-android kpimg-android.elf preset.h version SHA256SUMS README-FOLKPATCH-Y73S.txt
+          )
 
       - uses: actions/upload-artifact@v4
         with:
