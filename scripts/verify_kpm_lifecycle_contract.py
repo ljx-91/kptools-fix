@@ -67,6 +67,23 @@ checks = {
     "KPIMG quarantined images can be retried without re-running init or exit":
         "mod->state == KP_MODULE_QUARANTINED" in body(kpimg, "long unload_module(") and
         "list_del_init(&mod->quarantine_list)" in body(kpimg, "long unload_module("),
+    "KPIMG load-side logs use a stack-owned module identity after unlock":
+        'snprintf(module_name, sizeof(module_name), "%s", mod->name)' in
+        body(kpimg, "long load_module_ex(") and
+        'logkfi("[%s] succeed with [%s]\\n", module_name' in
+        body(kpimg, "long load_module_ex(") and
+        'logke("[%s] executable image quarantined after permission reset failure: %d\\n",\\n                  module_name' in
+        body(kpimg, "long load_module_ex("),
+    "KPIMG load-side retained-reference logs snapshot counters before unlock":
+        "retained_hooks = mod->hook_refs;" in body(kpimg, "long load_module_ex(") and
+        "retained_active = mod->active_calls;" in body(kpimg, "long load_module_ex(") and
+        "module_name, retained_hooks, retained_active" in body(kpimg, "long load_module_ex("),
+    "KPIMG unload-side logs do not dereference module metadata after unlock":
+        'snprintf(module_name, sizeof(module_name), "%s", mod->name)' in
+        body(kpimg, "long unload_module(") and
+        "module_name, free_rc" in body(kpimg, "long unload_module(") and
+        "module_name, retained_active, retained_hooks" in body(kpimg, "long unload_module(") and
+        "mod->info.name, free_rc" not in body(kpimg, "long unload_module("),
     "LKM only permits nested kallsyms pins during an existing unload call":
         "!(pos->state == KP_MODULE_UNLOADING && pos->active_calls)" in
         body(lkm, "static struct kp_module *kp_module_get_by_addr("),
