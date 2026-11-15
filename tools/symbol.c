@@ -158,6 +158,35 @@ static int32_t get_map_anchor_offset(kallsym_t *kallsym, char *img_buf, int imgl
     return 0;
 }
 
+/*
+ * A CFI canonical jump-table page can look like a convenient 4-KiB hole:
+ * each entry is a single unconditional B to an implementation body. It is
+ * not dead text. Overwriting it before paging_init() returns breaks any
+ * indirect call that reaches one of those canonical entries.
+ *
+ * Reject a candidate whose complete overwrite window is overwhelmingly
+ * composed of AArch64 B-immediate instructions. This is deliberately
+ * fail-closed; it does not guess whether individual entries are unused.
+ */
+static bool map_hole_is_branch_thunk_table(const char *image, int imglen,
+                                           int32_t start, int32_t size)
+{
+    if (!image || start < 0 || size < 0 || (start & 3) || (size & 3) ||
+        start > imglen || size > imglen - start || size < 0x400)
+        return true;
+
+    uint32_t branches = 0;
+    uint32_t total = (uint32_t)size / sizeof(uint32_t);
+    for (uint32_t i = 0; i < (uint32_t)size; i += sizeof(uint32_t)) {
+        uint32_t insn;
+        memcpy(&insn, image + start + i, sizeof(insn));
+        if ((insn & 0xFC000000u) == 0x14000000u)
+            branches++;
+    }
+
+    return branches * 100u >= total * 90u;
+}
+
 // todo
 void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *map_start, int32_t *max_size, bool is_gki)
 {
@@ -196,6 +225,10 @@ void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *m
         }
         *map_start = (int32_t)aligned_start;
         *max_size = hole_size;
+        if (map_hole_is_branch_thunk_table(image_buf, imglen, *map_start, hole_size)) {
+            tools_loge_exit("refusing map hole at 0x%x: window is an AArch64 branch-thunk/CFI table\\n",
+                            *map_start);
+        }
         return;
     }
 
@@ -211,6 +244,10 @@ void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *m
                         *map_start, hole_size, imglen);
     }
     *max_size = hole_size;
+    if (map_hole_is_branch_thunk_table(image_buf, imglen, *map_start, hole_size)) {
+        tools_loge_exit("refusing map hole at 0x%x: window is an AArch64 branch-thunk/CFI table\\n",
+                        *map_start);
+    }
 
 #define NOP 0xD503201F
 #define PAC 0xd503233f
