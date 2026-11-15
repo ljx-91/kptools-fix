@@ -125,6 +125,24 @@ jobs:
 
           echo "Y73S KPIMG build and ELF/map relocation verification successful"
 
+      - name: Build passive Y73s startup diagnostic KPM
+        shell: bash
+        run: |
+          set -euxo pipefail
+          export TARGET_COMPILE=aarch64-none-elf-
+          make -C kpms/y73s-boot-diagnostic -j"$(nproc)" KP_DIR=../..
+          KPM="kpms/y73s-boot-diagnostic/y73s-boot-diagnostic.kpm"
+          test -s "$KPM"
+          aarch64-none-elf-readelf -h "$KPM" | tee /tmp/y73s-kpm-elf-header.txt
+          grep -q "REL (Relocatable file)" /tmp/y73s-kpm-elf-header.txt
+          grep -q "AArch64" /tmp/y73s-kpm-elf-header.txt
+          aarch64-none-elf-readelf -S "$KPM" | tee /tmp/y73s-kpm-sections.txt
+          grep -q "\\.kpm.info" /tmp/y73s-kpm-sections.txt
+          grep -q "\\.kpm.init" /tmp/y73s-kpm-sections.txt
+          strings "$KPM" | grep -q "y73s-boot-diagnostic"
+          strings "$KPM" | grep -q "Read-only early startup event diagnostic"
+          echo "Y73S passive diagnostic KPM ELF checks successful"
+
       - name: Generate kptools headers
         shell: bash
         run: |
@@ -178,6 +196,9 @@ jobs:
           mkdir -p artifact/tools
 
           cp kernel/kpimg artifact/kernel/kpimg
+          mkdir -p artifact/kpms
+          cp kpms/y73s-boot-diagnostic/y73s-boot-diagnostic.kpm artifact/kpms/
+          cp kpms/y73s-boot-diagnostic/README.md artifact/kpms/README-y73s-boot-diagnostic.md
           cp -R user/uapi/. artifact/user/uapi/
           cp user/version artifact/user/version
           cp tools/preset.h artifact/tools/preset.h
