@@ -100,6 +100,9 @@ def main():
             vm_add, "early vm_struct must initialize only addr, size and flags")
     if "kp_vm.phys_addr" in vm_add or "kp_vm.caller" in vm_add:
         raise AssertionError("vm_area_add_early requires all fields except addr/size/flags to remain zero")
+    prot = function_body(start_c, "static void prot_myself(")
+    require(r"if \(!vm_area_add_early\).*?__builtin_trap\(\);[\s\S]*?vm_area_add_early\(&kp_vm\)",
+            prot, "KP VA range registration must fail closed if vm_area_add_early cannot be resolved")
     symbol_c = source("tools/symbol.c")
     hotpatch_c = source("kernel/base/hotpatch.c")
     hook_c = source("kernel/base/hook.c")
