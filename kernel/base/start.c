@@ -385,6 +385,38 @@ uint64_t pgtable_phys(uint64_t pgd, uint64_t va)
 }
 KP_EXPORT_SYMBOL(pgtable_phys);
 
+/* Validate every page before changing any KP permissions. pgtable_entry() may
+ * return a block descriptor when an intermediate level is a block; callers
+ * that rewrite AP/PXN bits must operate only on 4-KiB leaf descriptors. */
+static int kp_validate_leaf_range(uint64_t start, uint64_t end)
+{
+    const uint64_t pa_mask = 0x0000FFFFFFFFF000ull;
+
+    if (page_size != 4096 || page_shift != 12 || page_level != 3 ||
+        start > end || (start & (page_size - 1)) ||
+        (end & (page_size - 1)))
+        return -1;
+
+    for (uint64_t va = start; va < end; va += page_size) {
+        uint64_t *pte = pgtable_entry_kernel(va);
+        uint64_t expected_pa = kp_kimg_to_phys(va);
+
+        if (!pte || ((*pte & 0x3ull) != 0x3ull) ||
+            ((*pte & pa_mask) != (expected_pa & pa_mask)))
+            return -1;
+        if (va > (uint64_t)-1 - page_size)
+            return -1;
+    }
+    return 0;
+}
+
+static int kp_validate_leaf(uint64_t va)
+{
+    uint64_t page = va & ~((uint64_t)page_size - 1);
+    if (page > (uint64_t)-1 - page_size) return -1;
+    return kp_validate_leaf_range(page, page + page_size);
+}
+
 static void prot_myself()
 {
     /*
@@ -400,16 +432,47 @@ static void prot_myself()
              kimage_voffset, linear_voffset, separate_kimage_mapping,
              (int)((sctlr_before >> 19) & 1));
 
-    uint64_t *kpte = pgtable_entry_kernel(kernel_stext_va);
-    log_boot("Kernel stext prot: %llx\n", *kpte);
+    if (page_size != 4096 || page_shift != 12 || page_level != 3 ||
+        start_preset.extra_size > (uint64_t)-1 - (uint64_t)_kp_end ||
+        start_preset.extra_size > (uint64_t)-1 - (page_size - 1))
+        __builtin_trap();
 
     _kp_region_start = (uint64_t)_kp_text_start;
-    _kp_region_end = (uint64_t)_kp_end + align_ceil(start_preset.extra_size, page_size) + HOOK_ALLOC_SIZE +
+    uint64_t extra_aligned_size = align_ceil(start_preset.extra_size, page_size);
+    if (extra_aligned_size < start_preset.extra_size ||
+        (uint64_t)_kp_end > (uint64_t)-1 - extra_aligned_size ||
+        (uint64_t)_kp_end + extra_aligned_size > (uint64_t)-1 -
+            (HOOK_ALLOC_SIZE + MEMORY_ROX_SIZE + MEMORY_RW_SIZE))
+        __builtin_trap();
+    _kp_region_end = (uint64_t)_kp_end + extra_aligned_size + HOOK_ALLOC_SIZE +
                      MEMORY_ROX_SIZE + MEMORY_RW_SIZE;
-    log_boot("Region: %llx, %llx\n", _kp_region_start, _kp_region_end);
+    log_boot("Region: %llx, %llx\\n", _kp_region_start, _kp_region_end);
 
+    uint64_t extra_start = (uint64_t)_kp_end;
+    uint64_t extra_end = extra_start + start_preset.extra_size;
+    uint64_t align_extra_end = extra_start + extra_aligned_size;
+    uint64_t hook_start = align_extra_end;
+    uint64_t hook_end = hook_start + HOOK_ALLOC_SIZE;
+    uint64_t rw_start = hook_end;
+    uint64_t rw_end = rw_start + MEMORY_RW_SIZE;
+    uint64_t rox_start = rw_end;
+    uint64_t rox_end = rox_start + MEMORY_ROX_SIZE;
+
+    /* Preflight all touched mappings before the first permission write. */
+    if (kp_validate_leaf(kernel_stext_va) ||
+        kp_validate_leaf_range(text_start, align_text_end) ||
+        kp_validate_leaf_range(data_start, align_data_end) ||
+        kp_validate_leaf_range(extra_start, align_extra_end) ||
+        kp_validate_leaf_range(hook_start, hook_end) ||
+        kp_validate_leaf_range(rw_start, rw_end) ||
+        kp_validate_leaf_range(rox_start, rox_end))
+        __builtin_trap();
+
+    uint64_t *kpte = pgtable_entry_kernel(kernel_stext_va);
     uint64_t *kppte = pgtable_entry_kernel(_kp_region_start);
-    log_boot("KernelPatch start prot: %llx\n", *kppte);
+    if (!kpte || !kppte) __builtin_trap();
+    log_boot("Kernel stext prot: %llx\\n", *kpte);
+    log_boot("KernelPatch start prot: %llx\\n", *kppte);
 
     // text, rodata
     uint64_t text_start = (uint64_t)_kp_text_start;
@@ -438,9 +501,8 @@ static void prot_myself()
     flush_tlb_kernel_range(data_start, align_data_end);
 
     // extra data
-    _kp_extra_start = (uint64_t)_kp_end;
-    _kp_extra_end = _kp_extra_start + start_preset.extra_size;
-    uint64_t align_extra_end = align_ceil(_kp_extra_end, page_size);
+    _kp_extra_start = extra_start;
+    _kp_extra_end = extra_end;
     log_boot("Extra: %llx, %llx\n", _kp_extra_start, _kp_extra_end);
 
     for (uint64_t i = _kp_extra_start; i < align_extra_end; i += page_size) {
@@ -452,8 +514,8 @@ static void prot_myself()
     // Hook records are control data only: keep the arena RW-NX.
     // Generated transit and relocation code is allocated separately from the
     // executable page-run allocator and sealed RX before it is published.
-    _kp_hook_start = (uint64_t)align_extra_end;
-    _kp_hook_end = _kp_hook_start + HOOK_ALLOC_SIZE;
+    _kp_hook_start = hook_start;
+    _kp_hook_end = hook_end;
     log_boot("Hook RW-NX: %llx, %llx\n", _kp_hook_start, _kp_hook_end);
 
     for (uint64_t i = _kp_hook_start; i < _kp_hook_end; i += page_size) {
@@ -468,8 +530,8 @@ static void prot_myself()
     }
 
     // rw memory
-    _kp_rw_start = _kp_hook_end;
-    _kp_rw_end = _kp_rw_start + MEMORY_RW_SIZE;
+    _kp_rw_start = rw_start;
+    _kp_rw_end = rw_end;
     log_boot("RW: %llx, %llx\n", _kp_rw_start, _kp_rw_end);
 
     for (uint64_t i = _kp_rw_start; i < _kp_rw_end; i += page_size) {
@@ -484,8 +546,8 @@ static void prot_myself()
      * headers into free/allocated pool memory and therefore cannot support
      * independent text/rodata page permissions.
      */
-    _kp_rox_start = _kp_rw_end;
-    _kp_rox_end = _kp_rox_start + MEMORY_ROX_SIZE;
+    _kp_rox_start = rox_start;
+    _kp_rox_end = rox_end;
     log_boot("ROX: %llx, %llx\n", _kp_rox_start, _kp_rox_end);
     int exec_alloc_rc = kp_exec_allocator_init((void *)_kp_rox_start,
                                                 MEMORY_ROX_SIZE,
