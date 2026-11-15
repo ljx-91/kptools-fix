@@ -330,6 +330,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: folkpatch-y73s-patcher-apk
-          path: patcher-apk/FolkPatch-Y73s-Patcher.apk
+          path: patcher-apk/FolkPatch-Y73s-Patcher-unsigned.apk
           if-no-files-found: error
           retention-days: 14
