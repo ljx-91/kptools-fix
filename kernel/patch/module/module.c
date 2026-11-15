@@ -878,6 +878,8 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     flags = module_lock_acquire();
     mod->exit_called = true;
     if (mod->hook_refs || mod->active_calls) {
+        /* exit has completed, but the outstanding owners still need a retryable node. */
+        mod->state = KP_MODULE_UNLOADING;
         module_lock_release(flags);
         logke("[%s] init failed; retaining image with hook_refs=%u active=%u\n",
               mod->info.name, mod->hook_refs, mod->active_calls);
@@ -985,6 +987,8 @@ long unload_module(const char *name, void *__user reserved)
         mod->exit_called = true;
     }
     if (mod->active_calls || mod->hook_refs) {
+        /* Keep the completed exit retryable while owners drain. */
+        mod->state = KP_MODULE_UNLOADING;
         module_lock_release(flags);
         logkw("KPM %s retained: active=%u hook_refs=%u; retry after hook removal\n",
               name, mod->active_calls, mod->hook_refs);
