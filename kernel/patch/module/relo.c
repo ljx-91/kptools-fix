@@ -4,7 +4,7 @@
 #include <asm/elf.h>
 #include <kpmalloc.h>
 #include <linux/err.h>
-#include <linux/vmalloc.h>
+#include <module.h>
 #include <linux/string.h>
 
 #include "insn.h"
@@ -235,7 +235,7 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
             return -ENOEXEC;
     }
 
-    backup = vmalloc(targethdr->sh_size ? targethdr->sh_size : 1);
+    backup = kp_module_alloc(targethdr->sh_size ? targethdr->sh_size : 1);
     if (!backup) return -ENOMEM;
     if (targethdr->sh_size)
         memcpy(backup, (void *)targethdr->sh_addr, targethdr->sh_size);
@@ -392,7 +392,7 @@ int apply_relocate_add(Elf64_Shdr *sechdrs, const char *strtab, unsigned int sym
             goto rollback;
         }
     }
-    vfree(backup);
+    kp_module_free(backup);
     return 0;
 
 rollback:
