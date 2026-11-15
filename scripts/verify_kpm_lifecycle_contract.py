@@ -43,6 +43,13 @@ checks = {
     "KPIMG module metadata has a dedicated quarantine list node":
         "struct list_head quarantine_list;" in kpimg_h and
         "KP_MODULE_QUARANTINED" in kpimg_h,
+    "KPIMG keeps a stable validated module name before executable layout":
+        "char name[KPM_NAME_LEN];" in kpimg_h and
+        body(kpimg, "long load_module_ex(").find('snprintf(mod->name, sizeof(mod->name), "%s", info->info.name)') <
+        body(kpimg, "long load_module_ex(").find("move_module(mod, info)"),
+    "KPIMG quarantine lookup never dereferences image-owned name metadata":
+        'strcmp(name, pos->name)' in body(kpimg, "static struct module *find_module_locked(") and
+        'strcmp(name, pos->info.name)' not in body(kpimg, "static struct module *find_module_locked("),
     "KPIMG name lookup includes quarantined executable images":
         "list_for_each_entry(pos, &quarantined_modules, quarantine_list)" in
         body(kpimg, "static struct module *find_module_locked("),
