@@ -456,7 +456,11 @@ def main():
     require(r'kallsyms_lookup_name\("ksize"\)', resolve_cred_fn,
             "Y73S credential resolver must dynamically resolve ksize")
     require(r"0x01914a40 t ksize", y73s_symbols,
-            "Y73S 4.14.141 profile must pin the verified ksize implementation")
+            "Y73S 4.14.141 profile must pin the verified ksize CFI canonical entry")
+    require(r"0x003a1054 t ksize\.cfi", y73s_symbols,
+            "Y73S profile must distinguish the ksize CFI implementation from its canonical entry")
+    if 'kallsyms_lookup_name("ksize.cfi")' in resolve_cred_fn:
+        raise AssertionError("credential scan must call through the CFI canonical ksize entry")
     require(r"cred_scan_len\(new_cred,\s*cred_size\)", resolve_cred_fn,
             "every live cred object extent must be queried through the bounded helper")
     require(r"i\s*\+\s*\(int\)sizeof\(uid_t\)\s*<=\s*suid_scan_len", resolve_cred_fn,
