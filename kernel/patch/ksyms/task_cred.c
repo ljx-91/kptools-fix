@@ -33,6 +33,25 @@
 #define CRED_MAX_SIZE 0x100
 #define MM_STRUCT_MAX_SIZE 0xb0
 
+/*
+ * setresuid()/setresgid()/PR_CAP_AMBIENT install fresh cred_jar objects.
+ * CRED_MAX_SIZE is only the scratch-buffer ceiling, not the allocation size
+ * of those live slab objects. ksize() supplies the readable object bound.
+ */
+typedef unsigned long (*cred_ksize_fn_t)(const void *);
+
+static unsigned long cred_scan_len(struct cred *target, cred_ksize_fn_t size_fn)
+{
+    unsigned long len;
+
+    if (!target || !size_fn)
+        return 0;
+    len = size_fn(target);
+    if (len > CRED_MAX_SIZE)
+        len = CRED_MAX_SIZE;
+    return len;
+}
+
 struct mm_struct_offset mm_struct_offset = {
     .mmap_base_offset = -1,
     .task_size_offset = -1,
@@ -238,6 +257,15 @@ int resolve_cred_offset()
         return -EINVAL;
     }
     int resolve_rc = 0;
+    cred_ksize_fn_t cred_size =
+        (cred_ksize_fn_t)kallsyms_lookup_name("ksize");
+
+    /* The live cred probes below must never fall back to a guessed extent. */
+    if (!cred_size) {
+        log_boot("    ksize unavailable; refusing live credential scans\\n");
+        resolve_rc = -EINVAL;
+        goto cleanup;
+    }
 
     // cap_inheritable, cap_permitted, cap_effective
     kernel_cap_t effective, inheritable, permitted;
@@ -370,10 +398,20 @@ int resolve_cred_offset()
     }
     log_boot("    fsgid offset: %x\n", cred_offset.fsgid_offset);
 
-    // suid
-    raw_syscall3(__NR_setresuid, 0, 0, 1158);
+    // suid: setresuid() installs a new cred_jar object; bound by ksize().
+    if (raw_syscall3(__NR_setresuid, 0, 0, 1158)) {
+        log_boot("    setresuid credential probe failed\\n");
+        resolve_rc = -EINVAL;
+        goto cleanup;
+    }
     new_cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
-    for (int i = 0; i < CRED_MAX_SIZE; i += sizeof(uint32_t)) {
+    unsigned long suid_scan_len = cred_scan_len(new_cred, cred_size);
+    if (suid_scan_len < sizeof(uid_t)) {
+        log_boot("    invalid suid credential object size\\n");
+        resolve_rc = -EINVAL;
+        goto cleanup;
+    }
+    for (int i = 0; i + (int)sizeof(uid_t) <= suid_scan_len; i += sizeof(uint32_t)) {
         if (is_bl(i)) continue;
         uid_t *uidp = (uid_t *)((uintptr_t)new_cred + i);
         if (*uidp == 1158) {
@@ -385,10 +423,20 @@ int resolve_cred_offset()
     }
     log_boot("    suid offset: %x\n", cred_offset.suid_offset);
 
-    // sgid
-    raw_syscall3(__NR_setresgid, 0, 0, 1158);
+    // sgid: setresgid() also installs a fresh cred_jar object.
+    if (raw_syscall3(__NR_setresgid, 0, 0, 1158)) {
+        log_boot("    setresgid credential probe failed\\n");
+        resolve_rc = -EINVAL;
+        goto cleanup;
+    }
     new_cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
-    for (int i = 0; i < CRED_MAX_SIZE; i += sizeof(uint32_t)) {
+    unsigned long sgid_scan_len = cred_scan_len(new_cred, cred_size);
+    if (sgid_scan_len < sizeof(gid_t)) {
+        log_boot("    invalid sgid credential object size\\n");
+        resolve_rc = -EINVAL;
+        goto cleanup;
+    }
+    for (int i = 0; i + (int)sizeof(gid_t) <= sgid_scan_len; i += sizeof(uint32_t)) {
         if (is_bl(i)) continue;
         gid_t *uidp = (gid_t *)((uintptr_t)new_cred + i);
         if (*uidp == 1158) {
@@ -400,20 +448,30 @@ int resolve_cred_offset()
     }
     log_boot("    sgid offset: %x\n", cred_offset.sgid_offset);
 
-    // cap_ambient
+    // cap_ambient preparation writes must fit the current live cred object.
     new_cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
+    unsigned long cap_probe_len = cred_scan_len(new_cred, cred_size);
+    if (!cap_probe_len ||
+        cred_offset.cap_effective_offset < 0 ||
+        cred_offset.cap_inheritable_offset < 0 ||
+        cred_offset.cap_permitted_offset < 0 ||
+        cred_offset.securebits_offset < 0 ||
+        (unsigned long)cred_offset.cap_effective_offset + sizeof(kernel_cap_t) > cap_probe_len ||
+        (unsigned long)cred_offset.cap_inheritable_offset + sizeof(kernel_cap_t) > cap_probe_len ||
+        (unsigned long)cred_offset.cap_permitted_offset + sizeof(kernel_cap_t) > cap_probe_len ||
+        (unsigned long)cred_offset.securebits_offset + sizeof(unsigned) > cap_probe_len) {
+        log_boot("    capability offsets exceed live credential object; refusing ambient probe\\n");
+        resolve_rc = -EINVAL;
+        goto cleanup;
+    }
     *(kernel_cap_t *)((uintptr_t)new_cred + cred_offset.cap_effective_offset) = full_cap;
     *(kernel_cap_t *)((uintptr_t)new_cred + cred_offset.cap_inheritable_offset) = full_cap;
     *(kernel_cap_t *)((uintptr_t)new_cred + cred_offset.cap_permitted_offset) = full_cap;
     *(unsigned *)((uintptr_t)new_cred + cred_offset.securebits_offset) = 0;
     cap_task_prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_RAISE, 0xf, 0, 0);
     new_cred = *(struct cred **)((uintptr_t)task + task_struct_offset.cred_offset);
-    /* prctl installed a slab cred, not one of our CRED_MAX_SIZE scratch buffers. */
-    unsigned long (*cred_size)(const void *) = (typeof(cred_size))kallsyms_lookup_name("ksize");
-    /* new_cred is a slab allocation. Never assume CRED_MAX_SIZE bytes are
-     * readable when the allocator's actual object size is unavailable. */
-    unsigned long ambient_scan_len = cred_size ? cred_size(new_cred) : 0;
-    if (ambient_scan_len > CRED_MAX_SIZE) ambient_scan_len = CRED_MAX_SIZE;
+    /* prctl installed another slab cred; use its own allocation bound. */
+    unsigned long ambient_scan_len = cred_scan_len(new_cred, cred_size);
     if (!ambient_scan_len)
         log_boot("    ksize unavailable; refusing unbounded cap_ambient scan\\n");
     for (int i = 0; i + (int)sizeof(kernel_cap_t) <= CRED_MAX_SIZE &&
