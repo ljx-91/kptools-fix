@@ -558,10 +558,8 @@ static void prot_myself()
         (typeof(vm_area_add_early))kallsyms_lookup_name("vm_area_add_early");
     if (vm_area_add_early) {
         kp_vm.addr = (void *)_kp_region_start;
-        kp_vm.phys_addr = kp_kimg_to_phys(_kp_region_start);
         kp_vm.size = _kp_region_end - _kp_region_start;
         kp_vm.flags = 0x00000044;
-        kp_vm.caller = (void *)_kp_region_start;
         vm_area_add_early(&kp_vm);
         log_boot("add vmalloc area: %llx, %llx\n", kp_vm.addr, kp_vm.size);
     }
