@@ -236,7 +236,7 @@ int main(void)
     elf_header_check(&info);
     {
         static const char overlong_info[] =
-            "name=abcdefghijklmnopqrstuvwxyz1234567890\\0version=1.0\\0";
+            "name=abcdefghijklmnopqrstuvwxyz1234567890\0version=1.0\0";
         info.sechdrs[4].sh_offset = 1500;
         info.sechdrs[4].sh_size = sizeof(overlong_info);
         memcpy(image + 1500, overlong_info, sizeof(overlong_info));
