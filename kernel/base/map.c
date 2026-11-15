@@ -271,7 +271,8 @@ static void __noinline detect_y73s_linear_voffset(map_data_t *data)
     uint64_t detect_virt =
         (uint64_t)((memblock_virt_alloc_try_nid_f)data->map_symbol.memblock_virt_alloc_relo)(
             page_size, page_size, detect_phys, detect_phys + page_size, NUMA_NO_NODE);
-    if (!detect_virt || detect_virt <= detect_phys || (detect_virt & (page_size - 1)))
+    if (!detect_virt || detect_virt <= detect_phys ||
+        (detect_virt & (page_size - 1)) || (detect_virt >> 39) != 0x1FFFFFFull)
         __builtin_trap();
 
     /*
