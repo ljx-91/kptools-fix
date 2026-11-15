@@ -10,6 +10,13 @@
 
 #define STACK_SIZE 0x800
 
+#ifdef KP_TARGET_Y73S
+/* Linux 4.14.141 Y73S: VA_BITS=39, KASAN disabled, 128-MiB modules window. */
+/* VMALLOC_START = MODULES_END; VMALLOC_END = PAGE_OFFSET - PUD_SIZE - VMEMMAP_SIZE - 64 KiB. */
+#define KP_Y73S_VMALLOC_START 0xffffff8008000000ull
+#define KP_Y73S_VMALLOC_END   0xffffffbebfff0000ull
+#endif
+
 #ifndef __ASSEMBLY__
 
 #define offsetof(TYPE, MEMBER) ((size_t) & ((TYPE *)0)->MEMBER)
