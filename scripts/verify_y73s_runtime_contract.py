@@ -178,6 +178,11 @@ def main():
             mem_proc_fn, "Y73S must fail closed unless TCR_EL1 selects 4-KiB / 39-bit TTBR1 geometry")
 
     pte = function_body(map_c, "static uint64_t __noinline get_or_create_pte(")
+    require(r"ttbr1_el1\\s*&\\s*0x0000FFFFFFFFFFFEull", pte,
+            "TTBR1 page-table root extraction must mask ASID[63:48] and retain only BADDR[47:1]")
+    start_init_fn = function_body(start_c, "static int start_init(")
+    require(r"ttbr1_el1\\s*&\\s*0x0000FFFFFFFFFFFEull", start_init_fn,
+            "start_init must mask TTBR1 ASID bits before converting the root PA")
     require(r"uint64_t attr_prot = 0x703ull \| attr_indx;", pte,
             "new Y73S leaf mappings must leave PBHA[3:0] clear")
     if "0x40000000000703" in pte:
