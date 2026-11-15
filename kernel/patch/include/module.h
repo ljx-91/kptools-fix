@@ -51,6 +51,8 @@ struct module
     {
         const char *base, *name, *version, *license, *author, *description;
     } info;
+    /* Stable identity for registry/quarantine paths before image metadata moves. */
+    char name[KPM_NAME_LEN];
 
     char *args;
     char load_event[32];
