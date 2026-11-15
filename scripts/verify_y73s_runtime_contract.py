@@ -168,6 +168,7 @@ def main():
             "relocated start must receive saved WXN through the explicit third argument")
     before(start_fn, "prot_myself();", "msr sctlr_el1",
            "KP text/data permissions must be sealed before restoring WXN")
+    prot_fn = function_body(start_c, "static void prot_myself()")
     # Every PTE touched by prot_myself must be preflighted as a 4-KiB
     # KIMG leaf with the expected PA before the first permission mutation.
     leaf_check = function_body(start_c, "static int kp_validate_leaf_range(")
@@ -181,7 +182,6 @@ def main():
            "all touched ranges must be preflighted before the first PTE write")
     require(r"kp_validate_leaf\(kernel_stext_va\)", prot_fn,
             "kernel stext PTE must be checked before diagnostic dereference")
-    prot_fn = function_body(start_c, "static void prot_myself()")
     require(r"\*pte\s*=\s*\(\*pte\s*\|\s*PTE_SHARED\s*\|\s*PTE_RDONLY\)\s*&\s*~\(PTE_PXN\s*\|\s*PTE_GP\s*\|\s*PTE_DBM\)", prot_fn,
             "KP text must be read-only and executable before WXN is restored")
     if "if (separate_kimage_mapping)" in prot_fn:
