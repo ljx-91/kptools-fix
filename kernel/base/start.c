@@ -344,6 +344,14 @@ static int pgtable_walk_init(uint64_t pgd, uint64_t va,
     return 0;
 }
 
+static int pgtable_block_level_valid(int64_t level)
+{
+    /* 4-KiB supports L1/L2 blocks; 16-KiB and 64-KiB support L2 only. */
+    if (page_shift == 12)
+        return level == 1 || level == 2;
+    return level == 2;
+}
+
 static int pgtable_table_address(uint64_t desc, uint64_t *table_va)
 {
     uint64_t pa_mask = (((1ull << (48 - page_shift)) - 1) << page_shift);
@@ -402,7 +410,7 @@ uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
         }
 
         /* L0 blocks are reserved; L1/L2 blocks are valid lookup results. */
-        if (desc_type == 0x1ull && lv > 0 && lv < 3) {
+        if (desc_type == 0x1ull && pgtable_block_level_valid(lv)) {
             uint64_t block_bits = (3 - (uint64_t)lv) *
                                   ((uint64_t)page_shift - 3) +
                                   (uint64_t)page_shift;
