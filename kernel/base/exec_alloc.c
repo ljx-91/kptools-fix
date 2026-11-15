@@ -182,7 +182,9 @@ static int exec_walk_linear_alias(uint64_t va, uint64_t expected_pa,
     return -EFAULT;
 }
 
-/* Preflight both KIMG and linear aliases and cache their leaf-PTE addresses. */
+/* Preflight the KIMG alias and, where present, the linear alias. Y73S marks
+ * the relocated KP arena NOMAP before paging_init(), so its linear alias is
+ * intentionally absent; only the KIMG mapping may be modified there. */
 static int exec_prepare_pages(struct kp_exec_allocator *a, uint64_t base,
                               size_t bytes, uint64_t *linear_base)
 {
@@ -228,11 +230,20 @@ static int exec_prepare_pages(struct kp_exec_allocator *a, uint64_t base,
             !exec_leaf_valid(kimg_pte, expected_pa, attr_index, true))
             return -EFAULT;
 
+#ifndef KP_TARGET_Y73S
         if (linear_va != kimg_va) {
             if (exec_walk_linear_alias(linear_va, expected_pa,
                                        attr_index, &linear_pte))
                 return -EFAULT;
         }
+#else
+        /*
+         * Y73S's destination range was marked MEMBLOCK_NOMAP before the
+         * original paging_init(), so a direct-map PTE is not expected.
+         * Do not mistake that deliberate absence for allocator failure.
+         */
+        (void)linear_va;
+#endif
 
         a->kimg_ptes[i] = kimg_pte;
         a->linear_ptes[i] = linear_pte;
@@ -265,8 +276,13 @@ static void exec_flush_alias_ranges(uint64_t base, uint64_t linear_base,
                                     size_t bytes)
 {
     flush_tlb_kernel_range(base, base + bytes);
+#ifndef KP_TARGET_Y73S
     if (linear_base != base)
         flush_tlb_kernel_range(linear_base, linear_base + bytes);
+#else
+    /* The Y73S arena has no linear-map alias (MEMBLOCK_NOMAP). */
+    (void)linear_base;
+#endif
 }
 
 static int exec_set_uniform_protection(struct kp_exec_allocator *a,
