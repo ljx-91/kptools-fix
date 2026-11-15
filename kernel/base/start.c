@@ -670,6 +670,14 @@ static void prot_myself()
         log_boot("KP failed to resolve vm_area_add_early; refusing untracked VA range\n");
         __builtin_trap();
     }
+#ifdef KP_TARGET_Y73S
+    /* vm_area_add_early() checks overlap, not VMALLOC_START/END bounds. */
+    if (_kp_region_start < KP_Y73S_VMALLOC_START ||
+        _kp_region_start >= KP_Y73S_VMALLOC_END ||
+        _kp_region_end <= _kp_region_start ||
+        _kp_region_end > KP_Y73S_VMALLOC_END)
+        __builtin_trap();
+#endif
     kp_vm.addr = (void *)_kp_region_start;
     kp_vm.size = _kp_region_end - _kp_region_start;
     kp_vm.flags = 0x00000044;
