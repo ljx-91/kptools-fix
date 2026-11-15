@@ -226,7 +226,7 @@ void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *m
         *map_start = (int32_t)aligned_start;
         *max_size = hole_size;
         if (map_hole_is_branch_thunk_table(image_buf, imglen, *map_start, hole_size)) {
-            tools_loge_exit("refusing map hole at 0x%x: window is an AArch64 branch-thunk/CFI table\\n",
+            tools_loge_exit("refusing map hole at 0x%x: window is an AArch64 branch-thunk/CFI table\n",
                             *map_start);
         }
         return;
@@ -245,7 +245,7 @@ void select_map_area(kallsym_t *kallsym, char *image_buf, int imglen, int32_t *m
     }
     *max_size = hole_size;
     if (map_hole_is_branch_thunk_table(image_buf, imglen, *map_start, hole_size)) {
-        tools_loge_exit("refusing map hole at 0x%x: window is an AArch64 branch-thunk/CFI table\\n",
+        tools_loge_exit("refusing map hole at 0x%x: window is an AArch64 branch-thunk/CFI table\n",
                         *map_start);
     }
 
@@ -317,13 +317,13 @@ int fillin_map_symbol(kallsym_t *kallsym, char *img_buf, map_symbol_t *symbol, i
     symbol->memblock_mark_nomap_relo = get_symbol_offset_zero(kallsym, img_buf, "memblock_mark_nomap");
 
     if (!symbol->memblock_reserve_relo) {
-        tools_loge_exit("no verified two-argument memblock_reserve symbol\\n");
+        tools_loge_exit("no verified two-argument memblock_reserve symbol\n");
     }
     if (!symbol->memblock_free_relo) {
-        tools_loge_exit("no verified two-argument memblock_free symbol\\n");
+        tools_loge_exit("no verified two-argument memblock_free symbol\n");
     }
     if (!symbol->memblock_mark_nomap_relo) {
-        tools_loge_exit("no verified two-argument memblock_mark_nomap symbol\\n");
+        tools_loge_exit("no verified two-argument memblock_mark_nomap symbol\n");
     }
 
     /*
@@ -358,17 +358,17 @@ int fillin_map_symbol(kallsym_t *kallsym, char *img_buf, map_symbol_t *symbol, i
     }
 
     if (!symbol->memblock_phys_alloc_relo) {
-        tools_loge_exit("no verified physical allocator or memblock_find_in_range\\n");
+        tools_loge_exit("no verified physical allocator or memblock_find_in_range\n");
     }
     if (!symbol->memblock_virt_alloc_relo) {
-        tools_loge_exit("no verified five-argument memblock virtual allocator\\n");
+        tools_loge_exit("no verified five-argument memblock virtual allocator\n");
     }
     if (symbol->memblock_phys_alloc_type == MAP_SYM_MEMBLOCK_FIND_IN_RANGE) {
-        tools_logi("use memblock_find_in_range + memblock_reserve as map phys allocator\\n");
+        tools_logi("use memblock_find_in_range + memblock_reserve as map phys allocator\n");
     }
     if (get_symbol_offset_zero(kallsym, img_buf, "memblock_virt_alloc_try_nid_nopanic") ==
         symbol->memblock_virt_alloc_relo) {
-        tools_logi("use memblock_virt_alloc_try_nid_nopanic for map linear probe\\n");
+        tools_logi("use memblock_virt_alloc_try_nid_nopanic for map linear probe\n");
     }
 
     if ((is_be() ^ target_is_be)) {
