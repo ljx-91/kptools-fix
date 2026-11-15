@@ -66,6 +66,8 @@ def main():
     probe = function_body(map_c, "static void __noinline detect_y73s_linear_voffset(")
     require(r"memblock_find_in_range_f[^;]*\)\(\s*0,\s*0,\s*page_size,\s*page_size\)",
             probe, "linear probe must select a page-aligned physical page")
+    require(r"detect_phys >= \(1ull << 48\)[\s\S]*?page_size > \(1ull << 48\) - detect_phys",
+            probe, "linear probe PA and full page must fit the 48-bit descriptor output window")
     require(r"memblock_virt_alloc_try_nid_f[^;]*\)\(\s*page_size,\s*page_size,\s*detect_phys,\s*detect_phys \+ page_size,\s*NUMA_NO_NODE\)",
             probe, "linear probe must request the exact PA interval")
     require(r"still_free[\s\S]*?if \(still_free\) __builtin_trap\(\);",
