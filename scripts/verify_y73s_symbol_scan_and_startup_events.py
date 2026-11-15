@@ -162,6 +162,7 @@ def verify_hidden_kernel_init():
     before = function_body(patch, "static void before_kernel_init(")
     after = function_body(patch, "static void after_kernel_init(")
     patch_entry = function_body(patch, "int patch()")
+    event_dispatch = function_body(patch, "void extra_event_init_args(")
 
     need(r"get_symbol_offset_and_size\(kallsym,\s*img_buf,\s*\"rest_init\"",
          resolver, "resolver must use the target rest_init symbol range")
@@ -191,6 +192,12 @@ def verify_hidden_kernel_init():
          "PRE_KERNEL_INIT must remain attached to the actual kernel_init entry")
     need(r"extra_event_init\(EXTRA_EVENT_POST_KERNEL_INIT\)", after,
          "POST_KERNEL_INIT must remain attached to the actual kernel_init return path")
+    need(r"!strcmp\\(event,\\s*EXTRA_EVENT_PAGING_INIT\\)", event_dispatch,
+         "paging-init KPM dispatch must be guarded before mm_init")
+    need(r"skip KPM paging-init: slab/vmalloc unavailable", event_dispatch,
+         "early paging-init KPM skip must be visible in the boot log")
+    if event_dispatch.find("skip KPM paging-init") > event_dispatch.find("notify_modules_event"):
+        raise AssertionError("paging-init KPM guard must run before allocator-backed event dispatch")
     if "static void before_kernel_init(hook_fargs1_t *args" not in patch:
         raise AssertionError("kernel_init before callback must declare its one-argument AAPCS signature")
     if "static void after_kernel_init(hook_fargs1_t *args" not in patch:
