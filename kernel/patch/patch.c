@@ -149,6 +149,20 @@ void extra_event_init_args(const char *event, const char *args)
 {
     if (!event) return;
     log_boot("event: %s\n", event);
+
+    /*
+     * Y73S reaches paging_init from setup_arch(), before Linux mm_init()
+     * initializes kmalloc/vmalloc. The KPM loader and its RELA transaction
+     * use those allocators, so dispatching KPMs here can fault before the
+     * kernel has a console or usable allocator. Keep this event observable
+     * in the boot log, but defer KPM execution to PRE_KERNEL_INIT, which is
+     * reached from kernel_init after mm_init()/rest_init().
+     */
+    if (!strcmp(event, EXTRA_EVENT_PAGING_INIT)) {
+        log_boot("skip KPM paging-init: slab/vmalloc unavailable; use pre-kernel-init\\n");
+        return;
+    }
+
     notify_modules_event(event, args, 0);
     on_each_extra_item(extra_event_load_kpm, (void *)event);
 }
