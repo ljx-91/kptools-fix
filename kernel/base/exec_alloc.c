@@ -115,6 +115,7 @@ static bool exec_leaf_valid(volatile uint64_t *pte, uint64_t expected_pa,
     return true;
 }
 
+#ifndef KP_TARGET_Y73S
 /*
  * The linear-map alias may use an ARM64 block descriptor (commonly 2-MiB).
  * We do not split or rewrite such a block: it is acceptable only when it is
@@ -181,6 +182,7 @@ static int exec_walk_linear_alias(uint64_t va, uint64_t expected_pa,
     }
     return -EFAULT;
 }
+#endif /* !KP_TARGET_Y73S */
 
 /* Preflight the KIMG alias and, where present, the linear alias. Y73S marks
  * the relocated KP arena NOMAP before paging_init(), so its linear alias is
