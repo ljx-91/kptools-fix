@@ -131,16 +131,16 @@ def main():
             rela, "RELA alignment checks must exempt packed data relocations")
     if "rel[i].r_offset & (width - 1)" in rela:
         raise AssertionError("data relocations must not be forced to natural alignment")
-    require(r"backup\s*=\s*vmalloc\(targethdr->sh_size", rela,
-            "RELA application must snapshot the target section before writing")
+    require(r"backup\s*=\s*kp_module_alloc\(targethdr->sh_size", rela,
+            "RELA application must snapshot the target section with the early KP allocator")
     require(r"memcpy\(backup,\s*\(void \*\)targethdr->sh_addr", rela,
             "RELA transaction must save original target bytes")
     require(r"goto rollback", rela,
             "late relocation errors must enter transaction rollback")
     require(r"memcpy\(\(void \*\)targethdr->sh_addr,\s*backup", rela,
             "RELA rollback must restore the complete target section")
-    require(r"vfree\(backup\)", rela,
-            "RELA transaction must release its snapshot")
+    require(r"kp_module_free\(backup\)", rela,
+            "RELA transaction must release its KP allocator snapshot")
 
 
     require(r"int apply_relocate\([\s\S]*?return\s*-ENOEXEC", relo,
@@ -155,6 +155,12 @@ def main():
             "LKM path loader must not turn a NULL file handle into a zero return code")
 
     load = function_body(module, "long load_module_ex(")
+    require(r"mod\s*=\s*kp_module_alloc\(sizeof\(\*mod\)\)", load,
+            "embedded KPM state must not depend on vmalloc before mm_init")
+    require(r"mod->args\s*=\s*kp_module_alloc\(", load,
+            "embedded KPM arguments must use the early KP allocator")
+    if re.search(r"\b(?:vmalloc|kmalloc|kvfree|kfree)\s*\(", load):
+        raise AssertionError("embedded KPM loader must not use slab/vmalloc before mm_init")
     require(r"flush_icache_range\(\(unsigned long\)mod->start,\s*"
             r"\(unsigned long\)mod->start\s*\+\s*mod->text_size\)",
             load, "KPM relocated text must be D-cache-cleaned to PoU before execution")
