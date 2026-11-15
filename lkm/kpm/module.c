@@ -799,6 +799,10 @@ static int setup_load_info(struct kp_load_info *info)
 		set_load_error(info, "module name not found");
 		return -ENOEXEC;
 	}
+	if (strlen(name) >= KPM_NAME_LEN) {
+		set_load_error(info, "module name exceeds KPM_NAME_LEN");
+		return -ENOEXEC;
+	}
 	info->info.name = name;
 	logkd("loading module:\n");
 	logkd("    name: %s\n", name);
