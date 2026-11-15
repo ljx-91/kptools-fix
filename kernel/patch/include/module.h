@@ -76,6 +76,10 @@ struct module
     struct list_head quarantine_list;
 };
 
+/* KP-owned metadata allocator; safe before slab/vmalloc initialization. */
+void *kp_module_alloc(size_t size);
+void kp_module_free(void *ptr);
+
 long load_module(const void *data, int len, const char *args, const char *event, void *__user reserved);
 long load_module_ex(const void *data, int len, const char *args, const char *event, const char *source,
                     void *__user reserved);
