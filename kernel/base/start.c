@@ -313,7 +313,7 @@ void log_boot(const char *fmt, ...)
  * table address or mistake an invalid-level block for a leaf.
  */
 static int pgtable_walk_init(uint64_t pgd, uint64_t va,
-                             uint64_t *root_pa, uint64_t *root_va)
+                             uint64_t *root_va)
 {
     if ((page_shift != 12 && page_shift != 14 && page_shift != 16) ||
         page_shift >= 63 || page_size != (1ll << page_shift) ||
@@ -333,9 +333,9 @@ static int pgtable_walk_init(uint64_t pgd, uint64_t va,
     if (!linear_voffset || pgd < linear_voffset)
         return -1;
 
-    *root_pa = pgd - linear_voffset;
-    if (!*root_pa || (*root_pa & ((uint64_t)page_size - 1)) ||
-        (*root_pa >> 48))
+    uint64_t root_pa = pgd - linear_voffset;
+    if (!root_pa || (root_pa & ((uint64_t)page_size - 1)) ||
+        (root_pa >> 48))
         return -1;
     if (pgd > (uint64_t)-1 - (uint64_t)page_size)
         return -1;
@@ -344,8 +344,7 @@ static int pgtable_walk_init(uint64_t pgd, uint64_t va,
     return 0;
 }
 
-static int pgtable_table_address(uint64_t desc, uint64_t *table_pa,
-                                 uint64_t *table_va)
+static int pgtable_table_address(uint64_t desc, uint64_t *table_va)
 {
     uint64_t pa_mask = (((1ull << (48 - page_shift)) - 1) << page_shift);
     uint64_t pa = desc & pa_mask;
@@ -358,17 +357,15 @@ static int pgtable_table_address(uint64_t desc, uint64_t *table_pa,
     if (va > (uint64_t)-1 - (uint64_t)page_size)
         return -1;
 
-    *table_pa = pa;
     *table_va = va;
     return 0;
 }
 
 uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
 {
-    uint64_t root_pa = 0, pxd_pa = 0, pxd_va = 0;
-    if (pgtable_walk_init(pgd, va, &root_pa, &pxd_va))
+    uint64_t pxd_va = 0;
+    if (pgtable_walk_init(pgd, va, &pxd_va))
         return 0;
-    pxd_pa = root_pa;
 
     uint64_t pxd_bits = (uint64_t)page_shift - 3;
     uint64_t pxd_ptrs = 1ull << pxd_bits;
@@ -389,20 +386,32 @@ uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
 
         if (desc_type == 0x3ull) {
             /* At level 3 this is the final page descriptor. */
-            if (lv == 3)
+            if (lv == 3) {
+                uint64_t leaf_pa = pxd_desc &
+                    (((1ull << (48 - page_shift)) - 1) << page_shift);
+                if (!leaf_pa)
+                    return 0;
                 return (uint64_t *)pxd_entry_va;
+            }
 
-            uint64_t next_pa = 0, next_va = 0;
-            if (pgtable_table_address(pxd_desc, &next_pa, &next_va))
+            uint64_t next_va = 0;
+            if (pgtable_table_address(pxd_desc, &next_va))
                 return 0;
-            pxd_pa = next_pa;
             pxd_va = next_va;
             continue;
         }
 
         /* L0 blocks are reserved; L1/L2 blocks are valid lookup results. */
-        if (desc_type == 0x1ull && lv > 0 && lv < 3)
+        if (desc_type == 0x1ull && lv > 0 && lv < 3) {
+            uint64_t block_bits = (3 - (uint64_t)lv) *
+                                  ((uint64_t)page_shift - 3) +
+                                  (uint64_t)page_shift;
+            uint64_t block_mask =
+                ((1ull << (48 - block_bits)) - 1) << block_bits;
+            if (!(pxd_desc & block_mask))
+                return 0;
             return (uint64_t *)pxd_entry_va;
+        }
 
         return 0;
     }
@@ -413,10 +422,9 @@ KP_EXPORT_SYMBOL(pgtable_entry);
 
 uint64_t pgtable_phys(uint64_t pgd, uint64_t va)
 {
-    uint64_t root_pa = 0, pxd_pa = 0, pxd_va = 0;
-    if (pgtable_walk_init(pgd, va, &root_pa, &pxd_va))
+    uint64_t pxd_va = 0;
+    if (pgtable_walk_init(pgd, va, &pxd_va))
         return 0;
-    pxd_pa = root_pa;
 
     uint64_t pxd_bits = (uint64_t)page_shift - 3;
     uint64_t pxd_ptrs = 1ull << pxd_bits;
@@ -443,7 +451,7 @@ uint64_t pgtable_phys(uint64_t pgd, uint64_t va)
             if (lv == 3)
                 return next_pa + (va & ((uint64_t)page_size - 1));
 
-            if (pgtable_table_address(pxd_desc, &pxd_pa, &pxd_va))
+            if (pgtable_table_address(pxd_desc, &pxd_va))
                 return 0;
             continue;
         }
