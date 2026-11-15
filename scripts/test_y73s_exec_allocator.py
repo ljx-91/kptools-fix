@@ -55,6 +55,18 @@ assert MODULE_C.find("flush_icache_range(") < MODULE_C.find("kp_exec_protect_mod
 assert "if (linear_va != kimg_va)" in SOURCE
 assert "expected_pa" in SOURCE and "exec_walk_linear_alias(linear_va, expected_pa" in SOURCE
 
+# A failed RW-NX transition must keep the exact run allocated so a later
+# kp_exec_free() retry can safely attempt the permission change again.
+FREE_BODY_START = SOURCE.index("int kp_exec_free(void *ptr)")
+FREE_BODY_END = SOURCE.index("\nvoid *kp_exec_realloc(", FREE_BODY_START)
+FREE_BODY = SOURCE[FREE_BODY_START:FREE_BODY_END]
+assert "rc = exec_set_uniform_protection" in FREE_BODY
+assert "if (rc)" in FREE_BODY
+assert "a->runs[index] = (uint16_t)pages;" in FREE_BODY
+assert FREE_BODY.index("if (rc)") < FREE_BODY.index("a->runs[index] = (uint16_t)pages;")
+assert FREE_BODY.index("if (rc)") < FREE_BODY.index("a->runs[index + i] = 0;")
+assert "return rc;" in FREE_BODY
+
 
 class PageRunAllocator:
     def __init__(self, pages=1024, base=0x10000000, page_size=4096):
