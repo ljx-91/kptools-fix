@@ -122,6 +122,8 @@ def main():
     alloc = function_body(map_c, "static uint64_t map_phys_alloc(")
     require(r"memblock_find_in_range_f[^;]*\)\(\s*0,\s*0,\s*size,\s*align\)",
             alloc, "physical range finder arguments changed")
+    if alloc.count("pa >= (1ull << 48)") != 2 or alloc.count("size > (1ull << 48) - pa") != 2:
+        raise AssertionError("both physical allocator paths must reject allocations outside the 48-bit PA window")
     find_call = alloc.find("0, 0, size, align")
     reserve_call = alloc.find("(pa, size)")
     if find_call < 0 or reserve_call <= find_call:
