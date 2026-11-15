@@ -7,8 +7,10 @@ import sys
 SHT_SYMTAB = 2
 SHT_NOBITS = 8
 STT_FUNC = 2
-MAP_SECTION = ".setup.map"
+MAP_SECTIONS = (".setup.map.data", ".setup.map.text")
 MAP_MAX_SIZE = 0x1000
+SHF_WRITE, SHF_ALLOC, SHF_EXECINSTR = 1, 2, 4
+PT_LOAD, PF_X, PF_W, PF_R = 1, 1, 2, 4
 
 
 def sign_extend(value, bits):
@@ -25,7 +27,10 @@ def parse_elf(path):
     hdr = struct.unpack_from("<16sHHIQQQIHHHHHH", blob, 0)
     if hdr[2] != 183:
         raise ValueError("expected AArch64 ELF")
+    phoff, phentsize, phnum = hdr[5], hdr[9], hdr[10]
     shoff, shentsize, shnum, shstrndx = hdr[6], hdr[11], hdr[12], hdr[13]
+    if phentsize < 56 or not phnum:
+        raise ValueError("invalid program header table")
     if shentsize < 64 or not shnum or shstrndx >= shnum:
         raise ValueError("invalid section table")
     sections = []
@@ -34,7 +39,7 @@ def parse_elf(path):
         if off + 64 > len(blob):
             raise ValueError("section header outside file")
         sh = struct.unpack_from("<IIQQQQIIQQ", blob, off)
-        sections.append({"name_off": sh[0], "type": sh[1], "addr": sh[3],
+        sections.append({"name_off": sh[0], "type": sh[1], "flags": sh[2], "addr": sh[3],
                          "offset": sh[4], "size": sh[5], "link": sh[6],
                          "entsize": sh[9]})
     shstr = sections[shstrndx]
@@ -44,14 +49,43 @@ def parse_elf(path):
         if end < 0:
             raise ValueError("bad section-name string")
         sec["name"] = names[sec["name_off"]:end].decode("ascii", "replace")
-    maps = [s for s in sections if s["name"] == MAP_SECTION]
-    if len(maps) != 1:
-        raise ValueError(f"expected one {MAP_SECTION}, found {len(maps)}")
-    m = maps[0]
-    if m["type"] == SHT_NOBITS or not m["size"] or m["size"] > MAP_MAX_SIZE:
-        raise ValueError(f"{MAP_SECTION} size/type invalid: 0x{m['size']:x}")
-    if m["offset"] + m["size"] > len(blob):
-        raise ValueError(f"{MAP_SECTION} outside ELF")
+    maps = {}
+    for name in MAP_SECTIONS:
+        found = [sec for sec in sections if sec["name"] == name]
+        if len(found) != 1:
+            raise ValueError("expected exactly one copied-map section: " + name)
+        maps[name] = found[0]
+    data, code = maps[MAP_SECTIONS[0]], maps[MAP_SECTIONS[1]]
+    if data["type"] == SHT_NOBITS or code["type"] == SHT_NOBITS:
+        raise ValueError("copied map sections must be file-backed")
+    if not data["size"] or not code["size"]:
+        raise ValueError("copied map data/code section is empty")
+    if data["addr"] + data["size"] != code["addr"] or data["offset"] + data["size"] != code["offset"]:
+        raise ValueError("map data/code must remain exactly contiguous in VMA and file")
+    if data["flags"] != (SHF_ALLOC | SHF_WRITE) or code["flags"] != (SHF_ALLOC | SHF_EXECINSTR):
+        raise ValueError("map data/code section permissions are not WA/AX")
+    m = {"addr": data["addr"], "offset": data["offset"], "size": data["size"] + code["size"]}
+    if m["size"] > MAP_MAX_SIZE or m["offset"] + m["size"] > len(blob):
+        raise ValueError("combined copied map span is invalid")
+    loads = []
+    for i in range(phnum):
+        pos = phoff + i * phentsize
+        if pos + 56 > len(blob):
+            raise ValueError("program header outside file")
+        p_type, p_flags, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_align = struct.unpack_from("<IIQQQQQQ", blob, pos)
+        if p_type == PT_LOAD:
+            if (p_flags & (PF_W | PF_X)) == (PF_W | PF_X):
+                raise ValueError("writable/executable PT_LOAD remains")
+            loads.append((p_flags, p_vaddr, p_memsz))
+    if not loads:
+        raise ValueError("no PT_LOAD segments")
+    for sec in sections:
+        if not (sec["flags"] & SHF_ALLOC) or not sec["size"]:
+            continue
+        required = PF_R | (PF_W if sec["flags"] & SHF_WRITE else 0) | (PF_X if sec["flags"] & SHF_EXECINSTR else 0)
+        matches = [seg for seg in loads if seg[1] <= sec["addr"] and sec["addr"] + sec["size"] <= seg[1] + seg[2]]
+        if len(matches) != 1 or (matches[0][0] & (PF_R | PF_W | PF_X)) != required:
+            raise ValueError("allocatable section lacks one exact-permission PT_LOAD")
     funcs = []
     for sec in sections:
         if sec["type"] != SHT_SYMTAB:
@@ -69,13 +103,13 @@ def parse_elf(path):
             no, info, other, shndx, value, size = struct.unpack_from("<IBBHQQ", blob, pos)
             if not no or (info & 0x0f) != STT_FUNC or shndx >= len(sections):
                 continue
-            if sections[shndx]["name"] != MAP_SECTION or not size:
+            if sections[shndx]["name"] != MAP_SECTIONS[1] or not size:
                 continue
             if value < m["addr"] or value + size > m["addr"] + m["size"]:
-                raise ValueError("function symbol escapes .setup.map")
+                raise ValueError("function symbol escapes copied map data/code span")
             funcs.append((value, size))
     if not funcs:
-        raise ValueError("no function symbols found in .setup.map")
+        raise ValueError("no function symbols found in copied map code")
     return blob, m, funcs
 
 
@@ -137,7 +171,7 @@ def main(path):
                     valid = lo <= target < hi
                 if not valid:
                     bad_refs.append((pc, target, word, kind))
-    print(f".setup.map size=0x{sec['size']:x}; function_symbols={len(funcs)}; "
+    print(f"copied map size=0x{sec['size']:x}; function_symbols={len(funcs)}; "
           f"direct_branches_checked={checked}; pc_relative_refs_checked={refs_checked}")
     if bad:
         for pc, target, word in bad[:20]:
@@ -147,7 +181,8 @@ def main(path):
         for pc, target, word, kind in bad_refs[:20]:
             print(f"external {kind}: pc=0x{pc:x} insn=0x{word:08x} target=0x{target:x}")
         raise ValueError(f"{len(bad_refs)} PC-relative reference(s) leave copied .setup.map")
-    print("[PASS] copied .setup.map direct branches and PC-relative references stay inside the copied section")
+    print("[PASS] copied map branches/references stay inside its contiguous data+code span")
+    print("[PASS] ELF PT_LOAD segments use non-W+X permissions for allocatable sections")
 
 
 if __name__ == "__main__":
