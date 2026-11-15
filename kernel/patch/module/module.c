@@ -806,6 +806,7 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     unsigned long flags;
     long rc = 0;
     char module_name[KPM_NAME_LEN] = { 0 };
+    unsigned int retained_active = 0, retained_hooks = 0;
     if (!data || len <= 0) { rc = -EINVAL; set_load_error(info, "invalid module input"); goto out; }
     if ((rc = elf_header_check(info)) || (rc = setup_load_info(info))) goto out;
     mod = vmalloc(sizeof(*mod));
@@ -889,10 +890,12 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     mod->exit_called = true;
     if (mod->hook_refs || mod->active_calls) {
         /* exit has completed, but the outstanding owners still need a retryable node. */
+        retained_hooks = mod->hook_refs;
+        retained_active = mod->active_calls;
         mod->state = KP_MODULE_UNLOADING;
         module_lock_release(flags);
         logke("[%s] init failed; retaining image with hook_refs=%u active=%u\n",
-              module_name, mod->hook_refs, mod->active_calls);
+              module_name, retained_hooks, retained_active);
         rc = -EBUSY; goto out;
     }
     /* Keep the module discoverable while its executable pages are released. */
@@ -939,6 +942,8 @@ long unload_module(const char *name, void *__user reserved)
     unsigned long flags;
     long rc = 0;
     int free_rc;
+    char module_name[KPM_NAME_LEN];
+    unsigned int retained_active, retained_hooks;
 
     if (!name) return -EINVAL;
     flags = module_lock_acquire();
@@ -947,6 +952,7 @@ long unload_module(const char *name, void *__user reserved)
         module_lock_release(flags);
         return -ENOENT;
     }
+    snprintf(module_name, sizeof(module_name), "%s", mod->name);
 
     /* A quarantined image never ran init/exit and is only awaiting a safe
      * RW-NX transition. Serialize retries without exposing it as LIVE. */
@@ -965,7 +971,7 @@ long unload_module(const char *name, void *__user reserved)
         module_lock_release(flags);
         if (mod->args) kvfree(mod->args);
         kvfree(mod);
-        logkfi("name: %s, quarantined image reclaimed\n", name);
+        logkfi("name: %s, quarantined image reclaimed\n", module_name);
         return 0;
     }
 
@@ -998,10 +1004,12 @@ long unload_module(const char *name, void *__user reserved)
     }
     if (mod->active_calls || mod->hook_refs) {
         /* Keep the completed exit retryable while owners drain. */
+        retained_active = mod->active_calls;
+        retained_hooks = mod->hook_refs;
         mod->state = KP_MODULE_UNLOADING;
         module_lock_release(flags);
         logkw("KPM %s retained: active=%u hook_refs=%u; retry after hook removal\n",
-              name, mod->active_calls, mod->hook_refs);
+              module_name, retained_active, retained_hooks);
         return -EBUSY;
     }
 
@@ -1016,7 +1024,7 @@ long unload_module(const char *name, void *__user reserved)
         mod->state = KP_MODULE_UNLOADING;
         module_lock_release(flags);
         logke("[%s] executable image retained for retry after permission reset failure: %d\n",
-              mod->info.name, free_rc);
+              module_name, free_rc);
         return free_rc;
     }
     list_del_init(&mod->list);
@@ -1025,7 +1033,7 @@ long unload_module(const char *name, void *__user reserved)
 
     if (mod->args) kvfree(mod->args);
     kvfree(mod);
-    logkfi("name: %s, rc: %ld\n", name, rc);
+    logkfi("name: %s, rc: %ld\n", module_name, rc);
     return rc;
 }
 
