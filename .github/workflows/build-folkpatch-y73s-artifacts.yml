@@ -309,27 +309,23 @@ jobs:
           grep -F 'Required native executables missing' FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
           grep -F 'Patch environment validation failed' FolkPatch/app/src/main/java/me/bmax/apatch/ui/viewmodel/PatchesViewModel.kt
 
-      - name: Build FolkPatch Y73s patcher APK
+      - name: Build unsigned FolkPatch Y73s Release APK
         working-directory: FolkPatch
         run: |
           set -euxo pipefail
-          # Exclude the AAR metadata task by task name across all Android modules;
-          # the previous app-only path left :core:designsystem:checkDebugAarMetadata active.
-          # This remains diagnostic only: successful compilation must be followed by
-          # inspection of API-37 references and runtime compatibility.
-          # AGP's BundleAar task declares the metadata-check output directory as
-          # an input even when the check task is excluded. Pre-create the expected
-          # empty directories for every Gradle subproject so task input validation
-          # does not fail after successful source compilation.
+          # Build a real optimized Release variant, but do not put signing keys in CI.
+          # The resulting unsigned APK will be signed offline with the owner's JKS.
+          # Exclude the AAR metadata gate as in the Debug build; runtime compatibility
+          # still requires separate Android 10 validation.
           while IFS= read -r build_file; do
             project_dir="$(dirname "$build_file")"
-            mkdir -p "$project_dir/build/intermediates/aar_metadata_check/debug/checkDebugAarMetadata"
+            mkdir -p "$project_dir/build/intermediates/aar_metadata_check/release/checkReleaseAarMetadata"
           done < <(find . -name build.gradle.kts -not -path './.gradle/*' -not -path '*/build/*')
-          ./gradlew --no-daemon assembleDebug -x checkDebugAarMetadata -PkernelPatchArtifacts="${GITHUB_WORKSPACE}/artifacts"
-          apk="$(find app/build/outputs/apk/debug -type f -name '*.apk' -print -quit)"
+          ./gradlew --no-daemon assembleRelease -x checkReleaseAarMetadata -PkernelPatchArtifacts="${GITHUB_WORKSPACE}/artifacts"
+          apk="$(find app/build/outputs/apk/release -type f -name '*.apk' -print -quit)"
           test -n "$apk"
           mkdir -p "${GITHUB_WORKSPACE}/patcher-apk"
-          cp "$apk" "${GITHUB_WORKSPACE}/patcher-apk/FolkPatch-Y73s-Patcher.apk"
+          cp "$apk" "${GITHUB_WORKSPACE}/patcher-apk/FolkPatch-Y73s-Patcher-unsigned.apk"
 
       - uses: actions/upload-artifact@v4
         with:
