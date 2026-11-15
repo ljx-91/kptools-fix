@@ -125,17 +125,17 @@ static void reset_fixture(struct kp_load_info *info)
 
     sh[2].sh_name = name_offset(".kpm.init");
     sh[2].sh_type = SHT_PROGBITS;
-    sh[2].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+    sh[2].sh_flags = SHF_ALLOC | SHF_WRITE;
     sh[2].sh_offset = 1200;
-    sh[2].sh_size = 16;
-    sh[2].sh_addralign = 16;
+    sh[2].sh_size = sizeof(void *);
+    sh[2].sh_addralign = sizeof(void *);
 
     sh[3].sh_name = name_offset(".kpm.exit");
     sh[3].sh_type = SHT_PROGBITS;
-    sh[3].sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+    sh[3].sh_flags = SHF_ALLOC | SHF_WRITE;
     sh[3].sh_offset = 1216;
-    sh[3].sh_size = 16;
-    sh[3].sh_addralign = 16;
+    sh[3].sh_size = sizeof(void *);
+    sh[3].sh_addralign = sizeof(void *);
 
     sh[4].sh_name = name_offset(".kpm.info");
     sh[4].sh_type = SHT_PROGBITS;
