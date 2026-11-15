@@ -52,14 +52,18 @@
 
 /* The minimal KPIMG Linux headers intentionally expose only a subset of the
  * slab helpers. Keep these wrappers local and overflow-safe. */
+static void *module_meta_alloc(size_t size);
+static void module_meta_free(void *ptr);
+
 static char *kp_module_strdup(const char *src, gfp_t flags)
 {
     size_t len;
     char *copy;
 
+    (void)flags;
     if (!src) return NULL;
     len = strlen(src) + 1;
-    copy = kmalloc(len, flags);
+    copy = module_meta_alloc(len);
     if (copy) memcpy(copy, src, len);
     return copy;
 }
@@ -69,7 +73,8 @@ static void *kp_module_kcalloc(size_t count, size_t size, gfp_t flags)
     void *ptr;
 
     if (size && count > (~0UL / size)) return NULL;
-    ptr = kmalloc(count * size, flags);
+    (void)flags;
+    ptr = module_meta_alloc(count * size);
     if (ptr) memset(ptr, 0, count * size);
     return ptr;
 }
@@ -710,6 +715,34 @@ static struct list_head quarantined_modules;
 static spinlock_t module_lock;
 static unsigned long module_lock_acquire(void) { return kp_private_spin_lock(&module_lock); }
 static void module_lock_release(unsigned long flags) { kp_private_spin_unlock(&module_lock, flags); }
+
+/*
+ * KPMs embedded for paging-init are loaded from inside setup_arch(), before
+ * slab and vmalloc are initialized. Keep module metadata in KP's already
+ * mapped RW TLSF arena instead. The registry lock also serializes this
+ * allocator because TLSF itself is not concurrency-safe.
+ */
+static void *module_meta_alloc(size_t size)
+{
+    unsigned long flags;
+    void *ptr;
+
+    if (!size || !kp_rw_mem) return NULL;
+    flags = module_lock_acquire();
+    ptr = kp_malloc(size);
+    module_lock_release(flags);
+    return ptr;
+}
+
+static void module_meta_free(void *ptr)
+{
+    unsigned long flags;
+
+    if (!ptr || !kp_rw_mem) return;
+    flags = module_lock_acquire();
+    kp_free(ptr);
+    module_lock_release(flags);
+}
 static struct module *find_module_locked(const char *name)
 {
     struct module *pos;
@@ -818,7 +851,7 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     unsigned int retained_active = 0, retained_hooks = 0;
     if (!data || len <= 0) { rc = -EINVAL; set_load_error(info, "invalid module input"); goto out; }
     if ((rc = elf_header_check(info)) || (rc = setup_load_info(info))) goto out;
-    mod = vmalloc(sizeof(*mod));
+    mod = module_meta_alloc(sizeof(*mod));
     if (!mod) { set_load_error(info, "allocate module state failed"); rc = -ENOMEM; goto out; }
     memset(mod, 0, sizeof(*mod));
     INIT_LIST_HEAD(&mod->list);
@@ -831,7 +864,7 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     snprintf(mod->load_event, sizeof(mod->load_event), "%s", event ? event : "");
     snprintf(mod->load_source, sizeof(mod->load_source), "%s", source ? source : "embedded");
     if (args) {
-        mod->args = vmalloc(strlen(args) + 1);
+        mod->args = module_meta_alloc(strlen(args) + 1);
         if (!mod->args) { set_load_error(info, "allocate module args failed"); rc = -ENOMEM; goto free_mod; }
         strcpy(mod->args, args);
     }
@@ -933,8 +966,8 @@ free_mod:
                 list_del_init(&mod->quarantine_list);
             mod->state = KP_MODULE_DEAD;
             module_lock_release(flags);
-            if (mod->args) kvfree(mod->args);
-            kvfree(mod);
+            if (mod->args) module_meta_free(mod->args);
+            module_meta_free(mod);
         }
     }
 out:
@@ -978,8 +1011,8 @@ long unload_module(const char *name, void *__user reserved)
         list_del_init(&mod->quarantine_list);
         mod->state = KP_MODULE_DEAD;
         module_lock_release(flags);
-        if (mod->args) kvfree(mod->args);
-        kvfree(mod);
+        if (mod->args) module_meta_free(mod->args);
+        module_meta_free(mod);
         logkfi("name: %s, quarantined image reclaimed\n", module_name);
         return 0;
     }
@@ -1040,8 +1073,8 @@ long unload_module(const char *name, void *__user reserved)
     mod->state = KP_MODULE_DEAD;
     module_lock_release(flags);
 
-    if (mod->args) kvfree(mod->args);
-    kvfree(mod);
+    if (mod->args) module_meta_free(mod->args);
+    module_meta_free(mod);
     logkfi("name: %s, rc: %ld\n", module_name, rc);
     return rc;
 }
@@ -1145,10 +1178,10 @@ long module_control0(const char *name, const char *ctl_args, char *__user out_ms
     args_copy = kp_module_strdup(ctl_args, GFP_KERNEL);
     if (!args_copy) return -ENOMEM;
     mod = module_get_live(name);
-    if (!mod) { kfree(args_copy); return -ENOENT; }
+    if (!mod) { module_meta_free(args_copy); return -ENOENT; }
     if (!mod->ctl0 || !*mod->ctl0) rc = -ENOSYS;
     else rc = (*mod->ctl0)(args_copy, out_msg, outlen);
-    kfree(args_copy);
+    module_meta_free(args_copy);
     module_put_live(mod);
     return rc;
 }
@@ -1184,7 +1217,7 @@ long notify_modules_event(const char *event, const char *args, void *__user rese
         list_for_each_entry(pos, &modules.list, list)
             if (pos->state == KP_MODULE_LIVE && pos->event && *pos->event) n++;
         if (n > capacity) {
-            module_lock_release(flags); kfree(snapshot); continue;
+            module_lock_release(flags); module_meta_free(snapshot); continue;
         }
         n = 0;
         {
@@ -1196,7 +1229,7 @@ long notify_modules_event(const char *event, const char *args, void *__user rese
             }
             if (overflow) {
                 for (i = 0; i < n; i++) snapshot[i]->active_calls--;
-                module_lock_release(flags); kfree(snapshot); return -EOVERFLOW;
+                module_lock_release(flags); module_meta_free(snapshot); return -EOVERFLOW;
             }
         }
         module_lock_release(flags);
@@ -1208,7 +1241,7 @@ long notify_modules_event(const char *event, const char *args, void *__user rese
         count++;
         module_put_live(snapshot[i]);
     }
-    kfree(snapshot);
+    module_meta_free(snapshot);
     return result ? result : count;
 }
 KP_EXPORT_SYMBOL(notify_modules_event);
