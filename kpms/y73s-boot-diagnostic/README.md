@@ -15,11 +15,16 @@ For an isolated diagnostic image, embed it with:
 
 ```sh
 kptools patch boot.img -M kpms/y73s-boot-diagnostic/y73s-boot-diagnostic.kpm \
-  -T kpm -V paging-init -o boot-paging-diagnostic.img
+  -T kpm -V pre-kernel-init -o boot-pre-kernel-diagnostic.img
 ```
 
-The `paging-init` event occurs after KPIMG's early paging/memory setup and
-KernelPatch's symbol initialization, when `patch()` dispatches the event. It
-cannot diagnose failures that happen before that point. This artifact is for
-offline validation only; do not flash or boot it without separately resolving
-the device's AVB requirements and establishing a recovery path.
+The Y73s `paging-init` hook runs inside `setup_arch()`, before Linux 4.14's
+`mm_init()` initializes slab and vmalloc. The KPM loader and RELA transaction
+use those allocators, so this branch deliberately skips KPM dispatch at
+`paging-init` rather than risking an early-boot allocator fault. Use
+`pre-kernel-init`: its hook is attached to `kernel_init`, which is spawned by
+`rest_init()` after `mm_init()` has completed. This still runs before the
+`kernel_init()` body and records the startup event without relying on an
+uninitialized allocator. The artifact is for offline validation only; do not
+flash or boot it without separately resolving AVB requirements and establishing
+a recovery path.
