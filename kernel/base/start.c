@@ -719,7 +719,7 @@ void restore_map()
      * first copy cross into the next page while only the first page's PTE
      * had been made writable.
      */
-    for (uint64_t page = align_floor(start, page_size); page < end;) {
+    for (uint64_t page = start & ~((uint64_t)page_size - 1); page < end;) {
         if (page > (uint64_t)-1 - page_size) __builtin_trap();
         uint64_t page_end = page + page_size;
         uint64_t *pte = pgtable_entry_kernel(page);
