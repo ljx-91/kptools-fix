@@ -65,7 +65,9 @@ def parse_elf(path):
     if data["flags"] != (SHF_ALLOC | SHF_WRITE) or code["flags"] != (SHF_ALLOC | SHF_EXECINSTR):
         raise ValueError("map data/code section permissions are not WA/AX")
     m = {"addr": data["addr"], "offset": data["offset"], "size": data["size"] + code["size"]}
-    if m["size"] > MAP_MAX_SIZE or m["offset"] + m["size"] > len(blob):
+    if (m["size"] > MAP_MAX_SIZE or
+            data["offset"] + data["size"] > len(blob) or
+            code["offset"] + code["size"] > len(blob)):
         raise ValueError("combined copied map span is invalid")
     loads = []
     for i in range(phnum):
