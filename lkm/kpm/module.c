@@ -763,13 +763,20 @@ static int setup_load_info(struct kp_load_info *info)
 	{
 		int init_idx = find_sec(info, ".kpm.init");
 		int exit_idx = find_sec(info, ".kpm.exit");
+		/*
+		 * KPM_INIT/KPM_EXIT store callback pointers in allocatable data
+		 * sections; callback code itself resides in .text. Requiring
+		 * SHF_EXECINSTR here rejects normal KPM objects (typically WA).
+		 */
 		if (!init_idx || !exit_idx ||
-		    !(info->sechdrs[init_idx].sh_flags & SHF_EXECINSTR) ||
-		    !(info->sechdrs[exit_idx].sh_flags & SHF_EXECINSTR) ||
-		    !info->sechdrs[init_idx].sh_size ||
-		    !info->sechdrs[exit_idx].sh_size) {
-			logke("missing or invalid .kpm.init/.kpm.exit executable sections\n");
-			set_load_error(info, "missing or invalid .kpm.init/.kpm.exit sections");
+		    info->sechdrs[init_idx].sh_type != SHT_PROGBITS ||
+		    info->sechdrs[exit_idx].sh_type != SHT_PROGBITS ||
+		    !(info->sechdrs[init_idx].sh_flags & SHF_ALLOC) ||
+		    !(info->sechdrs[exit_idx].sh_flags & SHF_ALLOC) ||
+		    info->sechdrs[init_idx].sh_size < sizeof(void *) ||
+		    info->sechdrs[exit_idx].sh_size < sizeof(void *)) {
+			logke("missing or invalid .kpm.init/.kpm.exit callback slots\\n");
+			set_load_error(info, "missing or invalid .kpm.init/.kpm.exit callback slots");
 			return -ENOEXEC;
 		}
 	}
