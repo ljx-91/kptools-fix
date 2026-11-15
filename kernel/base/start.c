@@ -660,13 +660,21 @@ static void prot_myself()
 
     void (*vm_area_add_early)(struct vm_struct *vm) =
         (typeof(vm_area_add_early))kallsyms_lookup_name("vm_area_add_early");
-    if (vm_area_add_early) {
-        kp_vm.addr = (void *)_kp_region_start;
-        kp_vm.size = _kp_region_end - _kp_region_start;
-        kp_vm.flags = 0x00000044;
-        vm_area_add_early(&kp_vm);
-        log_boot("add vmalloc area: %llx, %llx\n", kp_vm.addr, kp_vm.size);
+    /*
+     * The KP image is mapped at a dynamically selected kernel VA. Register
+     * that range before vmalloc_init imports vmlist into the vmap allocator.
+     * Silently skipping registration would let later vmalloc/module mappings
+     * reuse the KP VA and corrupt the relocated image.
+     */
+    if (!vm_area_add_early) {
+        log_boot("KP failed to resolve vm_area_add_early; refusing untracked VA range\n");
+        __builtin_trap();
     }
+    kp_vm.addr = (void *)_kp_region_start;
+    kp_vm.size = _kp_region_end - _kp_region_start;
+    kp_vm.flags = 0x00000044;
+    vm_area_add_early(&kp_vm);
+    log_boot("add vmalloc area: %llx, %llx\n", kp_vm.addr, kp_vm.size);
 }
 
 // Restore the map anchor area (a sacrificed kernel function) to its
