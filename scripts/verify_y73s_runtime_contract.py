@@ -46,6 +46,18 @@ def before(text, first, second, message):
 
 def main():
     map_c = source("kernel/base/map.c")
+    exec_alloc_c = source("kernel/base/exec_alloc.c")
+    exec_prepare = function_body(exec_alloc_c, "static int exec_prepare_pages(")
+    require(r"#ifndef KP_TARGET_Y73S\\s*if\\s*\\(linear_va != kimg_va\\).*?exec_walk_linear_alias",
+            exec_prepare,
+            "Y73S executable arena must not require the intentionally absent NOMAP linear alias")
+    exec_flush = function_body(exec_alloc_c, "static void exec_flush_alias_ranges(")
+    require(r"#ifndef KP_TARGET_Y73S\\s*if\\s*\\(linear_base != base\\).*?flush_tlb_kernel_range",
+            exec_flush,
+            "Y73S executable protection must flush only the live KIMG alias")
+    require(r"exec_walk_leaf\\(kimg_va\\)", exec_prepare,
+            "Y73S executable allocator must continue validating every KIMG leaf PTE")
+
     start_c = source("kernel/base/start.c")
     symbol_c = source("tools/symbol.c")
     hotpatch_c = source("kernel/base/hotpatch.c")
