@@ -234,6 +234,18 @@ int main(void)
 
     reset_fixture(&info);
     elf_header_check(&info);
+    {
+        static const char overlong_info[] =
+            "name=abcdefghijklmnopqrstuvwxyz1234567890\\0version=1.0\\0";
+        info.sechdrs[4].sh_offset = 1500;
+        info.sechdrs[4].sh_size = sizeof(overlong_info);
+        memcpy(image + 1500, overlong_info, sizeof(overlong_info));
+    }
+    if (setup_load_info(&info) == 0) return 1;
+    puts("[PASS] overlong KPM module name rejected without truncation");
+
+    reset_fixture(&info);
+    elf_header_check(&info);
     memcpy(image + 1248, "name=fixture\0version=\0", sizeof("name=fixture\0version=\0"));
     if (setup_load_info(&info) == 0) return 1;
     puts("[PASS] empty module version rejected by bounded modinfo parser");
