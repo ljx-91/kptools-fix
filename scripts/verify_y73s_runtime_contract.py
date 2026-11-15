@@ -70,6 +70,8 @@ def main():
             walk_init, "page-table lookup must reject unsupported granule sizes before shifting")
     require(r"page_size != \(1ll << page_shift\).*?va_bits <= 4.*?va_bits > 52.*?page_level < 1.*?page_level > 4",
             walk_init, "page-table lookup must validate page geometry and level count")
+    require(r"ttbr1_top_mask.*?va >> va_bits.*?ttbr1_top_mask",
+            walk_init, "TTBR1 page-table lookup must reject noncanonical and lower-half addresses")
     require(r"pgd < linear_voffset.*?root_pa = pgd - linear_voffset.*?root_pa.*?page_size.*?root_pa >> 48",
             walk_init, "page-table root must be aligned and bounded before dereference")
     require(r"#ifdef KP_TARGET_Y73S.*?page_shift != 12.*?va_bits != 39.*?page_level != 3.*?va >> 39",
