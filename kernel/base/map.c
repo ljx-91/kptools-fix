@@ -311,7 +311,8 @@ static uint64_t __noinline get_or_create_pte(map_data_t *data, uint64_t va, uint
 
     uint64_t ttbr1_el1;
     asm volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1_el1));
-    uint64_t baddr = ttbr1_el1 & 0xFFFFFFFFFFFE;
+    /* TTBR1_EL1[63:48] is ASID; only BADDR[47:1] is the table PA. */
+    uint64_t baddr = ttbr1_el1 & 0x0000FFFFFFFFFFFEull;
     uint64_t page_size = 1 << page_shift;
     uint64_t page_size_mask = ~(page_size - 1);
     /*
