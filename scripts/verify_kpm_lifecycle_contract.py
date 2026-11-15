@@ -72,8 +72,9 @@ checks = {
         body(kpimg, "long load_module_ex(") and
         'logkfi("[%s] succeed with [%s]\\n", module_name' in
         body(kpimg, "long load_module_ex(") and
-        'logke("[%s] executable image quarantined after permission reset failure: %d\\n",\\n                  module_name' in
-        body(kpimg, "long load_module_ex("),
+        'logke("[%s] executable image quarantined after permission reset failure: %d\\n",' in
+        body(kpimg, "long load_module_ex(") and
+        "module_name, free_rc" in body(kpimg, "long load_module_ex("),
     "KPIMG load-side retained-reference logs snapshot counters before unlock":
         "retained_hooks = mod->hook_refs;" in body(kpimg, "long load_module_ex(") and
         "retained_active = mod->active_calls;" in body(kpimg, "long load_module_ex(") and
