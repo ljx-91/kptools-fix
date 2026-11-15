@@ -805,6 +805,7 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     struct module *mod = NULL;
     unsigned long flags;
     long rc = 0;
+    char module_name[KPM_NAME_LEN] = { 0 };
     if (!data || len <= 0) { rc = -EINVAL; set_load_error(info, "invalid module input"); goto out; }
     if ((rc = elf_header_check(info)) || (rc = setup_load_info(info))) goto out;
     mod = vmalloc(sizeof(*mod));
@@ -816,6 +817,7 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
      * outside the executable image so partial move_module() failures can
      * still be identified and retried if NX restoration also fails. */
     snprintf(mod->name, sizeof(mod->name), "%s", info->info.name);
+    snprintf(module_name, sizeof(module_name), "%s", mod->name);
     snprintf(mod->load_event, sizeof(mod->load_event), "%s", event ? event : "");
     snprintf(mod->load_source, sizeof(mod->load_source), "%s", source ? source : "embedded");
     if (args) {
@@ -862,7 +864,7 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
     flags = module_lock_acquire();
     if (!rc) {
         mod->state = KP_MODULE_LIVE; module_lock_release(flags);
-        logkfi("[%s] succeed with [%s]\n", mod->info.name, args ? args : ""); goto out;
+        logkfi("[%s] succeed with [%s]\n", module_name, args ? args : ""); goto out;
     }
     mod->state = KP_MODULE_UNLOADING;
     if (mod->active_calls) {
@@ -890,7 +892,7 @@ long load_module_ex(const void *data, int len, const char *args, const char *eve
         mod->state = KP_MODULE_UNLOADING;
         module_lock_release(flags);
         logke("[%s] init failed; retaining image with hook_refs=%u active=%u\n",
-              mod->info.name, mod->hook_refs, mod->active_calls);
+              module_name, mod->hook_refs, mod->active_calls);
         rc = -EBUSY; goto out;
     }
     /* Keep the module discoverable while its executable pages are released. */
@@ -910,7 +912,7 @@ free_mod:
             }
             module_lock_release(flags);
             logke("[%s] executable image quarantined after permission reset failure: %d\n",
-                  mod->name, free_rc);
+                  module_name, free_rc);
         } else {
             flags = module_lock_acquire();
             if (!list_empty(&mod->list))
