@@ -52,6 +52,9 @@ def main():
     require(r"export Y73S_TARGET=1", y73s_workflow,
             "Y73S KPIMG workflow must select the Y73S compile-time target")
     map_c = source("kernel/base/map.c")
+    setup_h = source("kernel/base/setup.h")
+    require(r"#define KP_Y73S_VMALLOC_START 0xffffff8008000000ull.*?#define KP_Y73S_VMALLOC_END\s+0xffffffbebfff0000ull",
+            setup_h, "Y73S Linux 4.14 vmalloc bounds must match the verified 39-bit layout")
     exec_alloc_c = source("kernel/base/exec_alloc.c")
     exec_prepare = function_body(exec_alloc_c, "static int exec_prepare_pages(")
     require(r"#ifndef KP_TARGET_Y73S\s*if\s*\(linear_va != kimg_va\).*?exec_walk_linear_alias",
@@ -167,6 +170,8 @@ def main():
             "old image virtual copy range must reject overflow")
     require(r"sctlr_el1\s*>\s*~\(uint64_t\)0\s*-\s*all_size", paging,
             "destination virtual copy range must reject overflow")
+    require(r"sctlr_el1 < KP_Y73S_VMALLOC_START.*?all_size > KP_Y73S_VMALLOC_END - sctlr_el1", paging,
+            "Y73S KIMG-offset destination must fit wholly inside the vmalloc window")
     clean_cache = function_body(map_c, "static inline __attribute__((always_inline)) void clean_dcache_range_to_pou(")
     require(r"mrs %0, ctr_el0", clean_cache,
             "D-cache clean helper must derive the cache-line size from CTR_EL0")
@@ -215,6 +220,8 @@ def main():
     before(start_fn, "prot_myself();", "msr sctlr_el1",
            "KP text/data permissions must be sealed before restoring WXN")
     prot_fn = function_body(start_c, "static void prot_myself()")
+    require(r"_kp_region_start < KP_Y73S_VMALLOC_START.*?_kp_region_end > KP_Y73S_VMALLOC_END.*?vm_area_add_early\(&kp_vm\)", prot_fn,
+            "Y73S vm_struct must be range-checked before vm_area_add_early registration")
     # Every PTE touched by prot_myself must be preflighted as a 4-KiB
     # KIMG leaf with the expected PA before the first permission mutation.
     leaf_check = function_body(start_c, "static int kp_validate_leaf_range(")
