@@ -1271,6 +1271,8 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	struct kp_load_info load_info = { .len = len, .hdr = data };
 	struct kp_load_info *info = &load_info;
 	long rc = 0;
+	char module_name[KPM_NAME_LEN] = { 0 };
+	unsigned int retained_active = 0, retained_hooks = 0;
 
 	if (!data || len <= 0) {
 		set_load_error(info, "module image is empty or invalid");
@@ -1288,6 +1290,7 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		goto out;
 	if ((rc = setup_load_info(info)))
 		goto out;
+	snprintf(module_name, sizeof(module_name), "%s", info->info.name);
 
 	struct kp_module *mod = (struct kp_module *)kzalloc(sizeof(struct kp_module), GFP_KERNEL);
 	if (!mod) {
@@ -1353,7 +1356,7 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 	{
 		unsigned long flags;
 		spin_lock_irqsave(&module_lock, flags);
-		if (kp_find_module_locked(mod->info.name)) {
+		if (kp_find_module_locked(module_name)) {
 			spin_unlock_irqrestore(&module_lock, flags);
 			set_load_error(info, "module already exists or is loading");
 			rc = -EEXIST;
@@ -1376,7 +1379,7 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		spin_lock_irqsave(&module_lock, flags);
 		mod->state = KP_MODULE_LIVE;
 		spin_unlock_irqrestore(&module_lock, flags);
-		logkfi("[%s] succeed with [%s]\n", mod->info.name, args ? args : "");
+		logkfi("[%s] succeed with [%s]\n", module_name, args ? args : "");
 		goto out;
 	}
 	{
@@ -1393,7 +1396,7 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		spin_unlock_irqrestore(&module_lock, flags);
 	}
 	set_load_error(info, "module init failed");
-	logkfi("[%s] failed with [%s] error: %ld, try exit ...\n", mod->info.name,
+	logkfi("[%s] failed with [%s] error: %ld, try exit ...\n", module_name,
 	       args ? args : "", rc);
 	if (mod->exit) {
 		long exit_rc = kp_call_exit(mod->exit, reserved);
@@ -1412,8 +1415,11 @@ long kp_load_module(const void *data, int len, const char *args, const char *eve
 		spin_lock_irqsave(&module_lock, flags);
 		mod->exit_called = true;
 		if (mod->hook_refs || mod->active_calls) {
+			retained_hooks = mod->hook_refs;
+			retained_active = mod->active_calls;
 			spin_unlock_irqrestore(&module_lock, flags);
-			logke("failed KPM init left hook refs; retaining image %s\n", mod->info.name);
+			logke("failed KPM init left hook refs; retaining image %s (hook_refs=%u active=%u)\n",
+			      module_name, retained_hooks, retained_active);
 			rc = -EBUSY;
 			goto out;
 		}
@@ -1439,6 +1445,8 @@ long kp_unload_module(const char *name, void __user *reserved)
 	struct kp_module *mod;
 	unsigned long flags;
 	long rc = 0;
+	char module_name[KPM_NAME_LEN];
+	unsigned int retained_active, retained_hooks;
 
 	if (!name)
 		return -EINVAL;
@@ -1450,6 +1458,7 @@ long kp_unload_module(const char *name, void __user *reserved)
 		spin_unlock_irqrestore(&module_lock, flags);
 		return -ENOENT;
 	}
+	snprintf(module_name, sizeof(module_name), "%s", mod->info.name);
 	if (mod->state == KP_MODULE_LOADING) {
 		spin_unlock_irqrestore(&module_lock, flags);
 		return -EBUSY;
@@ -1484,9 +1493,11 @@ long kp_unload_module(const char *name, void __user *reserved)
 		mod->exit_called = true;
 	}
 	if (mod->active_calls || mod->hook_refs) {
+		retained_active = mod->active_calls;
+		retained_hooks = mod->hook_refs;
 		spin_unlock_irqrestore(&module_lock, flags);
 		logkw("KPM %s retained: active=%u hook_refs=%u; retry after hook removal\n",
-		      name, mod->active_calls, mod->hook_refs);
+		      module_name, retained_active, retained_hooks);
 		return -EBUSY;
 	}
 	list_del_init(&mod->list);
@@ -1498,7 +1509,7 @@ long kp_unload_module(const char *name, void __user *reserved)
 	if (mod->start)
 		kp_free_exec(mod->start, mod->size);
 	kfree(mod);
-	logkfi("name: %s, rc: %ld\n", name, rc);
+	logkfi("name: %s, rc: %ld\n", module_name, rc);
 	return rc;
 }
 
