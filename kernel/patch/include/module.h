@@ -35,6 +35,7 @@ enum kp_module_state {
     KP_MODULE_UNLOADING,
     KP_MODULE_EXITING,
     KP_MODULE_DEAD,
+    KP_MODULE_QUARANTINED,
 };
 
 struct module
@@ -69,6 +70,8 @@ struct module
     void *start;
 
     struct list_head list;
+    /* Keeps an executable image discoverable if RW-NX restoration fails. */
+    struct list_head quarantine_list;
 };
 
 long load_module(const void *data, int len, const char *args, const char *event, void *__user reserved);
