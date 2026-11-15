@@ -1,35 +1,31 @@
-#include <log.h>
-#include <ksyms.h>
-#include <kallsyms.h>
-#include <hook.h>
-#include <hotpatch.h>
-#include <accctl.h>
-#include <linux/sched.h>
-#include <linux/sched/task.h>
-#include <linux/cred.h>
-#include <linux/capability.h>
-#include <syscall.h>
-#include <module.h>
-#include <predata.h>
-#include <symbol.h>
-#include <linux/string.h>
-
 void print_bootlog()
 {
     const char *log = get_boot_log();
     char buf[1024];
-    int off = 0;
-    char c;
-    for (int i = 0; (c = log[i]); i++) {
-        if (c == '\n') {
-            buf[off++] = c;
-            buf[off] = '\0';
+    size_t off = 0;
 
+    if (!log)
+        return;
+
+    /*
+     * Boot logs are not guaranteed to contain a newline within a bounded
+     * distance. Flush full chunks as well as newline-terminated records so
+     * a long or malformed record can never overrun this stack buffer.
+     */
+    for (size_t i = 0; log[i]; ++i) {
+        char c = log[i];
+        buf[off++] = c;
+
+        if (c == '\n' || off == sizeof(buf) - 1) {
+            buf[off] = '\0';
             printk("KP %s", buf);
             off = 0;
-        } else {
-            buf[off++] = log[i];
         }
+    }
+
+    if (off) {
+        buf[off] = '\0';
+        printk("KP %s", buf);
     }
 }
 
