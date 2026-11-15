@@ -57,6 +57,8 @@ def main():
     alloc = function_body(map_c, "static uint64_t map_phys_alloc(")
     require(r"memblock_find_in_range_f[^;]*\)\(\s*0,\s*0,\s*size,\s*align\)",
             alloc, "physical allocation must call range finder with (0,0,size,align)")
+    if alloc.count("pa >= (1ull << 48)") != 2 or alloc.count("size > (1ull << 48) - pa") != 2:
+        raise AssertionError("both allocator paths must reject PAs/ranges outside the 48-bit descriptor output window")
     require(r"memblock_reserve_f[^;]*\)\(pa,\s*size\)", alloc,
             "range finder result must be reserved before use")
     require(r"return pa;", alloc, "physical allocator must return the reserved PA")
