@@ -70,6 +70,8 @@ def main():
             probe, "linear probe must request the exact PA interval")
     require(r"still_free[\s\S]*?if \(still_free\) __builtin_trap\(\);",
             probe, "linear probe must reject allocator fallback to a different PA")
+    require(r"detect_virt >> 39\) != 0x1FFFFFFull",
+            probe, "Y73S linear-map probe must return a canonical 39-bit TTBR1 VA")
     require(r"data->linear_voffset\s*=\s*detect_virt\s*-\s*detect_phys;",
             probe, "linear offset must be derived from verified PA/VA pair")
     require(r"memblock_free_f[^;]*\)\(detect_phys,\s*page_size\)\)",
