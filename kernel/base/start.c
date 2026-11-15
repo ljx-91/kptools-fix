@@ -307,81 +307,164 @@ void log_boot(const char *fmt, ...)
     printk("KP %s", line);
 }
 
+/*
+ * The generic walker is shared by KP core and KPM callers. Keep block
+ * descriptors observable to lookup callers, but never follow an unvalidated
+ * table address or mistake an invalid-level block for a leaf.
+ */
+static int pgtable_walk_init(uint64_t pgd, uint64_t va,
+                             uint64_t *root_pa, uint64_t *root_va)
+{
+    if ((page_shift != 12 && page_shift != 14 && page_shift != 16) ||
+        page_shift >= 63 || page_size != (1ll << page_shift) ||
+        va_bits <= 4 || va_bits > 52 || page_level < 1 || page_level > 4)
+        return -1;
+
+    uint64_t pxd_bits = (uint64_t)page_shift - 3;
+    if ((uint64_t)((va_bits - 4) / (int64_t)pxd_bits) != (uint64_t)page_level)
+        return -1;
+
+#ifdef KP_TARGET_Y73S
+    if (page_shift != 12 || page_size != 4096 || va_bits != 39 ||
+        page_level != 3 || (va >> 39) != 0x1FFFFFFull)
+        return -1;
+#endif
+
+    if (!linear_voffset || pgd < linear_voffset)
+        return -1;
+
+    *root_pa = pgd - linear_voffset;
+    if (!*root_pa || (*root_pa & ((uint64_t)page_size - 1)) ||
+        (*root_pa >> 48))
+        return -1;
+    if (pgd > (uint64_t)-1 - (uint64_t)page_size)
+        return -1;
+
+    *root_va = pgd;
+    return 0;
+}
+
+static int pgtable_table_address(uint64_t desc, uint64_t *table_pa,
+                                 uint64_t *table_va)
+{
+    uint64_t pa_mask = (((1ull << (48 - page_shift)) - 1) << page_shift);
+    uint64_t pa = desc & pa_mask;
+
+    if (!pa || (pa & ((uint64_t)page_size - 1)) || (pa >> 48) ||
+        pa > (uint64_t)-1 - linear_voffset)
+        return -1;
+
+    uint64_t va = pa + linear_voffset;
+    if (va > (uint64_t)-1 - (uint64_t)page_size)
+        return -1;
+
+    *table_pa = pa;
+    *table_va = va;
+    return 0;
+}
+
 uint64_t *pgtable_entry(uint64_t pgd, uint64_t va)
 {
-    uint64_t pxd_bits = page_shift - 3;
-    uint64_t pxd_ptrs = 1u << pxd_bits;
-    uint64_t pxd_va = pgd;
-    uint64_t pxd_pa = virt_to_phys(pxd_va);
-    uint64_t pxd_entry_va = 0;
-    uint64_t block_lv = 0;
+    uint64_t root_pa = 0, pxd_pa = 0, pxd_va = 0;
+    if (pgtable_walk_init(pgd, va, &root_pa, &pxd_va))
+        return 0;
+    pxd_pa = root_pa;
 
-    // ================
-    // Branch to some function (even empty), It can work,
-    // I don't know why, if anyone knows, please let me know. thank you very much.
-    // ================
+    uint64_t pxd_bits = (uint64_t)page_shift - 3;
+    uint64_t pxd_ptrs = 1ull << pxd_bits;
+
+    /* Retain the existing root-table cache maintenance, after validation. */
     __flush_dcache_area((void *)pxd_va, page_size);
 
     for (int64_t lv = 4 - page_level; lv < 4; lv++) {
-        uint64_t pxd_shift = (page_shift - 3) * (4 - lv) + 3;
+        uint64_t pxd_shift = pxd_bits * (4 - (uint64_t)lv) + 3;
         uint64_t pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
-        pxd_entry_va = pxd_va + pxd_index * 8;
-        uint64_t pxd_desc = *((uint64_t *)pxd_entry_va);
-        if ((pxd_desc & 0b11) == 0b11) { // table
-            pxd_pa = pxd_desc & (((1ul << (48 - page_shift)) - 1) << page_shift);
-        } else if ((pxd_desc & 0b11) == 0b01) { // block
-            // 4k page: lv1, lv2. 16k and 64k page: only lv2.
-            uint64_t block_bits = (3 - lv) * pxd_bits + page_shift;
-            pxd_pa = pxd_desc & (((1ul << (48 - block_bits)) - 1) << block_bits);
-            block_lv = lv;
-        } else { // invalid
+        uint64_t pxd_entry_va = pxd_va + pxd_index * sizeof(uint64_t);
+        if (pxd_entry_va < pxd_va ||
+            pxd_entry_va > pxd_va + (uint64_t)page_size - sizeof(uint64_t))
             return 0;
+
+        uint64_t pxd_desc = *(volatile uint64_t *)pxd_entry_va;
+        uint64_t desc_type = pxd_desc & 0x3ull;
+
+        if (desc_type == 0x3ull) {
+            /* At level 3 this is the final page descriptor. */
+            if (lv == 3)
+                return (uint64_t *)pxd_entry_va;
+
+            uint64_t next_pa = 0, next_va = 0;
+            if (pgtable_table_address(pxd_desc, &next_pa, &next_va))
+                return 0;
+            pxd_pa = next_pa;
+            pxd_va = next_va;
+            continue;
         }
-        //
-        pxd_va = phys_to_virt(pxd_pa);
-        if (block_lv) {
-            break;
-        }
-    }
-#if 0
-    uint64_t left_bit = page_shift + (block_lv ? (3 - block_lv) * pxd_bits : 0);
-    uint64_t tpa = pxd_pa + (va & ((1u << left_bit) - 1));
-    uint64_t tlva = phys_to_virt(tpa);
-    uint64_t tkimg = phys_to_kimg(tpa);
-    if (tlva != va && tkimg != va) {
+
+        /* L0 blocks are reserved; L1/L2 blocks are valid lookup results. */
+        if (desc_type == 0x1ull && lv > 0 && lv < 3)
+            return (uint64_t *)pxd_entry_va;
+
         return 0;
     }
-#endif
-    return (uint64_t *)pxd_entry_va;
+
+    return 0;
 }
 KP_EXPORT_SYMBOL(pgtable_entry);
 
 uint64_t pgtable_phys(uint64_t pgd, uint64_t va)
 {
-    uint64_t pxd_bits = page_shift - 3;
-    uint64_t pxd_ptrs = 1u << pxd_bits;
-    uint64_t pxd_pa = 0;
-    uint64_t pxd_va = pgd;
+    uint64_t root_pa = 0, pxd_pa = 0, pxd_va = 0;
+    if (pgtable_walk_init(pgd, va, &root_pa, &pxd_va))
+        return 0;
+    pxd_pa = root_pa;
+
+    uint64_t pxd_bits = (uint64_t)page_shift - 3;
+    uint64_t pxd_ptrs = 1ull << pxd_bits;
+    uint64_t pa_mask = (((1ull << (48 - page_shift)) - 1) << page_shift);
+
     __flush_dcache_area((void *)pxd_va, page_size);
     for (int64_t lv = 4 - page_level; lv < 4; ++lv) {
-        uint64_t pxd_shift = pxd_bits * (4 - lv) + 3;
+        uint64_t pxd_shift = pxd_bits * (4 - (uint64_t)lv) + 3;
         uint64_t pxd_index = (va >> pxd_shift) & (pxd_ptrs - 1);
-        uint64_t pxd_desc = ((uint64_t *)pxd_va)[pxd_index];
-        uint8_t valid_table = pxd_desc & 0b11;
-        if (valid_table == 0b11) {
-            pxd_pa = pxd_desc & (((1ul << (48 - page_shift)) - 1) << page_shift);
-        } else if (valid_table == 0b01) {
-            uint64_t bits = (3 - lv) * pxd_bits;
-            uint64_t block_bits = bits + page_shift;
-            pxd_pa = (pxd_desc & (((1ul << (48 - block_bits)) - 1) << block_bits)) +
-                     (va & (((1ul << bits) - 1) << page_shift));
-            break;
-        } else {
+        uint64_t pxd_entry_va = pxd_va + pxd_index * sizeof(uint64_t);
+        if (pxd_entry_va < pxd_va ||
+            pxd_entry_va > pxd_va + (uint64_t)page_size - sizeof(uint64_t))
             return 0;
+
+        uint64_t pxd_desc = *(volatile uint64_t *)pxd_entry_va;
+        uint64_t desc_type = pxd_desc & 0x3ull;
+
+        if (desc_type == 0x3ull) {
+            uint64_t next_pa = pxd_desc & pa_mask;
+            if (!next_pa || (next_pa & ((uint64_t)page_size - 1)) ||
+                (next_pa >> 48))
+                return 0;
+
+            if (lv == 3)
+                return next_pa + (va & ((uint64_t)page_size - 1));
+
+            if (pgtable_table_address(pxd_desc, &pxd_pa, &pxd_va))
+                return 0;
+            continue;
         }
-        pxd_va = phys_to_virt(pxd_pa);
+
+        if (desc_type == 0x1ull && lv > 0 && lv < 3) {
+            uint64_t block_bits = (3 - (uint64_t)lv) * pxd_bits +
+                                  (uint64_t)page_shift;
+            if (block_bits >= 48)
+                return 0;
+            uint64_t block_mask =
+                ((1ull << (48 - block_bits)) - 1) << block_bits;
+            uint64_t block_pa = pxd_desc & block_mask;
+            uint64_t offset = va & ((1ull << block_bits) - 1);
+            if (!block_pa || block_pa > (uint64_t)-1 - offset)
+                return 0;
+            return block_pa + offset;
+        }
+
+        return 0;
     }
-    return pxd_pa ? pxd_pa + (va & (page_size - 1)) : 0;
+    return 0;
 }
 KP_EXPORT_SYMBOL(pgtable_phys);
 
