@@ -28,3 +28,5 @@
 0x018f1280 t rest_init
 0x019430f8 t cgroup_init
 0x003f4414 t SyS_renameat2.cfi
+0x003a1054 t ksize.cfi
+0x01914a40 t ksize
