@@ -14,7 +14,7 @@ make -C kpms/y73s-boot-diagnostic \
 For an isolated diagnostic image, embed it with:
 
 ```sh
-kptools patch boot.img -M kpms/y73s-boot-diagnostic/y73s-boot-diagnostic.kpm \
+kptools -p -i boot.img -k kpimg -M kpms/y73s-boot-diagnostic/y73s-boot-diagnostic.kpm \
   -T kpm -V pre-kernel-init -o boot-pre-kernel-diagnostic.img
 ```
 
