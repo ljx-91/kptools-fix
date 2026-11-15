@@ -192,8 +192,8 @@ def verify_hidden_kernel_init():
          "PRE_KERNEL_INIT must remain attached to the actual kernel_init entry")
     need(r"extra_event_init\(EXTRA_EVENT_POST_KERNEL_INIT\)", after,
          "POST_KERNEL_INIT must remain attached to the actual kernel_init return path")
-    need(r"!strcmp\(event,\s*EXTRA_EVENT_PAGING_INIT\)", event_dispatch,
-         "paging-init KPM dispatch must be guarded before mm_init")
+    if "!strcmp(event, EXTRA_EVENT_PAGING_INIT)" not in event_dispatch:
+        raise AssertionError("paging-init KPM dispatch must be guarded before mm_init")
     need(r"skip KPM paging-init: slab/vmalloc unavailable", event_dispatch,
          "early paging-init KPM skip must be visible in the boot log")
     if event_dispatch.find("skip KPM paging-init") > event_dispatch.find("notify_modules_event"):
