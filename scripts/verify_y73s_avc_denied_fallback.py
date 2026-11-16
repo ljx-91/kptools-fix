@@ -16,6 +16,18 @@ CALLER_OFFSET = 0x00691D74
 IMAGE_SIZE = 47_517_708
 IMAGE_SHA256 = "345bfab8217669cb84ed004916efea4fae06e6b169c70e1be2ec9ac3ad4f093e"
 CALLER_BL = 0x97FFFDAA
+EXPECTED_CALLERS = [
+    0x0069099C, 0x00691D74, 0x00691F0C, 0x006920D0,
+    0x00692D48, 0x0069302C, 0x00696FD4, 0x006976DC,
+    0x00697CD4, 0x00698438, 0x0069AAB4, 0x006B6354,
+]
+# CFI jump-table entries from the stock kallsyms report. Each entry is a
+# one-instruction B trampoline to the implementation body.
+EXPECTED_CFI_STUBS = {
+    0x01917B34: 0x0068FE18,  # slow_avc_audit.cfi
+    0x01917B38: 0x0068FEC0,  # avc_audit_pre_callback.cfi
+    0x01917B3C: 0x0068FFE8,  # avc_audit_post_callback.cfi
+}
 EXPECTED = [
     0x37000166, 0xB000CE6B, 0xB948AD6B, 0x2A0203EA,
     0x2A0103E8, 0x2A0003E9, 0x340000EB, 0x394040EB,
@@ -53,6 +65,20 @@ def verify_image(data):
     require((caller & 0xFC000000) == 0x94000000 and
             branch_target(CALLER_OFFSET, caller) == FUNCTION_OFFSET,
             "caller BL resolves exactly to the fingerprinted avc_denied entry")
+
+    actual_callers = []
+    for offset in range(0, len(data) - 3, 4):
+        insn = int.from_bytes(data[offset:offset + 4], "little")
+        if (insn & 0xFC000000) == 0x94000000 and branch_target(offset, insn) == FUNCTION_OFFSET:
+            actual_callers.append(offset)
+    require(actual_callers == EXPECTED_CALLERS,
+            "all 12 direct BL callers of avc_denied match the stock Image")
+
+    for stub_offset, body_offset in EXPECTED_CFI_STUBS.items():
+        insn = int.from_bytes(data[stub_offset:stub_offset + 4], "little")
+        require((insn & 0xFC000000) == 0x14000000 and
+                branch_target(stub_offset, insn) == body_offset,
+                f"CFI trampoline {stub_offset:#x} branches to body {body_offset:#x}")
 
 
 def main():
