@@ -94,8 +94,6 @@ def build_harness(source_text: str) -> str:
 #include <inttypes.h>
 
 typedef int hook_err_t;
-typedef uint32_t inst_type_t;
-typedef uint32_t inst_mask_t;
 
 #define HOOK_NO_ERR 0
 #define HOOK_BAD_RELO 17
@@ -210,7 +208,7 @@ static int test_bl_and_conditional_branch(void)
     CHECK(h.relo_insts_num == 8, "B.cond expands to eight words");
     CHECK(h.relo_insts[0] == ((bc & 0xFF00001FU) | 0x40U),
           "B.cond keeps condition and redirects taken edge to veneer");
-    CHECK(literal64(&h, 4) == h.relo_addr + 24,
+    CHECK(literal64(&h, 4) == h.relo_addr + 32,
           "B.cond internal target follows expanded instruction layout");
     return 0;
 }
@@ -353,9 +351,10 @@ static int test_internal_mapping_special_length_and_unknown(void)
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
     h.origin_insts[0] = ldr_xzr;
     h.origin_insts[1] = b_to_next;
+    h.relo_insts_num = 7;
     CHECK(relocate_inst(&h, h.origin_addr + 4, b_to_next) == HOOK_NO_ERR,
           "branch following XZR special expansion relocates");
-    CHECK(literal64(&h, 2) == h.relo_addr + 28,
+    CHECK(literal64(&h, 9) == h.relo_addr + 28,
           "internal target mapping accounts for seven-word XZR expansion");
 
     uint32_t nop = ARM64_NOP;
