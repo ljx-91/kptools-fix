@@ -39,6 +39,7 @@ jobs:
             scripts/test_y73s_hook_layout.c -o /tmp/test_y73s_hook_layout
           /tmp/test_y73s_hook_layout
           python3 scripts/test_aarch64_relocations.py
+          python3 scripts/test_hook_instruction_relocations.py
           python3 scripts/test_kpm_elf_headers.py
           python3 scripts/test_kpm_rela_transaction.py
           python3 scripts/test_kpm_setup_load_info.py

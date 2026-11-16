@@ -95,9 +95,13 @@ checks = {
     "callback retirement remains reader-gated in FP backend":
         "hook_chain_reader_exit(hook_chain, 1)" in fphook_c and
         "hook_chain_pin_callbacks(hook_chain, 1" in fphook_c,
-    "TBZ/TBNZ relocated target does not acquire an indirect-branch BTI requirement":
-        "buf[3] = 0xD65F0220; // RET X17: preserve direct-branch target semantics under BTI" in hook_c and
-        "buf[3] = 0xd61f0220; // RET X17" not in hook_c,
+    "TBZ/TBNZ relocation uses an inverted test followed by a direct B without X17":
+        "buf[0] = ((inst ^ 0x01000000u) & 0xFFF8001Fu) | 0x40u;" in hook_c and
+        "rc = relo_branch_at(&branch_word, branch_pc, addr);" in hook_c and
+        "buf[1] = branch_word;" in hook_c and
+        "0x58000051; // LDR X17, #8" not in
+            hook_c[hook_c.index("static __noinline hook_err_t relo_tb("):
+                    hook_c.index("static __noinline hook_err_t relo_ignore(")]
     "all four inline transit ABI entry points remain":
         all(name in hook_c for name in ("_transit0(", "_transit4(", "_transit8(", "_transit12(")),
     "all four FP transit ABI entry points remain":
