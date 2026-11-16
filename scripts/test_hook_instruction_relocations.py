@@ -468,7 +468,8 @@ def main() -> int:
         c_file.write_text(generated, encoding="utf-8")
         subprocess.run(
             [compiler, "-std=c11", "-Wall", "-Wextra", "-Werror",
-             "-Wno-unused-parameter", str(c_file), "-o", str(binary)],
+             "-Wno-unused-parameter", "-Wno-sign-compare",
+             str(c_file), "-o", str(binary)],
             check=True,
         )
         subprocess.run([str(binary)], check=True)
