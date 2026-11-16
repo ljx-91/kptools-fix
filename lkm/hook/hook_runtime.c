@@ -243,12 +243,16 @@ void *kp_lkm_exec_alloc(size_t size)
 
 void kp_lkm_exec_free(void *region, unsigned long size)
 {
-	kp_hook_exec_free(region, size);
+	if (!region || !size || size > ULONG_MAX - (PAGE_SIZE - 1))
+		return;
+	kp_hook_exec_free(region, PAGE_ALIGN(size));
 }
 
 int kp_lkm_exec_seal(void *region, unsigned long size)
 {
-	return kp_hook_make_exec(region, size);
+	if (!region || !size || size > ULONG_MAX - (PAGE_SIZE - 1))
+		return -EINVAL;
+	return kp_hook_make_exec(region, PAGE_ALIGN(size));
 }
 
 __attribute__((no_sanitize("cfi"), __noinline__))

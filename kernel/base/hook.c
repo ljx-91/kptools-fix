@@ -945,7 +945,6 @@ hook_err_t hook(void *func, void *replace, void **backup)
     uint64_t origin;
     hook_t *hook;
     void *owner = NULL;
-    unsigned long flags;
     int owner_rc, patch_rc;
 
     if (!func || !replace || !backup) return -HOOK_BAD_ADDRESS;
@@ -1049,7 +1048,7 @@ static hook_err_t hook_prepare_relo_exec(void *record, hook_t *hook)
     if (!exec_relo) return -HOOK_TRANSIT_NO_MEM;
     if (hook_mem_set_relo(record, exec_relo)) {
 #ifdef KP_HOOK_EXTERNAL_CHAIN_PREPARE
-        kp_lkm_exec_free(exec_relo, PAGE_ALIGN(sizeof(hook->relo_insts)));
+        kp_lkm_exec_free(exec_relo, sizeof(hook->relo_insts));
 #else
         (void)kp_free_exec(exec_relo);
 #endif
@@ -1066,7 +1065,7 @@ static hook_err_t hook_prepare_relo_exec(void *record, hook_t *hook)
                                (unsigned long)exec_relo + sizeof(hook->relo_insts));
     flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */
 #ifdef KP_HOOK_EXTERNAL_CHAIN_PREPARE
-    if (kp_lkm_exec_seal(exec_relo, PAGE_ALIGN(sizeof(hook->relo_insts))))
+    if (kp_lkm_exec_seal(exec_relo, sizeof(hook->relo_insts)))
         return -HOOK_TRANSIT_NO_MEM;
 #else
     if (kp_exec_seal(exec_relo))
