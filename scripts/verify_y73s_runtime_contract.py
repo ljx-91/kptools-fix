@@ -644,7 +644,7 @@ def main():
             "panic boot-log printer must flush before the stack buffer fills")
     require(r"if\s*\(c\s*==\s*'\\n'\s*\|\|\s*off\s*==\s*sizeof\(buf\)\s*-\s*1\)",
             bootlog, "panic boot-log printer must flush on newline or bounded chunk")
-    require(r"if\s*\(off\)\s*\{\s*buf\[off\]\s*=\s*'\0';\s*printk",
+    require(r"if\s*\(off\)\s*\{\s*buf\[off\]\s*=\s*'\\0';\s*printk",
             bootlog, "panic boot-log printer must emit the final unterminated chunk")
 
     print("[PASS] panic boot-log output is bounded and handles unterminated records")
