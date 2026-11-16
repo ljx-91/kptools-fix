@@ -22,8 +22,9 @@ checks = {
     "public declarations expose atomic restore contract": "int fp_hook(uintptr_t fp_addr, void *replace, void **backup);" in hdr and
         "int fp_unhook(uintptr_t fp_addr, void *expected, void *backup);" in hdr,
     "function-pointer backup is captured by atomic exchange": "hotpatch_exchange64((void *)fp_addr, (uint64_t)replace, (uint64_t *)backup)" in src,
-    "chain preparation failure frees allocation": "if (err) goto fail;" in src and
-        "fail:\n    hook_mem_free(chain);" in src,
+    "chain preparation failure frees allocation": "if (err) {" in src[src.index("hook_err_t fp_hook_wrap("):] and
+        "hook_mem_free(chain);" in src[src.index("hook_err_t fp_hook_wrap("):] and
+        "hook_engine_unlock(flags);" in src[src.index("hook_err_t fp_hook_wrap("):],
     "uncertain install retains chain": "if (patch_rc == -EUCLEAN)" in src and
         "hook_mem_publish(chain);" in src and "return -HOOK_PATCH_UNCERTAIN;" in src,
     "restore failure retains chain": "if (!rc)\n        hook_mem_retire(chain);" in src,
