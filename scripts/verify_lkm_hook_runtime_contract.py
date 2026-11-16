@@ -261,6 +261,26 @@ checks = {
             function_body(hook, "hook_err_t hook_wrap(").index("hook_chain_add_locked(chain"),
     "LKM chain prepare records ABI class before publishing transit":
         "chain->argno_abi_class = abi_class;" in function_body(hook_engine, "static hook_err_t hook_chain_prepare("),
+    "shared hook source excludes the KPIMG chain helper for the LKM build":
+        "#ifndef KP_HOOK_EXTERNAL_CHAIN_PREPARE\\nstatic hook_err_t hook_chain_prepare(" in hook and
+        "#endif /* !KP_HOOK_EXTERNAL_CHAIN_PREPARE */" in hook and
+        "transit = chain->transit;" in function_body(hook, "hook_err_t hook_wrap("),
+    "LKM backend helper is declared before shared source inclusion":
+        engine.index("static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno);") <
+        engine.index('#include "../../kernel/base/hook.c"') <
+        engine.index("static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)\\n{"),
+    "LKM shared hook executable allocator adapters are declared and implemented":
+        all(token in read("lkm/include/kpmalloc.h") for token in
+            ("kp_lkm_exec_alloc", "kp_lkm_exec_free", "kp_lkm_exec_seal")) and
+        "void *kp_lkm_exec_alloc(size_t size)" in runtime and
+        "void kp_lkm_exec_free(void *region, unsigned long size)" in runtime and
+        "int kp_lkm_exec_seal(void *region, unsigned long size)" in runtime,
+    "LKM backend implements shared relocation/transit attachment APIs":
+        "int hook_mem_set_relo(void *payload, void *exec_ptr)" in runtime and
+        "int hook_mem_set_transit(void *payload, void *exec_ptr)" in runtime and
+        "*slot = exec_ptr;" in runtime and
+        "kp_hook_exec_free(exec_relo, exec_relo_size);" in runtime and
+        "kp_hook_exec_free(exec_transit, exec_transit_size);" in runtime,
 
 }
 

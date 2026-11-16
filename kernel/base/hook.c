@@ -1041,10 +1041,18 @@ static hook_err_t hook_prepare_relo_exec(void *record, hook_t *hook)
     hook_err_t err;
 
     if (!record || !hook) return -HOOK_BAD_ADDRESS;
+#ifdef KP_HOOK_EXTERNAL_CHAIN_PREPARE
+    exec_relo = kp_lkm_exec_alloc(sizeof(hook->relo_insts));
+#else
     exec_relo = kp_malloc_exec(sizeof(hook->relo_insts));
+#endif
     if (!exec_relo) return -HOOK_TRANSIT_NO_MEM;
     if (hook_mem_set_relo(record, exec_relo)) {
+#ifdef KP_HOOK_EXTERNAL_CHAIN_PREPARE
+        kp_lkm_exec_free(exec_relo, PAGE_ALIGN(sizeof(hook->relo_insts)));
+#else
         (void)kp_free_exec(exec_relo);
+#endif
         return -HOOK_TRANSIT_NO_MEM;
     }
 
@@ -1057,11 +1065,17 @@ static hook_err_t hook_prepare_relo_exec(void *record, hook_t *hook)
     KP_HOOK_FLUSH_ICACHE_RANGE((unsigned long)exec_relo,
                                (unsigned long)exec_relo + sizeof(hook->relo_insts));
     flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */
+#ifdef KP_HOOK_EXTERNAL_CHAIN_PREPARE
+    if (kp_lkm_exec_seal(exec_relo, PAGE_ALIGN(sizeof(hook->relo_insts))))
+        return -HOOK_TRANSIT_NO_MEM;
+#else
     if (kp_exec_seal(exec_relo))
         return -HOOK_TRANSIT_NO_MEM;
+#endif
     return HOOK_NO_ERR;
 }
 
+#ifndef KP_HOOK_EXTERNAL_CHAIN_PREPARE
 static hook_err_t hook_chain_prepare(hook_chain_t *chain, uint32_t **transit_out,
                                      int32_t argno)
 {
@@ -1106,6 +1120,7 @@ static hook_err_t hook_chain_prepare(hook_chain_t *chain, uint32_t **transit_out
     *transit_out = transit;
     return HOOK_NO_ERR;
 }
+#endif /* !KP_HOOK_EXTERNAL_CHAIN_PREPARE */
 
 static hook_err_t hook_chain_add_locked(hook_chain_t *chain, void *before, void *after, void *udata)
 {
@@ -1228,7 +1243,12 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
     hook->origin_addr = origin;
 
     uint32_t *transit = NULL;
+#ifdef KP_HOOK_EXTERNAL_CHAIN_PREPARE
+    transit = chain->transit;
+    err = hook_chain_prepare(transit, argno);
+#else
     err = hook_chain_prepare(chain, &transit, argno);
+#endif
     if (err) goto fail;
     hook->replace_addr = (uint64_t)transit;
     err = hook_prepare_relo_exec(chain, hook);

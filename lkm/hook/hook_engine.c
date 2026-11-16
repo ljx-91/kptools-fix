@@ -3,6 +3,10 @@
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <asm/cacheflush.h>
+#include <hook.h>
+
+/* The shared source selects this backend-specific helper at compile time. */
+static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno);
 
 #ifndef __noinline
 #define __noinline noinline

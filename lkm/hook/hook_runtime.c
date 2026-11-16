@@ -16,6 +16,8 @@
 
 #include "../include/kp_lkm.h"
 #include <hook.h>
+#include "../../kernel/base/hmem.h"
+#include "../include/kpmalloc.h"
 #include "../infra/patch_memory.h"
 #include "../infra/symbol_resolver.h"
 
@@ -27,6 +29,10 @@ struct kp_hook_mem {
 	bool retiring;
 	void *region;
 	unsigned long region_size;
+	void *exec_relo;
+	unsigned long exec_relo_size;
+	void *exec_transit;
+	unsigned long exec_transit_size;
 	union {
 		hook_t hook;
 		hook_chain_t chain;
@@ -227,6 +233,24 @@ static void *kp_hook_exec_alloc(unsigned long size)
 	return p;
 }
 
+/* Adapters for the shared hook engine. On Y73S 4.14 module_alloc() supplies
+ * PAGE_KERNEL_EXEC. This verifies/requests executable permission after code
+ * generation; the legacy module_alloc backend is not a W^X seal. */
+void *kp_lkm_exec_alloc(size_t size)
+{
+	return kp_hook_exec_alloc((unsigned long)size);
+}
+
+void kp_lkm_exec_free(void *region, unsigned long size)
+{
+	kp_hook_exec_free(region, size);
+}
+
+int kp_lkm_exec_seal(void *region, unsigned long size)
+{
+	return kp_hook_make_exec(region, size);
+}
+
 __attribute__((no_sanitize("cfi"), __noinline__))
 static void kp_hook_exec_free(void *region, unsigned long size)
 {
@@ -379,6 +403,55 @@ void hook_mem_publish(void *payload)
 	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
 }
 
+static int hook_mem_set_exec_ptr(void *payload, void *exec_ptr,
+                                 unsigned long exec_size, bool transit)
+{
+	struct kp_hook_mem *mem;
+	unsigned long flags;
+	int rc = -ENOENT;
+
+	if (!payload || !exec_ptr || !exec_size ||
+	    exec_size > ULONG_MAX - (PAGE_SIZE - 1))
+		return -EINVAL;
+	exec_size = PAGE_ALIGN(exec_size);
+
+	raw_spin_lock_irqsave(&kp_hook_lock, flags);
+	list_for_each_entry(mem, &kp_hook_mems, list) {
+		void **slot;
+		unsigned long *slot_size;
+
+		if (mem->payload != payload)
+			continue;
+		if (mem->ready || mem->retiring) {
+			rc = -EBUSY;
+			break;
+		}
+		slot = transit ? &mem->exec_transit : &mem->exec_relo;
+		slot_size = transit ? &mem->exec_transit_size : &mem->exec_relo_size;
+		if (*slot) {
+			rc = -EBUSY;
+			break;
+		}
+		*slot = exec_ptr;
+		*slot_size = exec_size;
+		rc = 0;
+		break;
+	}
+	raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
+	return rc;
+}
+
+int hook_mem_set_relo(void *payload, void *exec_ptr)
+{
+	return hook_mem_set_exec_ptr(payload, exec_ptr,
+				     sizeof(((hook_t *)0)->relo_insts), false);
+}
+
+int hook_mem_set_transit(void *payload, void *exec_ptr)
+{
+	return hook_mem_set_exec_ptr(payload, exec_ptr, 64, true);
+}
+
 void *hook_get_mem_from_origin_type(uint64_t origin, enum hook_type type)
 {
 	struct kp_hook_mem *mem;
@@ -460,10 +533,21 @@ void hook_mem_free(void *payload)
 
 	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	list_for_each_entry_safe(mem, tmp, &kp_hook_mems, list) {
-			if (mem->payload == payload && !mem->ready) {
+		if (mem->payload == payload && !mem->ready) {
+			void *region = mem->region;
+			unsigned long region_size = mem->region_size;
+			void *exec_relo = mem->exec_relo;
+			unsigned long exec_relo_size = mem->exec_relo_size;
+			void *exec_transit = mem->exec_transit;
+			unsigned long exec_transit_size = mem->exec_transit_size;
+
 			list_del(&mem->list);
 			raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
-			kp_hook_exec_free(mem->region, mem->region_size);
+			if (exec_relo)
+				kp_hook_exec_free(exec_relo, exec_relo_size);
+			if (exec_transit)
+				kp_hook_exec_free(exec_transit, exec_transit_size);
+			kp_hook_exec_free(region, region_size);
 			kfree(mem);
 			return;
 		}
