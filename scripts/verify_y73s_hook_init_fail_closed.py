@@ -101,7 +101,12 @@ checks = {
         "buf[1] = branch_word;" in hook_c and
         "0x58000051; // LDR X17, #8" not in
             hook_c[hook_c.index("static __noinline hook_err_t relo_tb("):
-                    hook_c.index("static __noinline hook_err_t relo_ignore(")]
+                    hook_c.index("static __noinline hook_err_t relo_ignore(")],
+    "B and BL relocations use direct immediate branches without X16/X17 veneers":
+        "relo_branch_at(&branch_word, branch_pc, addr)" in hook_c and
+        "relo_call_at(&call_word, call_pc, addr)" in hook_c and
+        "buf[i] = ARM64_NOP;" in hook_c and
+        "return branch_relative(tramp_buf, src_addr, dst_addr);" in hook_c,
     "all four inline transit ABI entry points remain":
         all(name in hook_c for name in ("_transit0(", "_transit4(", "_transit8(", "_transit12(")),
     "all four FP transit ABI entry points remain":

@@ -79,6 +79,7 @@ def build_harness(source_text: str) -> str:
         "static uint64_t relo_in_tramp(",
         "static hook_err_t relo_branch_pc(",
         "static hook_err_t relo_branch_at(",
+        "static hook_err_t relo_call_at(",
         "static __noinline hook_err_t relo_b(",
         "static __noinline hook_err_t relo_adr(",
         "static __noinline hook_err_t relo_ldr(",
@@ -202,16 +203,15 @@ static int test_bl_and_conditional_branch(void)
 {
     hook_t h;
     uint32_t bl = encode_imm26(0x94000000U, 0x200);
-    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    init_hook(&h, 0x10000000ULL, 0x18000000ULL);
     h.origin_insts[0] = bl;
     CHECK(relocate_inst(&h, h.origin_addr, bl) == HOOK_NO_ERR, "BL relocation succeeds");
-    CHECK(h.relo_insts_num == 8, "BL expands to eight words");
-    CHECK(literal64(&h, 2) == h.origin_addr + 0x200,
-          "BL preserves its absolute call target");
-    CHECK(h.relo_insts[4] == 0x1000001EU &&
-          h.relo_insts[5] == 0x910033DEU &&
-          h.relo_insts[6] == 0xD65F0220U,
-          "BL materializes the relocated return address");
+    CHECK(h.relo_insts_num == 8, "BL keeps an eight-word padded sequence for stable mapping");
+    CHECK((h.relo_insts[0] & 0xFC000000U) == 0x94000000U &&
+          decode_b_target(h.relo_addr, h.relo_insts[0]) == h.origin_addr + 0x200,
+          "BL encodes a direct call without using X16/X17");
+    CHECK(h.relo_insts[1] == ARM64_NOP && h.relo_insts[7] == ARM64_NOP,
+          "BL padding returns to the next relocated instruction");
 
     uint32_t bc = encode_imm19(0x54000001U, 4);
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
@@ -513,6 +513,14 @@ static int test_out_of_range_control_flow_rejected(void)
     CHECK(relocate_inst(&h, h.origin_addr, b) == -HOOK_BAD_RELO &&
           h.relo_insts_num == 0 && h.relo_insts[0] == 0xA5A5A5A5U,
           "out-of-range B fails closed without modifying relocation output");
+
+    uint32_t bl = encode_imm26(0x94000000U, 0x200);
+    init_hook(&h, 0x10000000ULL, 0x90000000ULL);
+    h.origin_insts[0] = bl;
+    h.relo_insts[0] = 0xA5A5A5A5U;
+    CHECK(relocate_inst(&h, h.origin_addr, bl) == -HOOK_BAD_RELO &&
+          h.relo_insts_num == 0 && h.relo_insts[0] == 0xA5A5A5A5U,
+          "out-of-range BL fails closed without an X17 absolute call veneer");
 
     init_hook(&h, 0x10000000ULL, 0x90000000ULL);
     h.origin_insts[0] = bc;

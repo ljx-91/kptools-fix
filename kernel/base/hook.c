@@ -220,6 +220,14 @@ static hook_err_t relo_branch_at(uint32_t *word, uint64_t src, uint64_t dst)
     return HOOK_NO_ERR;
 }
 
+static hook_err_t relo_call_at(uint32_t *word, uint64_t src, uint64_t dst)
+{
+    hook_err_t rc = relo_branch_at(word, src, dst);
+    if (!rc)
+        *word |= 0x80000000u; /* B -> BL, preserving every GPR except LR. */
+    return rc;
+}
+
 static __noinline hook_err_t relo_b(hook_t *hook, uint64_t inst_addr, uint32_t inst, inst_type_t type)
 {
     uint32_t *buf = hook->relo_insts + hook->relo_insts_num;
@@ -275,19 +283,19 @@ static __noinline hook_err_t relo_b(hook_t *hook, uint64_t inst_addr, uint32_t i
         return HOOK_NO_ERR;
     }
 
-    /* BL is a call site: AAPCS64 permits X16/X17 to be clobbered by the
-     * callee. Keep the absolute veneer and explicitly materialize the
-     * relocated return address. */
+    /* BL also remains a direct PC-relative call. If the relocated code is
+     * outside its architectural range, reject it rather than borrowing X16
+     * or X17: BL can be used for local control flow as well as calls. */
     {
-        uint32_t idx = 0;
-        buf[idx++] = 0x58000051; // LDR X17, #8
-        buf[idx++] = 0x14000003; // B #12
-        buf[idx++] = addr & 0xFFFFFFFF;
-        buf[idx++] = addr >> 32u;
-        buf[idx++] = 0x1000001E; // ADR X30, .
-        buf[idx++] = 0x910033DE; // ADD X30, X30, #12
-        buf[idx++] = 0xD65F0220; // RET X17
-        buf[idx++] = ARM64_NOP;
+        uint64_t call_pc;
+        uint32_t call_word;
+        hook_err_t rc = relo_branch_pc(hook, 0, &call_pc);
+        if (rc) return rc;
+        rc = relo_call_at(&call_word, call_pc, addr);
+        if (rc) return rc;
+        buf[0] = call_word;
+        for (uint32_t i = 1; i < 8; ++i)
+            buf[i] = ARM64_NOP;
     }
     return HOOK_NO_ERR;
 }
