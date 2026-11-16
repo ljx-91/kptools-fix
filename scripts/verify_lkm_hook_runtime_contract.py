@@ -260,9 +260,12 @@ checks = {
         function_body(hook, "hook_err_t hook_wrap(").index("chain->argno_abi_class != abi_class") <
             function_body(hook, "hook_err_t hook_wrap(").index("hook_chain_add_locked(chain"),
     "LKM chain prepare records ABI class before publishing transit":
-        "chain->argno_abi_class = abi_class;" in function_body(hook_engine, "static hook_err_t hook_chain_prepare("),
+        "chain->argno_abi_class = abi_class;" in
+            hook_engine[hook_engine.index('#include "../../kernel/base/hook.c"'):],
     "shared hook source excludes the KPIMG chain helper for the LKM build":
-        "#ifndef KP_HOOK_EXTERNAL_CHAIN_PREPARE\\nstatic hook_err_t hook_chain_prepare(" in hook and
+        "static hook_err_t hook_chain_prepare(hook_chain_t *chain" in hook and
+        hook.rfind("#ifndef KP_HOOK_EXTERNAL_CHAIN_PREPARE",
+                   0, hook.index("static hook_err_t hook_chain_prepare(hook_chain_t *chain")) >= 0 and
         "#endif /* !KP_HOOK_EXTERNAL_CHAIN_PREPARE */" in hook and
         "transit = chain->transit;" in function_body(hook, "hook_err_t hook_wrap("),
     "LKM backend helper is declared before shared source inclusion":
