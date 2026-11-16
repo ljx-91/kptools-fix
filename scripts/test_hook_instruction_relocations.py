@@ -258,6 +258,24 @@ static int test_scalar_literal_loads(void)
     CHECK(literal64(&h, 4) == h.origin_addr + 0x1000,
           "LDR X0 literal points to the original data");
 
+    uint32_t ldr_w5 = encode_literal(0x18000000U, 5, 0x1000);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = ldr_w5;
+    CHECK(relocate_inst(&h, h.origin_addr, ldr_w5) == HOOK_NO_ERR,
+          "LDR W5 literal relocation succeeds");
+    CHECK(h.relo_insts[0] == 0x58000085U &&
+          h.relo_insts[1] == 0xB94000A5U &&
+          literal64(&h, 4) == h.origin_addr + 0x1000,
+          "LDR W5 widens its address load and preserves W-register semantics");
+
+    uint32_t ldrsw_x3 = encode_literal(0x98000000U, 3, 0x1000);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = ldrsw_x3;
+    CHECK(relocate_inst(&h, h.origin_addr, ldrsw_x3) == HOOK_NO_ERR,
+          "LDRSW X3 literal relocation succeeds");
+    CHECK(h.relo_insts[1] == 0xB9800063U,
+          "LDRSW X3 uses signed word load into the destination register");
+
     uint32_t ldr_xzr = encode_literal(0x58000000U, 31, 0x1000);
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
     h.origin_insts[0] = ldr_xzr;
@@ -272,6 +290,14 @@ static int test_scalar_literal_loads(void)
           "LDR XZR preserves X16/X17 and performs the zero-register load");
     CHECK(literal64(&h, 5) == h.origin_addr + 0x1000,
           "LDR XZR literal is stored after the control sequence");
+
+    uint32_t ldr_wzr = encode_literal(0x18000000U, 31, 0x1000);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = ldr_wzr;
+    CHECK(relocate_inst(&h, h.origin_addr, ldr_wzr) == HOOK_NO_ERR,
+          "LDR WZR literal relocation succeeds");
+    CHECK(h.relo_insts_num == 7 && h.relo_insts[2] == 0xB940023FU,
+          "LDR WZR performs the actual 32-bit memory access");
 
     uint32_t ldrsw_wzr = encode_literal(0x98000000U, 31, 0x1000);
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
@@ -295,6 +321,22 @@ static int test_prefetch_and_simd_literals(void)
           "PRFM emits the matching register hint");
     CHECK(literal64(&h, 6) == h.origin_addr + 0x1000,
           "PRFM veneer contains the original address");
+
+    uint32_t ldr_s4 = encode_literal(0x1C000000U, 4, 0x1000);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = ldr_s4;
+    CHECK(relocate_inst(&h, h.origin_addr, ldr_s4) == HOOK_NO_ERR,
+          "LDR S4 literal relocation succeeds");
+    CHECK(h.relo_insts[2] == 0xBD400224U,
+          "SIMD scalar single-precision load uses the S-register opcode");
+
+    uint32_t ldr_d6 = encode_literal(0x5C000000U, 6, 0x1000);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = ldr_d6;
+    CHECK(relocate_inst(&h, h.origin_addr, ldr_d6) == HOOK_NO_ERR,
+          "LDR D6 literal relocation succeeds");
+    CHECK(h.relo_insts[2] == 0xFD400226U,
+          "SIMD double-precision load uses the D-register opcode");
 
     uint32_t ldr_q17 = encode_literal(0x9C000000U, 17, 0x1000);
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
@@ -325,6 +367,26 @@ static int test_compare_and_test_branches(void)
     CHECK(literal64(&h, 4) == h.relo_addr + 32,
           "CBZ target remaps across the expanded preceding instruction");
 
+    uint32_t cbnz = encode_imm19(0x35000005U, 8);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = cbnz;
+    h.origin_insts[1] = ARM64_NOP;
+    CHECK(relocate_inst(&h, h.origin_addr, cbnz) == HOOK_NO_ERR,
+          "CBNZ relocation succeeds");
+    CHECK(h.relo_insts[0] == ((cbnz & 0xFF00001FU) | 0x40U) &&
+          literal64(&h, 4) == h.relo_addr + 32,
+          "CBNZ preserves opcode and remaps its internal target");
+
+    uint32_t tbz = 0x36000000U | (9U << 19) | (2U << 5) | 3U;
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = tbz;
+    h.origin_insts[1] = ARM64_NOP;
+    CHECK(relocate_inst(&h, h.origin_addr, tbz) == HOOK_NO_ERR,
+          "TBZ relocation succeeds");
+    CHECK(h.relo_insts[0] == ((tbz & 0xFFF8001FU) | 0x40U) &&
+          literal64(&h, 4) == h.relo_addr + 32,
+          "TBZ preserves tested bit and remaps its internal target");
+
     uint32_t tbnz = 0x37000000U | (9U << 19) | (2U << 5) | 3U;
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
     h.origin_insts[0] = tbnz;
@@ -341,6 +403,24 @@ static int test_compare_and_test_branches(void)
 static int test_internal_mapping_special_length_and_unknown(void)
 {
     hook_t h;
+    uint32_t ldr_into_prologue = encode_literal(0x58000000U, 2, 8);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = ldr_into_prologue;
+    h.relo_insts[0] = 0xA5A5A5A5U;
+    CHECK(relocate_inst(&h, h.origin_addr, ldr_into_prologue) == -HOOK_BAD_RELO,
+          "literal data load into overwritten prologue is rejected");
+    CHECK(h.relo_insts_num == 0 && h.relo_insts[0] == 0xA5A5A5A5U,
+          "rejected literal load leaves relocation output untouched");
+
+    uint32_t prfm_into_prologue = encode_literal(0xD8000000U, 2, 8);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = prfm_into_prologue;
+    h.origin_insts[1] = ARM64_NOP;
+    CHECK(relocate_inst(&h, h.origin_addr, prfm_into_prologue) == HOOK_NO_ERR,
+          "PRFM into overwritten prologue is remapped");
+    CHECK(literal64(&h, 6) == h.relo_addr + 40,
+          "PRFM target follows expanded instructions in the relocated range");
+
     uint32_t ldr_xzr = encode_literal(0x58000000U, 31, 0x1000);
     uint32_t b_to_next = encode_imm26(0x14000000U, 4);
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
@@ -362,6 +442,33 @@ static int test_internal_mapping_special_length_and_unknown(void)
     CHECK(h.relo_insts_num == 2 && h.relo_insts[0] == nop &&
           h.relo_insts[1] == ARM64_NOP,
           "passthrough preserves instruction and appends padding NOP");
+    return 0;
+}
+
+static int test_negative_pc_relative_branch(void)
+{
+    hook_t h;
+    uint32_t negative_b = encode_imm26(0x14000000U, -4);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = ARM64_NOP;
+    h.origin_insts[1] = ARM64_NOP;
+    h.origin_insts[2] = negative_b;
+    h.relo_insts_num = 4;
+    CHECK(relocate_inst(&h, h.origin_addr + 8, negative_b) == HOOK_NO_ERR,
+          "negative B relocation sign-extends its displacement");
+    CHECK(literal64(&h, 6) == h.relo_addr + 8,
+          "negative B target maps backward into the relocated prologue");
+
+    uint32_t negative_bc = encode_imm19(0x54000001U, -4);
+    init_hook(&h, 0x10000000ULL, 0x20000000ULL);
+    h.origin_insts[0] = ARM64_NOP;
+    h.origin_insts[1] = ARM64_NOP;
+    h.origin_insts[2] = negative_bc;
+    h.relo_insts_num = 4;
+    CHECK(relocate_inst(&h, h.origin_addr + 8, negative_bc) == HOOK_NO_ERR,
+          "negative B.cond relocation sign-extends its displacement");
+    CHECK(literal64(&h, 8) == h.relo_addr + 8,
+          "negative B.cond target maps backward into the relocated prologue");
     return 0;
 }
 
@@ -433,6 +540,7 @@ int main(void)
     failed |= test_prefetch_and_simd_literals();
     failed |= test_compare_and_test_branches();
     failed |= test_internal_mapping_special_length_and_unknown();
+    failed |= test_negative_pc_relative_branch();
     failed |= test_branch_back_encodings();
     if (failed) return 1;
     puts("[PASS] hook.c AArch64 instruction relocation paths executed");
