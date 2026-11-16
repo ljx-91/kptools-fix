@@ -387,7 +387,7 @@ static int test_compare_and_test_branches(void)
           decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8,
           "CBZ inversion skips the B only when the original condition is false");
     CHECK((h.relo_insts[1] & 0xFC000000U) == 0x14000000U &&
-          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 16,
           "CBZ taken edge uses a scratch-free direct B");
 
     uint32_t cbnz = encode_imm19(0x35000005U, 8);
@@ -398,7 +398,7 @@ static int test_compare_and_test_branches(void)
           "CBNZ relocation succeeds");
     CHECK(h.relo_insts[0] == (((cbnz ^ 0x01000000U) & 0xFF00001FU) | 0x40U) &&
           decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
-          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 16,
           "CBNZ inversion and direct B preserve both control-flow paths");
 
     uint32_t tbz = 0x36000000U | (9U << 19) | (2U << 5) | 3U;
@@ -409,7 +409,7 @@ static int test_compare_and_test_branches(void)
           "TBZ relocation succeeds");
     CHECK(h.relo_insts[0] == (((tbz ^ 0x01000000U) & 0xFFF8001FU) | 0x40U) &&
           decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
-          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 16,
           "TBZ inversion preserves tested bit and uses a scratch-free B");
 
     uint32_t tbnz = 0x37000000U | (9U << 19) | (2U << 5) | 3U;
@@ -420,7 +420,7 @@ static int test_compare_and_test_branches(void)
     CHECK(h.relo_insts_num == 2, "TBNZ expands to two direct-branch words");
     CHECK(h.relo_insts[0] == (((tbnz ^ 0x01000000U) & 0xFFF8001FU) | 0x40U) &&
           decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
-          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 16,
           "TBNZ preserves bit index and both control-flow edges without scratch registers");
     return 0;
 }
@@ -456,9 +456,9 @@ static int test_internal_mapping_special_length_and_unknown(void)
     h.relo_insts_num = 7;
     CHECK(relocate_inst(&h, h.origin_addr + 4, b_to_next) == HOOK_NO_ERR,
           "branch following XZR special expansion relocates");
-    CHECK(h.relo_insts[7] == 0x14000000U &&
+    CHECK(decode_b_target(h.relo_addr + 28, h.relo_insts[7]) == h.relo_addr + 36 &&
           h.relo_insts[8] == ARM64_NOP,
-          "following B preserves registers and accounts for the expanded prefix");
+          "following B preserves registers and remaps the target after expanded instructions");
 
     uint32_t nop = ARM64_NOP;
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
@@ -505,7 +505,7 @@ static int test_out_of_range_control_flow_rejected(void)
     uint32_t b = encode_imm26(0x14000000U, 0x200);
     uint32_t bc = encode_imm19(0x54000001U, 0x200);
     uint32_t cbz = encode_imm19(0x34000001U, 0x200);
-    uint32_t tbz = 0x36000000U | (3U << 5) | 1U;
+    uint32_t tbz = 0x36000000U | ((0x200U >> 2) << 5) | 1U;
 
     init_hook(&h, 0x10000000ULL, 0x90000000ULL);
     h.origin_insts[0] = b;
