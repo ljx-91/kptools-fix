@@ -290,8 +290,8 @@ checks = {
         "transit = kp_lkm_exec_alloc(64);" in hook_engine and
         "hook_mem_set_transit(chain, transit)" in hook_engine and
         "transit[4] = (uint64_t)chain;" in hook_engine and
-        "chain->transit" not in engine,
-    "sleepable Hook payload allocation is outside raw engine locks":
+        "chain->transit" not in hook_engine,
+    "sleepable Hook payload allocation is outside raw hook_engine locks":
         "hook_engine_lock()" not in function_body(hook, "hook_err_t hook(") and
         function_body(hook, "hook_err_t hook_wrap(").index("hook_engine_unlock(flags);") <
             function_body(hook, "hook_err_t hook_wrap(").index("hook_mem_zalloc(origin, INLINE_CHAIN)") and
