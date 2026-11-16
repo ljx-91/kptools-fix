@@ -191,13 +191,6 @@ static uint64_t decode_tb_target(uint64_t pc, uint32_t inst)
     return pc + (uint64_t)(imm * 4);
 }
 
-static uint64_t decode_tb_target(uint64_t pc, uint32_t inst)
-{
-    int64_t imm = (int64_t)((inst >> 5) & 0x3fffU);
-    if (imm & 0x2000LL) imm -= 0x4000LL;
-    return pc + (uint64_t)(imm * 4);
-}
-
 static int test_b_internal_remap(void)
 {
     hook_t h;
