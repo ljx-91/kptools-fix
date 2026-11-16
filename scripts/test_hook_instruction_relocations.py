@@ -83,6 +83,11 @@ def build_harness(source_text: str) -> str:
         "static __noinline hook_err_t relo_cb(",
         "static __noinline hook_err_t relo_tb(",
         "static __noinline hook_err_t relo_ignore(",
+        "static uint32_t can_b_rel(",
+        "int32_t branch_relative(",
+        "int32_t branch_absolute(",
+        "int32_t ret_absolute(",
+        "int32_t branch_from_to(",
         "static __noinline hook_err_t relocate_inst(",
     ]
     functions = "\n\n".join(extract_function(source_text, item) for item in signatures)
@@ -360,6 +365,64 @@ static int test_internal_mapping_special_length_and_unknown(void)
     return 0;
 }
 
+static int test_branch_back_encodings(void)
+{
+    uint32_t words[8];
+    uint64_t src = 0x20000000ULL;
+    uint64_t dst;
+
+    CHECK(can_b_rel(src, src + 0x07FFFFFCULL),
+          "B positive range maximum is accepted");
+    CHECK(!can_b_rel(src, src + 0x08000000ULL),
+          "B positive out-of-range target is rejected");
+    CHECK(can_b_rel(src, src - 0x08000000ULL),
+          "B negative range minimum is accepted");
+    CHECK(!can_b_rel(src, src - 0x08000004ULL),
+          "B negative out-of-range target is rejected");
+    CHECK(!can_b_rel(src, src + 2) && !can_b_rel(src + 2, src + 4),
+          "B rejects unaligned source or destination");
+
+    memset(words, 0xA5, sizeof(words));
+    dst = src + 0x07FFFFFCULL;
+    CHECK(branch_relative(words, src, dst) == 2,
+          "branch_relative emits a two-word in-range branch");
+    CHECK(words[0] == 0x15FFFFFFU && words[1] == ARM64_NOP,
+          "positive maximum branch encodes the signed imm26 boundary");
+
+    memset(words, 0xA5, sizeof(words));
+    dst = src - 0x08000000ULL;
+    CHECK(branch_relative(words, src, dst) == 2,
+          "branch_relative emits the negative range boundary");
+    CHECK(words[0] == 0x16000000U && words[1] == ARM64_NOP,
+          "negative minimum branch encodes the signed imm26 boundary");
+
+    memset(words, 0xA5, sizeof(words));
+    CHECK(branch_relative(words, src, src + 0x08000000ULL) == 0 &&
+          words[0] == 0xA5A5A5A5U,
+          "out-of-range relative branch leaves output untouched");
+
+    memset(words, 0, sizeof(words));
+    CHECK(branch_from_to(words, src, src + 0x100) == 2 &&
+          words[0] == 0x14000040U && words[1] == ARM64_NOP,
+          "branch-back uses the relative form when reachable");
+
+    memset(words, 0, sizeof(words));
+    CHECK(branch_from_to(words, src, src + 0x08000000ULL) == 4,
+          "branch-back falls back to the four-word absolute return");
+    CHECK(words[0] == 0x58000051U && words[1] == 0xD65F0220U &&
+          ((uint64_t)words[2] | ((uint64_t)words[3] << 32)) ==
+              src + 0x08000000ULL,
+          "absolute branch-back embeds its destination and uses RET X17");
+
+    memset(words, 0, sizeof(words));
+    CHECK(branch_absolute(words, 0xFFFFFFC012345678ULL) == 4 &&
+          words[0] == 0x58000051U && words[1] == 0xD61F0220U &&
+          ((uint64_t)words[2] | ((uint64_t)words[3] << 32)) ==
+              0xFFFFFFC012345678ULL,
+          "entry patch absolute branch embeds the full 64-bit destination");
+    return 0;
+}
+
 int main(void)
 {
     int failed = 0;
@@ -370,6 +433,7 @@ int main(void)
     failed |= test_prefetch_and_simd_literals();
     failed |= test_compare_and_test_branches();
     failed |= test_internal_mapping_special_length_and_unknown();
+    failed |= test_branch_back_encodings();
     if (failed) return 1;
     puts("[PASS] hook.c AArch64 instruction relocation paths executed");
     return 0;
