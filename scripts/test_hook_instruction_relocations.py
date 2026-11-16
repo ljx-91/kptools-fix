@@ -184,6 +184,13 @@ static uint64_t decode_cond_target(uint64_t pc, uint32_t inst)
     return pc + (uint64_t)(imm * 4);
 }
 
+static uint64_t decode_tb_target(uint64_t pc, uint32_t inst)
+{
+    int64_t imm = (int64_t)((inst >> 5) & 0x3fffU);
+    if (imm & 0x2000LL) imm -= 0x4000LL;
+    return pc + (uint64_t)(imm * 4);
+}
+
 static int test_b_internal_remap(void)
 {
     hook_t h;
@@ -408,7 +415,7 @@ static int test_compare_and_test_branches(void)
     CHECK(relocate_inst(&h, h.origin_addr, tbz) == HOOK_NO_ERR,
           "TBZ relocation succeeds");
     CHECK(h.relo_insts[0] == (((tbz ^ 0x01000000U) & 0xFFF8001FU) | 0x40U) &&
-          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
+          decode_tb_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
           decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 16,
           "TBZ inversion preserves tested bit and uses a scratch-free B");
 
@@ -419,7 +426,7 @@ static int test_compare_and_test_branches(void)
     CHECK(relocate_inst(&h, h.origin_addr, tbnz) == HOOK_NO_ERR, "TBNZ relocation succeeds");
     CHECK(h.relo_insts_num == 2, "TBNZ expands to two direct-branch words");
     CHECK(h.relo_insts[0] == (((tbnz ^ 0x01000000U) & 0xFFF8001FU) | 0x40U) &&
-          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
+          decode_tb_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
           decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 16,
           "TBNZ preserves bit index and both control-flow edges without scratch registers");
     return 0;
