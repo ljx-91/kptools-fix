@@ -1065,7 +1065,7 @@ static hook_err_t hook_prepare_relo_exec(void *record, hook_t *hook)
                                (unsigned long)exec_relo + sizeof(hook->relo_insts));
     flush_icache_all(); /* Broadcast I-cache invalidation to other CPUs. */
 #ifdef KP_HOOK_EXTERNAL_CHAIN_PREPARE
-    if (kp_lkm_exec_seal(exec_relo, sizeof(hook->relo_insts)))
+    if (kp_lkm_exec_make_executable(exec_relo, sizeof(hook->relo_insts)))
         return -HOOK_TRANSIT_NO_MEM;
 #else
     if (kp_exec_seal(exec_relo))

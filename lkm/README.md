@@ -30,6 +30,20 @@ stress testing. The LKM Hook backend also intentionally retains retired
 executable trampoline regions because a safe cross-CPU reclamation protocol
 has not yet been established.
 
+The LKM Hook backend stores mutable Hook/chain control records in
+ordinary `kzalloc()` memory and allocates relocation/transit stubs
+separately from the executable-memory backend. Sleepable allocation is kept
+outside the raw Hook-engine lock.
+
+**This is not strict W^X on Y73S 4.14.141.** The target profile does not expose
+`init_mm`, `set_memory_ro`, `set_memory_x`, or
+`set_memory_nx`. The current `module_alloc()` backend supplies
+`PAGE_KERNEL_EXEC` pages, and the LKM adapter only confirms executable
+permissions; it does not seal the page read-only. Executable relocation and
+transit pages therefore remain RWX until a target-specific permission backend
+is available.
+
+
 The LKM feature-control supercall remains a stub, and x86_64 is not supported
 by this ARM64 implementation.
 

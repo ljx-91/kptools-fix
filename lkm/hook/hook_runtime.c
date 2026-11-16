@@ -248,7 +248,7 @@ void kp_lkm_exec_free(void *region, unsigned long size)
 	kp_hook_exec_free(region, PAGE_ALIGN(size));
 }
 
-int kp_lkm_exec_seal(void *region, unsigned long size)
+int kp_lkm_exec_make_executable(void *region, unsigned long size)
 {
 	if (!region || !size || size > ULONG_MAX - (PAGE_SIZE - 1))
 		return -EINVAL;

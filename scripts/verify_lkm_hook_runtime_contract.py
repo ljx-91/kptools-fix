@@ -274,10 +274,10 @@ checks = {
         hook_engine.rindex("static hook_err_t hook_chain_prepare(hook_chain_t *chain,") > hook_engine.index('#include "../../kernel/base/hook.c"'),
     "LKM shared hook executable allocator adapters own page alignment":
         all(token in read("lkm/include/kpmalloc.h") for token in
-            ("kp_lkm_exec_alloc", "kp_lkm_exec_free", "kp_lkm_exec_seal")) and
+            ("kp_lkm_exec_alloc", "kp_lkm_exec_free", "kp_lkm_exec_make_executable")) and
         "void *kp_lkm_exec_alloc(size_t size)" in runtime and
         "void kp_lkm_exec_free(void *region, unsigned long size)" in runtime and
-        "int kp_lkm_exec_seal(void *region, unsigned long size)" in runtime and
+        "int kp_lkm_exec_make_executable(void *region, unsigned long size)" in runtime and
         "kp_hook_exec_free(region, PAGE_ALIGN(size));" in runtime and
         "kp_hook_make_exec(region, PAGE_ALIGN(size));" in runtime,
     "LKM backend implements shared relocation/transit attachment APIs":

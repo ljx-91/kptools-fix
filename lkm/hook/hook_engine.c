@@ -65,7 +65,7 @@ static hook_err_t hook_chain_prepare(hook_chain_t *chain,
 	flush_icache_range((unsigned long)transit,
 			   (unsigned long)(transit + 16));
 	__flush_icache_all();
-	if (kp_lkm_exec_seal(transit, 64))
+	if (kp_lkm_exec_make_executable(transit, 64))
 		return -HOOK_TRANSIT_NO_MEM;
 	*transit_out = transit;
 	return HOOK_NO_ERR;
