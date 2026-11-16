@@ -1372,3 +1372,33 @@ A dynamic-unload architecture can be designed around a **KPIMG-resident gate**, 
 5. Teardown closes the resident gate first, removes all hooks, and waits for accepted gate tokens to drain before any LKM-owned state is freed. Delayed CPUs that have branched but not yet executed the first gate instruction remain safe because both gate code and gate state are permanent; once they run, they observe closed and never dereference the stale module pointer.
 
 This is a design outline, not a proven implementation. It still requires: an AArch64 entry preserving x0-x3 and x16; a defined safe fallback for every hooked signature; exact KPIMG export/lookup and module-pointer handoff; atomic gate ordering proof; CFI/CFI-shadow compatibility; and stress tests including a CPU delayed between branch and first gate instruction. Do not treat the existing KPIMG transit sections alone as closing the race.
+
+
+## 15. Normal LKM exit does not tear down the KPM runtime (2026-11-17)
+
+### Confirmed source facts
+
+- `kernelpatch_init()` tracks `kpm_initialized` and calls `kp_kpm_exit()` only from the `err_unwind` path when initialization fails.
+- The normal `kernelpatch_exit()` path removes the supercall, built-in sucompat hook, rename LSM hook, and CFI bypass, but does not call `kp_kpm_exit()`.
+- `kp_kpm_exit()` clears `kp_kpm_ready`, frees the KPM callback trampoline page, clears callback slots, and resets allocator/symbol backend pointers. It does not iterate and unload live KPM images.
+- `kp_unload_module()` protects individual KPM images with `active_calls` and `hook_refs`, but these counters do not pin the parent `kernelpatch.ko` image or its transit text.
+- The LKM hook runtime has no corresponding global shutdown routine that proves all published Hook chains and transit users have drained before the parent module image is released.
+- `kp_hook_update_exec()` may update pages one at a time and return on a later page-table lookup failure. It does not restore earlier pages modified during the same call. The allocation/free path may intentionally leak a region if permission restoration fails, but that is not a transactional rollback of the original permission state.
+
+### Consequences and limits
+
+Normal LKM unload is not a supported safe lifecycle while arbitrary KPMs or externally installed Hook chains may remain. Omitting `kp_kpm_exit()` avoids freeing the KPM callback trampoline while KPM state might still refer to it, but leaves runtime allocations/state behind if unload proceeds. Calling `kp_kpm_exit()` unconditionally would not solve the problem: it does not drain live KPM images or their hooks and could invalidate callback infrastructure still in use.
+
+The PTE update issue is a separate partial-state hazard. A failed multi-page transition can leave a prefix of pages with changed permissions and a suffix unchanged. Callers must not treat a nonzero return as proof that no page was modified.
+
+### Required closure criteria
+
+- Define and enforce a parent-LKM shutdown policy before entering module exit: either a deliberately permanent resident policy, or a complete quiesce protocol that rejects new KPM loads/callbacks, removes every published Hook, waits for all possible transit entries (including pre-reader entries), drains KPM active and persistent references, and only then releases runtime resources.
+- Do not add a bare `kp_kpm_exit()` call to normal module exit as a purported fix.
+- Make multi-page executable permission transitions transactional, or track the exact changed-page set and restore it on every failure path; if rollback itself fails, retain the allocation and report the mixed state explicitly.
+- Add source-contract tests that distinguish init-failure unwind from normal module exit, and fault-injection tests for failures at every page in a multi-page permission transition.
+- Validate against the exact Y73S 4.14.141 vendor KDIR before claiming ABI/build compatibility.
+
+### Status
+
+This is a source-confirmed lifecycle/resource-management gap, not a reproduced device crash. No production behavior was changed. LKM unload remains unsupported/unverified with live KPMs or outstanding Hook chains; strict W^X and transactional PTE rollback remain unresolved.
