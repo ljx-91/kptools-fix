@@ -341,11 +341,13 @@ static int test_internal_mapping_special_length_and_unknown(void)
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
     h.origin_insts[0] = ldr_xzr;
     h.origin_insts[1] = b_to_next;
+    CHECK(relo_in_tramp(&h, h.origin_addr + 4) == h.relo_addr + 28,
+          "internal target map accounts for seven-word XZR expansion");
     h.relo_insts_num = 7;
     CHECK(relocate_inst(&h, h.origin_addr + 4, b_to_next) == HOOK_NO_ERR,
           "branch following XZR special expansion relocates");
-    CHECK(literal64(&h, 9) == h.relo_addr + 28,
-          "internal target mapping accounts for seven-word XZR expansion");
+    CHECK(literal64(&h, 9) == h.relo_addr + 52,
+          "branch target accounts for both XZR and B expansions");
 
     uint32_t nop = ARM64_NOP;
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
