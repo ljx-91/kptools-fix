@@ -287,9 +287,9 @@ checks = {
         "kp_hook_exec_free(exec_relo, exec_relo_size);" in runtime and
         "kp_hook_exec_free(exec_transit, exec_transit_size);" in runtime,
     "LKM transit stub is stored separately from mutable chain metadata":
-        "transit = kp_lkm_exec_alloc(64);" in engine and
-        "hook_mem_set_transit(chain, transit)" in engine and
-        "transit[4] = (uint64_t)chain;" in engine and
+        "transit = kp_lkm_exec_alloc(64);" in hook_engine and
+        "hook_mem_set_transit(chain, transit)" in hook_engine and
+        "transit[4] = (uint64_t)chain;" in hook_engine and
         "chain->transit" not in engine,
     "sleepable Hook payload allocation is outside raw engine locks":
         "hook_engine_lock()" not in function_body(hook, "hook_err_t hook(") and
