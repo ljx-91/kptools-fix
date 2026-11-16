@@ -266,9 +266,9 @@ checks = {
         "#endif /* !KP_HOOK_EXTERNAL_CHAIN_PREPARE */" in hook and
         "transit = chain->transit;" in function_body(hook, "hook_err_t hook_wrap("),
     "LKM backend helper is declared before shared source inclusion":
-        engine.index("static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno);") <
-        engine.index('#include "../../kernel/base/hook.c"') <
-        engine.index("static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)\\n{"),
+        hook_engine.index("static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno);") <
+        hook_engine.index('#include "../../kernel/base/hook.c"') <
+        hook_hook_engine.index("static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)\\n{"),
     "LKM shared hook executable allocator adapters are declared and implemented":
         all(token in read("lkm/include/kpmalloc.h") for token in
             ("kp_lkm_exec_alloc", "kp_lkm_exec_free", "kp_lkm_exec_seal")) and
