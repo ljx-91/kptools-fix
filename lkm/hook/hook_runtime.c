@@ -342,25 +342,26 @@ void *hook_mem_zalloc(uintptr_t origin, enum hook_type type)
 	mem = kzalloc(sizeof(*mem), GFP_KERNEL);
 	if (!mem)
 		return NULL;
-	mem->region_size = PAGE_ALIGN(size);
-	mem->region = kp_hook_exec_alloc(mem->region_size);
+	mem->region_size = size;
+	mem->region = kzalloc(size, GFP_KERNEL);
 	if (!mem->region) {
 		kfree(mem);
 		return NULL;
 	}
-	memset(mem->region, 0, mem->region_size);
 	mem->payload = mem->region;
 	mem->origin = origin;
 	mem->type = type;
+
 	raw_spin_lock_irqsave(&kp_hook_lock, flags);
 	/* Two first-wrap callers can both miss hook_get_mem_from_origin().
-	 * Recheck under the insertion lock so only one chain owns an origin. */
+	 * Reserve only one origin; loser frees its sleepable allocations outside
+	 * the registry lock. */
 	{
 		struct kp_hook_mem *pos;
 		list_for_each_entry(pos, &kp_hook_mems, list) {
 			if (pos->origin == origin) {
 				raw_spin_unlock_irqrestore(&kp_hook_lock, flags);
-				kp_hook_exec_free(mem->region, mem->region_size);
+				kfree(mem->region);
 				kfree(mem);
 				return NULL;
 			}
@@ -535,7 +536,6 @@ void hook_mem_free(void *payload)
 	list_for_each_entry_safe(mem, tmp, &kp_hook_mems, list) {
 		if (mem->payload == payload && !mem->ready) {
 			void *region = mem->region;
-			unsigned long region_size = mem->region_size;
 			void *exec_relo = mem->exec_relo;
 			unsigned long exec_relo_size = mem->exec_relo_size;
 			void *exec_transit = mem->exec_transit;
@@ -547,7 +547,7 @@ void hook_mem_free(void *payload)
 				kp_hook_exec_free(exec_relo, exec_relo_size);
 			if (exec_transit)
 				kp_hook_exec_free(exec_transit, exec_transit_size);
-			kp_hook_exec_free(region, region_size);
+			kfree(region);
 			kfree(mem);
 			return;
 		}

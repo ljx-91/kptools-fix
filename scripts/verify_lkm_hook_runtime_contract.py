@@ -90,13 +90,13 @@ checks = {
         "kp_hook_exec_free(p, alloc_size);" in hook_exec_alloc and
         'kp_resolve_symbol("init_mm")' in hook_runtime_init and
         "return -ENOSYS;" in hook_runtime_init,
-    "LKM hook pages are restored to NX/BTI before allocator reuse":
-        "kp_hook_set_memory_nx" in runtime and
-        "v |= nx_mask;" in hook_update_exec and
-        "kp_hook_make_nx(region, size)" in hook_exec_free and
-        "permission restore failed; leaking" in hook_exec_free and
-        "mem->region_size = PAGE_ALIGN(size)" in runtime and
-        "kp_hook_exec_free(mem->region, mem->region_size)" in runtime,
+    "LKM Hook control payload uses NX slab memory, not executable allocation":
+        "mem->region = kzalloc(size, GFP_KERNEL);" in runtime and
+        "mem->payload = mem->region;" in runtime and
+        "kp_hook_exec_alloc(mem->region_size)" not in runtime and
+        "kp_hook_exec_free(exec_relo, exec_relo_size);" in runtime and
+        "kp_hook_exec_free(exec_transit, exec_transit_size);" in runtime and
+        "kfree(region);" in function_body(runtime, "void hook_mem_free(void *payload)"),
     "LKM trampoline publication broadcasts I-cache invalidation before patch":
         "kp_hook_module_alloc && kp_hook_module_memfree" in hook_runtime_init and
         "KP_HOOK_FLUSH_ICACHE_RANGE" in hook_install and
@@ -284,6 +284,17 @@ checks = {
         "*slot = exec_ptr;" in runtime and
         "kp_hook_exec_free(exec_relo, exec_relo_size);" in runtime and
         "kp_hook_exec_free(exec_transit, exec_transit_size);" in runtime,
+    "LKM transit stub is stored separately from mutable chain metadata":
+        "transit = kp_lkm_exec_alloc(64);" in engine and
+        "hook_mem_set_transit(chain, transit)" in engine and
+        "transit[4] = (uint64_t)chain;" in engine and
+        "chain->transit" not in engine,
+    "sleepable Hook payload allocation is outside raw engine locks":
+        "hook_engine_lock()" not in function_body(hook, "hook_err_t hook(") and
+        function_body(hook, "hook_err_t hook_wrap(").index("hook_engine_unlock(flags);") <
+            function_body(hook, "hook_err_t hook_wrap(").index("hook_mem_zalloc(origin, INLINE_CHAIN)") and
+        function_body(fphook, "hook_err_t fp_hook_wrap(").index("hook_engine_unlock(flags);") <
+            function_body(fphook, "hook_err_t fp_hook_wrap(").index("hook_mem_zalloc(fp_addr, FUNCTION_POINTER_CHAIN)"),
 
 }
 

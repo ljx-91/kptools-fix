@@ -959,9 +959,9 @@ hook_err_t hook(void *func, void *replace, void **backup)
         return -EOPNOTSUPP;
     }
 
-    flags = hook_engine_lock();
+    /* The backend may use sleepable allocators; do not allocate under
+     * the raw Hook-engine spinlock. The registry reserves origins atomically. */
     hook = (hook_t *)hook_mem_zalloc(origin, INLINE);
-    hook_engine_unlock(flags);
     if (!hook) return -HOOK_NO_MEM;
 
     hook->func_addr = (uint64_t)func;
@@ -1234,8 +1234,9 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
         hook_engine_unlock(flags);
         return err;
     }
-    chain = (hook_chain_t *)hook_mem_zalloc(origin, INLINE_CHAIN);
     hook_engine_unlock(flags);
+    /* Registry-side construction reservation handles a concurrent first wrap. */
+    chain = (hook_chain_t *)hook_mem_zalloc(origin, INLINE_CHAIN);
     if (!chain) return -HOOK_NO_MEM;
 
     hook = &chain->hook;
@@ -1243,12 +1244,7 @@ hook_err_t hook_wrap(void *func, int32_t argno, void *before, void *after, void 
     hook->origin_addr = origin;
 
     uint32_t *transit = NULL;
-#ifdef KP_HOOK_EXTERNAL_CHAIN_PREPARE
-    transit = chain->transit;
-    err = hook_chain_prepare(transit, argno);
-#else
     err = hook_chain_prepare(chain, &transit, argno);
-#endif
     if (err) goto fail;
     hook->replace_addr = (uint64_t)transit;
     err = hook_prepare_relo_exec(chain, hook);

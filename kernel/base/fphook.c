@@ -456,18 +456,23 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
         hook_engine_unlock(flags);
         return err;
     }
+    hook_engine_unlock(flags);
+
+    /* Registry reservation prevents duplicate first-wrap attempts. */
     chain = (fp_hook_chain_t *)hook_mem_zalloc(fp_addr, FUNCTION_POINTER_CHAIN);
-    if (!chain) {
-        hook_engine_unlock(flags);
+    if (!chain)
         return -HOOK_NO_MEM;
-    }
     chain->hook.fp_addr = fp_addr;
     uint32_t *transit = NULL;
     err = hook_chain_prepare(chain, &transit, argno);
-    if (err) goto fail;
+    if (err) {
+        hook_mem_free(chain);
+        return err;
+    }
     chain->hook.replace_addr = (uint64_t)transit;
-    /* Snapshot and patch are serialized against all KP hook-manager writers.
-     * A foreign writer that bypasses this manager remains outside this lock. */
+
+    /* Only the pointer exchange and callback publication need the engine lock. */
+    flags = hook_engine_lock();
     patch_rc = fp_hook_locked(chain->hook.fp_addr, (void *)chain->hook.replace_addr,
                               (void **)&chain->hook.origin_fp);
     if (patch_rc) {
@@ -476,8 +481,9 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
             hook_engine_unlock(flags);
             return -HOOK_PATCH_UNCERTAIN;
         }
-        err = -HOOK_PATCH_FAILED;
-        goto fail;
+        hook_engine_unlock(flags);
+        hook_mem_free(chain);
+        return -HOOK_PATCH_FAILED;
     }
     err = fp_chain_add_locked(chain, before, after, udata);
     if (err) {
@@ -488,15 +494,13 @@ hook_err_t fp_hook_wrap(uintptr_t fp_addr, int32_t argno, void *before, void *af
             hook_engine_unlock(flags);
             return -HOOK_PATCH_UNCERTAIN;
         }
-        goto fail;
+        hook_engine_unlock(flags);
+        hook_mem_free(chain);
+        return err;
     }
     hook_mem_publish(chain);
     hook_engine_unlock(flags);
     return HOOK_NO_ERR;
-fail:
-    hook_mem_free(chain);
-    hook_engine_unlock(flags);
-    return err;
 }
 KP_EXPORT_SYMBOL(fp_hook_wrap);
 

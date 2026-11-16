@@ -6,7 +6,8 @@
 #include <hook.h>
 
 /* The shared source selects this backend-specific helper at compile time. */
-static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno);
+static hook_err_t hook_chain_prepare(hook_chain_t *chain,
+                                     uint32_t **transit_out, int32_t argno);
 
 #ifndef __noinline
 #define __noinline noinline
@@ -23,14 +24,16 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno);
 
 #include "../../kernel/base/hook.c"
 
-static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
+static hook_err_t hook_chain_prepare(hook_chain_t *chain,
+                                     uint32_t **transit_out, int32_t argno)
 {
 	uint64_t target;
-	hook_chain_t *chain = local_container_of(transit, hook_chain_t, transit);
-
+	uint32_t *transit;
 	int32_t abi_class = hook_argno_abi_class(argno);
-	if (abi_class < 0)
+
+	if (!chain || !transit_out || abi_class < 0)
 		return -HOOK_BAD_ADDRESS;
+	*transit_out = NULL;
 	chain->argno_abi_class = abi_class;
 	if (argno == 0)
 		target = (uint64_t)_transit0;
@@ -41,16 +44,29 @@ static hook_err_t hook_chain_prepare(uint32_t *transit, int32_t argno)
 	else
 		target = (uint64_t)_transit12;
 
+	/* Keep mutable chain state in kzalloc memory. Only the generated branch
+	 * stub is allocated from the executable module-memory backend. */
+	transit = kp_lkm_exec_alloc(64);
+	if (!transit)
+		return -HOOK_TRANSIT_NO_MEM;
+	if (hook_mem_set_transit(chain, transit)) {
+		kp_lkm_exec_free(transit, PAGE_ALIGN(64));
+		return -HOOK_TRANSIT_NO_MEM;
+	}
+
 	transit[0] = ARM64_BTI_JC;
 	transit[1] = 0x58000070; /* LDR X16, #12 */
 	transit[2] = 0x14000004; /* B #16 */
 	transit[3] = ARM64_NOP;
 	transit[4] = (uint64_t)chain;
 	transit[5] = (uint64_t)chain >> 32;
-	if (!branch_absolute(&transit[6], target))
+	if (branch_absolute(&transit[6], target) <= 0)
 		return -HOOK_TRANSIT_NO_MEM;
 	flush_icache_range((unsigned long)transit,
-			   (unsigned long)(transit + TRANSIT_INST_NUM));
+			   (unsigned long)(transit + 16));
 	__flush_icache_all();
+	if (kp_lkm_exec_seal(transit, PAGE_ALIGN(64)))
+		return -HOOK_TRANSIT_NO_MEM;
+	*transit_out = transit;
 	return HOOK_NO_ERR;
 }
