@@ -191,6 +191,13 @@ static uint64_t decode_tb_target(uint64_t pc, uint32_t inst)
     return pc + (uint64_t)(imm * 4);
 }
 
+static uint64_t decode_tb_target(uint64_t pc, uint32_t inst)
+{
+    int64_t imm = (int64_t)((inst >> 5) & 0x3fffU);
+    if (imm & 0x2000LL) imm -= 0x4000LL;
+    return pc + (uint64_t)(imm * 4);
+}
+
 static int test_b_internal_remap(void)
 {
     hook_t h;
@@ -391,7 +398,7 @@ static int test_compare_and_test_branches(void)
     CHECK(relocate_inst(&h, h.origin_addr, cbz) == HOOK_NO_ERR, "CBZ relocation succeeds");
     CHECK(h.relo_insts_num == 2, "CBZ expands to two direct-branch words");
     CHECK(h.relo_insts[0] == (((cbz ^ 0x01000000U) & 0xFF00001FU) | 0x40U) &&
-          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8,
+          decode_tb_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8,
           "CBZ inversion skips the B only when the original condition is false");
     CHECK((h.relo_insts[1] & 0xFC000000U) == 0x14000000U &&
           decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 16,
@@ -404,7 +411,7 @@ static int test_compare_and_test_branches(void)
     CHECK(relocate_inst(&h, h.origin_addr, cbnz) == HOOK_NO_ERR,
           "CBNZ relocation succeeds");
     CHECK(h.relo_insts[0] == (((cbnz ^ 0x01000000U) & 0xFF00001FU) | 0x40U) &&
-          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
+          decode_tb_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
           decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 16,
           "CBNZ inversion and direct B preserve both control-flow paths");
 
