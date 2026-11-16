@@ -77,6 +77,8 @@ def build_harness(source_text: str) -> str:
         "static int is_in_tramp(",
         "static int is_page_in_tramp(",
         "static uint64_t relo_in_tramp(",
+        "static hook_err_t relo_branch_pc(",
+        "static hook_err_t relo_branch_at(",
         "static __noinline hook_err_t relo_b(",
         "static __noinline hook_err_t relo_adr(",
         "static __noinline hook_err_t relo_ldr(",
@@ -167,6 +169,20 @@ static uint32_t encode_literal(uint32_t opcode, unsigned int rt,
            (rt & 31U);
 }
 
+static uint64_t decode_b_target(uint64_t pc, uint32_t inst)
+{
+    int64_t imm = (int64_t)(inst & 0x03ffffffU);
+    if (imm & 0x02000000LL) imm -= 0x04000000LL;
+    return pc + (uint64_t)(imm * 4);
+}
+
+static uint64_t decode_cond_target(uint64_t pc, uint32_t inst)
+{
+    int64_t imm = (int64_t)((inst >> 5) & 0x7ffffU);
+    if (imm & 0x40000LL) imm -= 0x80000LL;
+    return pc + (uint64_t)(imm * 4);
+}
+
 static int test_b_internal_remap(void)
 {
     hook_t h;
@@ -174,9 +190,11 @@ static int test_b_internal_remap(void)
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
     h.origin_insts[0] = b;
     CHECK(relocate_inst(&h, h.origin_addr, b) == HOOK_NO_ERR, "B relocation succeeds");
-    CHECK(h.relo_insts_num == 6, "B expands to six words");
-    CHECK(literal64(&h, 2) == h.relo_addr + 24,
-          "B target inside overwritten prologue maps to relocated instruction");
+    CHECK(h.relo_insts_num == 2, "B expands to a two-word direct branch sequence");
+    CHECK((h.relo_insts[0] & 0xFC000000U) == 0x14000000U &&
+          decode_b_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8,
+          "B maps an internal target with no X16/X17 scratch clobber");
+    CHECK(h.relo_insts[1] == ARM64_NOP, "B leaves aligned fall-through padding");
     return 0;
 }
 
@@ -200,11 +218,14 @@ static int test_bl_and_conditional_branch(void)
     h.origin_insts[0] = bc;
     CHECK(relocate_inst(&h, h.origin_addr, bc) == HOOK_NO_ERR,
           "B.cond relocation succeeds");
-    CHECK(h.relo_insts_num == 8, "B.cond expands to eight words");
-    CHECK(h.relo_insts[0] == ((bc & 0xFF00001FU) | 0x40U),
-          "B.cond keeps condition and redirects taken edge to veneer");
-    CHECK(literal64(&h, 4) == h.relo_addr + 32,
-          "B.cond internal target follows expanded instruction layout");
+    CHECK(h.relo_insts_num == 2, "B.cond expands to two direct-branch words");
+    CHECK(h.relo_insts[0] == (((bc & 0xFF00001FU) | 0x40U) ^ 1U) &&
+          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8,
+          "B.cond inverts condition to skip the B on the original not-taken path");
+    CHECK((h.relo_insts[1] & 0xFC000000U) == 0x14000000U &&
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          "B.cond taken edge uses a register-preserving direct B");
+
     return 0;
 }
 
@@ -361,11 +382,13 @@ static int test_compare_and_test_branches(void)
     h.origin_insts[0] = cbz;
     h.origin_insts[1] = ARM64_NOP;
     CHECK(relocate_inst(&h, h.origin_addr, cbz) == HOOK_NO_ERR, "CBZ relocation succeeds");
-    CHECK(h.relo_insts_num == 6, "CBZ expands to six words");
-    CHECK(h.relo_insts[0] == ((cbz & 0xFF00001FU) | 0x40U),
-          "CBZ preserves register and condition opcode");
-    CHECK(literal64(&h, 4) == h.relo_addr + 32,
-          "CBZ target remaps across the expanded preceding instruction");
+    CHECK(h.relo_insts_num == 2, "CBZ expands to two direct-branch words");
+    CHECK(h.relo_insts[0] == (((cbz ^ 0x01000000U) & 0xFF00001FU) | 0x40U) &&
+          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8,
+          "CBZ inversion skips the B only when the original condition is false");
+    CHECK((h.relo_insts[1] & 0xFC000000U) == 0x14000000U &&
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          "CBZ taken edge uses a scratch-free direct B");
 
     uint32_t cbnz = encode_imm19(0x35000005U, 8);
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
@@ -373,9 +396,10 @@ static int test_compare_and_test_branches(void)
     h.origin_insts[1] = ARM64_NOP;
     CHECK(relocate_inst(&h, h.origin_addr, cbnz) == HOOK_NO_ERR,
           "CBNZ relocation succeeds");
-    CHECK(h.relo_insts[0] == ((cbnz & 0xFF00001FU) | 0x40U) &&
-          literal64(&h, 4) == h.relo_addr + 32,
-          "CBNZ preserves opcode and remaps its internal target");
+    CHECK(h.relo_insts[0] == (((cbnz ^ 0x01000000U) & 0xFF00001FU) | 0x40U) &&
+          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          "CBNZ inversion and direct B preserve both control-flow paths");
 
     uint32_t tbz = 0x36000000U | (9U << 19) | (2U << 5) | 3U;
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
@@ -383,20 +407,21 @@ static int test_compare_and_test_branches(void)
     h.origin_insts[1] = ARM64_NOP;
     CHECK(relocate_inst(&h, h.origin_addr, tbz) == HOOK_NO_ERR,
           "TBZ relocation succeeds");
-    CHECK(h.relo_insts[0] == ((tbz & 0xFFF8001FU) | 0x40U) &&
-          literal64(&h, 4) == h.relo_addr + 32,
-          "TBZ preserves tested bit and remaps its internal target");
+    CHECK(h.relo_insts[0] == (((tbz ^ 0x01000000U) & 0xFFF8001FU) | 0x40U) &&
+          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          "TBZ inversion preserves tested bit and uses a scratch-free B");
 
     uint32_t tbnz = 0x37000000U | (9U << 19) | (2U << 5) | 3U;
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
     h.origin_insts[0] = tbnz;
     h.origin_insts[1] = ARM64_NOP;
     CHECK(relocate_inst(&h, h.origin_addr, tbnz) == HOOK_NO_ERR, "TBNZ relocation succeeds");
-    CHECK(h.relo_insts_num == 6, "TBNZ expands to six words");
-    CHECK(h.relo_insts[0] == ((tbnz & 0xFFF8001FU) | 0x40U),
-          "TBNZ preserves tested bit and register");
-    CHECK(literal64(&h, 4) == h.relo_addr + 32,
-          "TBNZ internal target remaps to the relocated instruction");
+    CHECK(h.relo_insts_num == 2, "TBNZ expands to two direct-branch words");
+    CHECK(h.relo_insts[0] == (((tbnz ^ 0x01000000U) & 0xFFF8001FU) | 0x40U) &&
+          decode_cond_target(h.relo_addr, h.relo_insts[0]) == h.relo_addr + 8 &&
+          decode_b_target(h.relo_addr + 4, h.relo_insts[1]) == h.relo_addr + 8,
+          "TBNZ preserves bit index and both control-flow edges without scratch registers");
     return 0;
 }
 
@@ -431,8 +456,9 @@ static int test_internal_mapping_special_length_and_unknown(void)
     h.relo_insts_num = 7;
     CHECK(relocate_inst(&h, h.origin_addr + 4, b_to_next) == HOOK_NO_ERR,
           "branch following XZR special expansion relocates");
-    CHECK(literal64(&h, 9) == h.relo_addr + 52,
-          "branch target accounts for both XZR and B expansions");
+    CHECK(h.relo_insts[7] == 0x14000000U &&
+          h.relo_insts[8] == ARM64_NOP,
+          "following B preserves registers and accounts for the expanded prefix");
 
     uint32_t nop = ARM64_NOP;
     init_hook(&h, 0x10000000ULL, 0x20000000ULL);
@@ -456,7 +482,7 @@ static int test_negative_pc_relative_branch(void)
     h.relo_insts_num = 4;
     CHECK(relocate_inst(&h, h.origin_addr + 8, negative_b) == HOOK_NO_ERR,
           "negative B relocation sign-extends its displacement");
-    CHECK(literal64(&h, 6) == h.relo_addr + 8,
+    CHECK(decode_b_target(h.relo_addr + 16, h.relo_insts[4]) == h.relo_addr + 8,
           "negative B target maps backward into the relocated prologue");
 
     uint32_t negative_bc = encode_imm19(0x54000001U, -4);
@@ -467,8 +493,47 @@ static int test_negative_pc_relative_branch(void)
     h.relo_insts_num = 4;
     CHECK(relocate_inst(&h, h.origin_addr + 8, negative_bc) == HOOK_NO_ERR,
           "negative B.cond relocation sign-extends its displacement");
-    CHECK(literal64(&h, 8) == h.relo_addr + 8,
-          "negative B.cond target maps backward into the relocated prologue");
+    CHECK(decode_cond_target(h.relo_addr + 16, h.relo_insts[4]) == h.relo_addr + 24 &&
+          decode_b_target(h.relo_addr + 20, h.relo_insts[5]) == h.relo_addr + 8,
+          "negative B.cond preserves the not-taken edge and remaps the taken edge");
+    return 0;
+}
+
+static int test_out_of_range_control_flow_rejected(void)
+{
+    hook_t h;
+    uint32_t b = encode_imm26(0x14000000U, 0x200);
+    uint32_t bc = encode_imm19(0x54000001U, 0x200);
+    uint32_t cbz = encode_imm19(0x34000001U, 0x200);
+    uint32_t tbz = 0x36000000U | (3U << 5) | 1U;
+
+    init_hook(&h, 0x10000000ULL, 0x90000000ULL);
+    h.origin_insts[0] = b;
+    h.relo_insts[0] = 0xA5A5A5A5U;
+    CHECK(relocate_inst(&h, h.origin_addr, b) == -HOOK_BAD_RELO &&
+          h.relo_insts_num == 0 && h.relo_insts[0] == 0xA5A5A5A5U,
+          "out-of-range B fails closed without modifying relocation output");
+
+    init_hook(&h, 0x10000000ULL, 0x90000000ULL);
+    h.origin_insts[0] = bc;
+    h.relo_insts[0] = 0xA5A5A5A5U;
+    CHECK(relocate_inst(&h, h.origin_addr, bc) == -HOOK_BAD_RELO &&
+          h.relo_insts_num == 0 && h.relo_insts[0] == 0xA5A5A5A5U,
+          "out-of-range B.cond fails closed before writing an inverted condition");
+
+    init_hook(&h, 0x10000000ULL, 0x90000000ULL);
+    h.origin_insts[0] = cbz;
+    h.relo_insts[0] = 0xA5A5A5A5U;
+    CHECK(relocate_inst(&h, h.origin_addr, cbz) == -HOOK_BAD_RELO &&
+          h.relo_insts_num == 0 && h.relo_insts[0] == 0xA5A5A5A5U,
+          "out-of-range CBZ fails closed without emitting a scratch-register veneer");
+
+    init_hook(&h, 0x10000000ULL, 0x90000000ULL);
+    h.origin_insts[0] = tbz;
+    h.relo_insts[0] = 0xA5A5A5A5U;
+    CHECK(relocate_inst(&h, h.origin_addr, tbz) == -HOOK_BAD_RELO &&
+          h.relo_insts_num == 0 && h.relo_insts[0] == 0xA5A5A5A5U,
+          "out-of-range TBZ fails closed without modifying relocation output");
     return 0;
 }
 
@@ -513,13 +578,11 @@ static int test_branch_back_encodings(void)
           words[0] == 0x14000040U && words[1] == ARM64_NOP,
           "branch-back uses the relative form when reachable");
 
-    memset(words, 0, sizeof(words));
-    CHECK(branch_from_to(words, src, src + 0x08000000ULL) == 4,
-          "branch-back falls back to the four-word absolute return");
-    CHECK(words[0] == 0x58000051U && words[1] == 0xD65F0220U &&
-          ((uint64_t)words[2] | ((uint64_t)words[3] << 32)) ==
-              src + 0x08000000ULL,
-          "absolute branch-back embeds its destination and uses RET X17");
+    memset(words, 0xA5, sizeof(words));
+    CHECK(branch_from_to(words, src, src + 0x08000000ULL) == 0,
+          "out-of-range branch-back is rejected instead of clobbering X17");
+    CHECK(words[0] == 0xA5A5A5A5U && words[1] == 0xA5A5A5A5U,
+          "rejected branch-back leaves the output untouched");
 
     memset(words, 0, sizeof(words));
     CHECK(branch_absolute(words, 0xFFFFFFC012345678ULL) == 4 &&
@@ -542,6 +605,7 @@ int main(void)
     failed |= test_internal_mapping_special_length_and_unknown();
     failed |= test_negative_pc_relative_branch();
     failed |= test_branch_back_encodings();
+    failed |= test_out_of_range_control_flow_rejected();
     if (failed) return 1;
     puts("[PASS] hook.c AArch64 instruction relocation paths executed");
     return 0;

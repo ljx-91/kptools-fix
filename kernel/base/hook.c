@@ -73,7 +73,7 @@ static inst_type_t types[] = {
     INST_CBZ,    INST_CBNZ,      INST_TBZ,      INST_TBNZ,        INST_IGNORE,
 };
 
-static int32_t relo_len[] = { 6, 8, 8, 4, 4, 6, 6, 6, 8, 8, 8, 8, 6, 6, 6, 6, 2 };
+static int32_t relo_len[] = { 2, 2, 8, 4, 4, 6, 6, 6, 8, 8, 8, 8, 2, 2, 2, 2, 2 };
 
 // static uint64_t sign_extend(uint64_t x, uint32_t len)
 // {
@@ -180,10 +180,52 @@ uint64_t branch_func_addr(uint64_t addr)
 
 #endif
 
+/* Emit a direct B without borrowing X16/X17. A branch in the middle of
+ * a function is not an ABI call site, so caller-saved registers may be live.
+ * If the relocated block is outside B's architectural range, fail closed. */
+static hook_err_t relo_branch_pc(hook_t *hook, unsigned int word_offset,
+                                  uint64_t *pc)
+{
+    uint64_t words, bytes;
+
+    if (!hook || !pc || hook->relo_insts_num < 0)
+        return -HOOK_BAD_RELO;
+    words = (uint64_t)hook->relo_insts_num + word_offset;
+    if (words > (~0ULL) / sizeof(uint32_t))
+        return -HOOK_BAD_RELO;
+    bytes = words * sizeof(uint32_t);
+    if ((hook->relo_addr & 3u) || hook->relo_addr > (~0ULL) - bytes)
+        return -HOOK_BAD_RELO;
+    *pc = hook->relo_addr + bytes;
+    return HOOK_NO_ERR;
+}
+
+static hook_err_t relo_branch_at(uint32_t *word, uint64_t src, uint64_t dst)
+{
+    uint64_t distance;
+
+    if (!word || (src & 3u) || (dst & 3u))
+        return -HOOK_BAD_RELO;
+    if (dst >= src) {
+        distance = dst - src;
+        if (distance > 0x07fffffcULL)
+            return -HOOK_BAD_RELO;
+    } else {
+        distance = src - dst;
+        if (distance > 0x08000000ULL)
+            return -HOOK_BAD_RELO;
+    }
+    *word = 0x14000000u |
+            (uint32_t)(((dst - src) >> 2u) & 0x03ffffffULL);
+    return HOOK_NO_ERR;
+}
+
 static __noinline hook_err_t relo_b(hook_t *hook, uint64_t inst_addr, uint32_t inst, inst_type_t type)
 {
     uint32_t *buf = hook->relo_insts + hook->relo_insts_num;
     uint64_t imm64;
+    uint64_t addr;
+
     if (type == INST_BC) {
         uint64_t imm19 = bits32(inst, 23, 5);
         imm64 = sign64_extend(imm19 << 2u, 21u);
@@ -191,26 +233,62 @@ static __noinline hook_err_t relo_b(hook_t *hook, uint64_t inst_addr, uint32_t i
         uint64_t imm26 = bits32(inst, 25, 0);
         imm64 = sign64_extend(imm26 << 2u, 28u);
     }
-    uint64_t addr = inst_addr + imm64;
-    addr = relo_in_tramp(hook, addr);
+    addr = relo_in_tramp(hook, inst_addr + imm64);
 
-    uint32_t idx = 0;
-    if (type == INST_BC) {
-        buf[idx++] = (inst & 0xFF00001F) | 0x40u; // B.<cond> #8
-        buf[idx++] = 0x14000006; // B #24
+    if (type == INST_B) {
+        uint64_t branch_pc;
+        uint32_t branch_word;
+        hook_err_t rc = relo_branch_pc(hook, 0, &branch_pc);
+        if (rc) return rc;
+        rc = relo_branch_at(&branch_word, branch_pc, addr);
+        if (rc) return rc;
+        buf[0] = branch_word;
+        buf[1] = ARM64_NOP;
+        return HOOK_NO_ERR;
     }
-    buf[idx++] = 0x58000051; // LDR X17, #8
-    buf[idx++] = 0x14000003; // B #12
-    buf[idx++] = addr & 0xFFFFFFFF;
-    buf[idx++] = addr >> 32u;
-    if (type == INST_BL) {
+
+    if (type == INST_BC) {
+        uint64_t branch_pc;
+        uint32_t branch_word;
+        uint32_t cond = inst & 0x0fu;
+        hook_err_t rc;
+
+        rc = relo_branch_pc(hook, 0, &branch_pc);
+        if (rc) return rc;
+        if (cond >= 0x0eu) {
+            /* AL/NV encodings are unconditional; keep them as a direct B. */
+            rc = relo_branch_at(&branch_word, branch_pc, addr);
+            if (rc) return rc;
+            buf[0] = branch_word;
+            buf[1] = ARM64_NOP;
+            return HOOK_NO_ERR;
+        }
+
+        /* Invert the condition to skip the following B when the original
+         * branch is not taken. Both paths preserve NZCV and all GPRs. */
+        rc = relo_branch_pc(hook, 1, &branch_pc);
+        if (rc) return rc;
+        rc = relo_branch_at(&branch_word, branch_pc, addr);
+        if (rc) return rc;
+        buf[0] = ((inst & 0xFF00001Fu) | 0x40u) ^ 1u;
+        buf[1] = branch_word;
+        return HOOK_NO_ERR;
+    }
+
+    /* BL is a call site: AAPCS64 permits X16/X17 to be clobbered by the
+     * callee. Keep the absolute veneer and explicitly materialize the
+     * relocated return address. */
+    {
+        uint32_t idx = 0;
+        buf[idx++] = 0x58000051; // LDR X17, #8
+        buf[idx++] = 0x14000003; // B #12
+        buf[idx++] = addr & 0xFFFFFFFF;
+        buf[idx++] = addr >> 32u;
         buf[idx++] = 0x1000001E; // ADR X30, .
         buf[idx++] = 0x910033DE; // ADD X30, X30, #12
         buf[idx++] = 0xD65F0220; // RET X17
-    } else {
-        buf[idx++] = 0xD65F0220; // RET X17
+        buf[idx++] = ARM64_NOP;
     }
-    buf[idx++] = ARM64_NOP;
     return HOOK_NO_ERR;
 }
 
@@ -314,36 +392,44 @@ static __noinline hook_err_t relo_ldr(hook_t *hook, uint64_t inst_addr, uint32_t
 static __noinline hook_err_t relo_cb(hook_t *hook, uint64_t inst_addr, uint32_t inst, inst_type_t type)
 {
     uint32_t *buf = hook->relo_insts + hook->relo_insts_num;
-
     uint64_t imm19 = bits32(inst, 23, 5);
     uint64_t offset = sign64_extend((imm19 << 2u), 21u);
-    uint64_t addr = inst_addr + offset;
-    addr = relo_in_tramp(hook, addr);
+    uint64_t addr = relo_in_tramp(hook, inst_addr + offset);
+    uint64_t branch_pc;
+    uint32_t branch_word;
+    hook_err_t rc;
 
-    buf[0] = (inst & 0xFF00001F) | 0x40u; // CB(N)Z Rt, #8
-    buf[1] = 0x14000005; // B #20
-    buf[2] = 0x58000051; // LDR X17, #8
-    buf[3] = 0xD65F0220; // RET X17
-    buf[4] = addr & 0xFFFFFFFF;
-    buf[5] = addr >> 32u;
+    rc = relo_branch_pc(hook, 1, &branch_pc);
+    if (rc) return rc;
+    rc = relo_branch_at(&branch_word, branch_pc, addr);
+    if (rc) return rc;
+
+    /* CBZ <-> CBNZ: the inverted test skips the direct B on the original
+     * not-taken path. No scratch register is modified on either path. */
+    buf[0] = ((inst ^ 0x01000000u) & 0xFF00001Fu) | 0x40u;
+    buf[1] = branch_word;
     return HOOK_NO_ERR;
 }
 
 static __noinline hook_err_t relo_tb(hook_t *hook, uint64_t inst_addr, uint32_t inst, inst_type_t type)
 {
     uint32_t *buf = hook->relo_insts + hook->relo_insts_num;
-
     uint64_t imm14 = bits32(inst, 18, 5);
     uint64_t offset = sign64_extend((imm14 << 2u), 16u);
-    uint64_t addr = inst_addr + offset;
-    addr = relo_in_tramp(hook, addr);
+    uint64_t addr = relo_in_tramp(hook, inst_addr + offset);
+    uint64_t branch_pc;
+    uint32_t branch_word;
+    hook_err_t rc;
 
-    buf[0] = (inst & 0xFFF8001F) | 0x40u; // TB(N)Z Rt, #<imm>, #8
-    buf[1] = 0x14000005; // B #20
-    buf[2] = 0x58000051; // LDR X17, #8
-    buf[3] = 0xD65F0220; // RET X17: preserve direct-branch target semantics under BTI
-    buf[4] = addr & 0xFFFFFFFF;
-    buf[5] = addr >> 32u;
+    rc = relo_branch_pc(hook, 1, &branch_pc);
+    if (rc) return rc;
+    rc = relo_branch_at(&branch_word, branch_pc, addr);
+    if (rc) return rc;
+
+    /* TBZ <-> TBNZ: preserve the tested register/bit and skip the direct B
+     * only when the original branch condition is false. */
+    buf[0] = ((inst ^ 0x01000000u) & 0xFFF8001Fu) | 0x40u;
+    buf[1] = branch_word;
     return HOOK_NO_ERR;
 }
 
@@ -399,9 +485,10 @@ KP_EXPORT_SYMBOL(ret_absolute);
 
 int32_t branch_from_to(uint32_t *tramp_buf, uint64_t src_addr, uint64_t dst_addr)
 {
-    int32_t len = branch_relative(tramp_buf, src_addr, dst_addr);
-    if (len) return len;
-    return ret_absolute(tramp_buf, dst_addr);
+    /* This is an intra-function continuation, not an ABI call boundary.
+     * Do not use RET X17 as a long-range fallback: it would corrupt a live
+     * caller-saved register. Hooks whose trampoline is out of B range fail. */
+    return branch_relative(tramp_buf, src_addr, dst_addr);
 }
 
 // transit0
