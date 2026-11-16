@@ -106,16 +106,6 @@ typedef int hook_err_t;
     (((uint64_t)((n) << (63u - (len - 1))) >> 63u) ? \
      ((n) | (0xFFFFFFFFFFFFFFFFULL << (len))) : (n))
 
-typedef struct hook {
-    uint64_t func_addr;
-    uint64_t origin_addr;
-    uint64_t replace_addr;
-    uint64_t relo_addr;
-    uint32_t tramp_insts_num;
-    uint32_t origin_insts[16];
-    int32_t relo_insts_num;
-    uint32_t relo_insts[256];
-} hook_t;
 """
     harness = r"""
 
