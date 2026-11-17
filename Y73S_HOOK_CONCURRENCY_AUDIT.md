@@ -1522,3 +1522,22 @@ These are source-contract assertions, not execution or fault-injection tests. Th
 ### Status
 
 The previously documented source-verifier coverage gap for the two uncertain-install paths and the two checked-removal failure-retention paths is closed at the source-contract level. Runtime fault injection and exact vendor-KDIR compilation remain outstanding.
+
+
+## 20. Executable-region release quarantine and PTE transition boundary (2026-11-17)
+
+### Additional source checks
+
+- `scripts/verify_lkm_hook_runtime_contract.py` now checks that `kp_hook_exec_alloc()` routes a failed executable-permission setup through `kp_hook_exec_free()` before clearing its local pointer.
+- It checks that `kp_hook_exec_free()` attempts to restore NX and returns without calling the selected allocator's free routine when that restoration fails. The implementation logs that the region is being leaked. This is a deliberate fail-safe quarantine: an allocation whose execution permissions cannot be proven safe is not returned to the allocator.
+- It also records the ordering in `kp_hook_update_exec()`: the optional whole-range `set_memory_x()` / `set_memory_nx()` operation occurs before the manual per-page PTE walk, and the PTE write occurs before its post-write permission check.
+
+### Confirmed limitation remains
+
+The source still does not provide a transaction across the optional whole-range API and per-page PTE walk. A later page-table lookup or post-write verification failure can return after earlier pages have been modified. The free path's NX retry can itself fail, in which case the allocation is retained; that prevents unsafe reclamation but does not restore the original permission state or prove that all pages have a uniform permission.
+
+No production permission logic was changed. A proper transactional implementation still needs an exact Y73S 4.14.141 vendor KDIR/API contract, original-PTE snapshots, TLB maintenance, rollback handling, and fault-injection coverage. The verifier additions are source-order contracts, not runtime proof.
+
+### Status
+
+The executable-region release path now has explicit source-contract coverage for its conservative leak-on-NX-failure behavior. The multi-page PTE transition remains a known unresolved partial-state hazard and must not be described as transactional.
