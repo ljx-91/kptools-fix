@@ -1499,3 +1499,26 @@ The Y73S 4.14 text-patching path is now traced through `hotpatch()`: stop-machin
 ### Status
 
 The LKM backend has been independently traced. Its stop-machine batch patching and rollback behavior are present, and uncertain install records are deliberately retained by the shared hook callers. The earlier KPIMG-only analysis is now explicitly scoped to KPIMG. No production code was changed; no fault injection, vendor-KDIR build, or device validation was performed.
+
+
+## 19. Source-contract coverage for uncertain install and checked recovery (2026-11-17)
+
+### Verifier changes
+
+- `scripts/verify_lkm_hook_runtime_contract.py` now extracts the bodies of `hook()`, `hook_wrap()`, `unhook_checked()`, and `hook_unwrap_remove()` and asserts their uncertainty/retention branches.
+- The verifier checks that an `-EUCLEAN` install publishes the relevant Hook/chain record and returns `-HOOK_PATCH_UNCERTAIN` before reaching the ordinary failure cleanup path.
+- It separately checks that ordinary patch failure follows the cleanup path, and that inline-chain callback slots are removed/reaped before the constructing record is freed.
+- It checks both checked removal APIs: successful restoration retires the registry metadata, while failed restoration calls `hook_mem_cancel_retire()` so the record remains registered rather than being treated as successfully retired.
+- It also checks that LKM retirement cancellation resets the retiring state, while successful retirement unlinks the metadata record.
+
+### CI integration
+
+The existing `.github/workflows/build.yml` already runs `python3 -m py_compile scripts/*.py` and includes `verify_lkm_hook_runtime_contract.py` in its verifier loop. No workflow change was needed.
+
+### Limits
+
+These are source-contract assertions, not execution or fault-injection tests. They do not prove that the LKM patch backend can reproduce each error path correctly on the Y73S vendor kernel, nor do they validate runtime instruction restoration, CPU interleavings, module lifetime, or the exact 4.14.141 vendor ABI. No production code or device image was changed.
+
+### Status
+
+The previously documented source-verifier coverage gap for the two uncertain-install paths and the two checked-removal failure-retention paths is closed at the source-contract level. Runtime fault injection and exact vendor-KDIR compilation remain outstanding.
