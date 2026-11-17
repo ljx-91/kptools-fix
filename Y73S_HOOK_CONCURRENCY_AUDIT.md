@@ -1580,7 +1580,7 @@ A focused comparison of `lkm/kpm/module.c` against the KPIMG reference in `kerne
 - The LKM loader computes `text_size` and `ro_size`, but does not retain `symtab_start` in its module object. It then calls `kp_clear_bti_gp()` over the entire allocation. That path only handles PXN/UXN/GP; it does not establish the KPIMG-style RX / RW-NX / RO-NX classes or read-only AP/DBM state.
 - On the Y73S 4.14 no-`init_mm`, no-`PTE_GP` module allocator fallback, the LKM permission helper returns success based on the allocator contract without inspecting page descriptors. The exact allocator AP/DBM descriptors still require the vendor KDIR; do not infer them from this source-only audit.
 - The LKM PTE walk changes permissions as it walks. A later page lookup or verification failure can leave an already-modified prefix. The optional whole-range `set_memory_x()` call also precedes the PTE walk and is not rolled back.
-- LKM `kp_free_exec()` returns `void`; on NX restoration failure it logs and leaks the allocation, but callers cannot observe the failure and may discard the module metadata. KPIMG instead propagates free errors and maintains a retryable quarantine state.
+- LKM `kp_free_exec()` returns `void`; on NX restoration failure it logs and leaks the allocation, but callers cannot observe the failure and may discard module metadata. This affects load-failure cleanup and normal unload, plus callback-trampoline cleanup in both `kp_kpm_init()` and `kp_kpm_exit()`; the latter paths clear the pointer after the failed release, and exit also resets allocator backend references. KPIMG instead propagates free errors and maintains a retryable quarantine state.
 
 ### Verification and CI
 
