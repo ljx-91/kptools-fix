@@ -399,9 +399,9 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
         safe_iter.find("kp_callback_tramp_slot_alloc(&slot)"),
         safe_iter.find("words[0] = 0;"),
         safe_iter.find("kp_flush_kpm_icache(words"),
-        safe_iter.find("kp_real_kallsyms_on_each_symbol("),
-        safe_iter.find("kp_callback_tramp_slot_free(slot);", safe_iter.find("kp_real_kallsyms_on_each_symbol(")),
-        safe_iter.find("kp_module_put(owner);", safe_iter.find("kp_real_kallsyms_on_each_symbol(")),
+        safe_iter.find("rc = kp_real_kallsyms_on_each_symbol("),
+        safe_iter.find("kp_callback_tramp_slot_free(slot);", safe_iter.find("rc = kp_real_kallsyms_on_each_symbol(")),
+        safe_iter.find("kp_module_put(owner);", safe_iter.find("rc = kp_real_kallsyms_on_each_symbol(")),
     ]
     if any(position < 0 for position in trampoline_order) or trampoline_order != sorted(trampoline_order):
         raise AssertionError("KPM trampoline slot/write/flush/call/release order changed; re-audit concurrency")
