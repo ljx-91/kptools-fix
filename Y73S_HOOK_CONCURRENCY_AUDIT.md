@@ -1426,3 +1426,34 @@ This is a source-confirmed lifecycle/resource-management gap, not a reproduced d
 ### Status
 
 The permission-transition failure semantics are now confirmed at source level. No runtime fault injection, vendor-KDIR build, or device validation has been performed. No production code was changed in this audit step.
+
+
+## 17. Text-patch rendezvous is not a post-unhook grace period (2026-11-17)
+
+### Confirmed source facts
+
+- On the Y73S 4.14 path, `hotpatch()` requires the resolved `stop_machine` symbol and calls `stop_machine(hotpatch_cb, &patch, NULL)`. It deliberately does not fall back to an uncoordinated per-CPU patch callback.
+- `hotpatch_cb()` preflights all target instruction addresses, snapshots their original words, applies the patch sequence, and rolls back the already-applied prefix in reverse order if a later write fails. If rollback itself fails, it returns `-EUCLEAN`.
+- `hotpatch_nosync()` restores the target PTE after each instruction write and performs D-cache clean plus `flush_icache_all()`. The PTE helper performs the corresponding TLB maintenance.
+- Therefore, for this 4.14 backend, `hook_uninstall()` does obtain a stop-machine-coordinated text-patching operation and instruction-cache maintenance indirectly through `hotpatch()`; the earlier observation that `hook_uninstall()` itself contains no explicit cache flush must not be read as meaning that no cache maintenance occurs.
+- The stop-machine rendezvous protects the instruction-update operation. It is not, by itself, an explicit post-unhook grace-period API for every CPU that may already have entered the old trampoline/transit path. The hook-removal callers do not perform a second drain after `hotpatch()` returns.
+- `unhook_checked()` and `hook_unwrap_remove()` check or claim registry state before restoring the original instructions. The chain reader count is incremented inside `_transitN`, after execution has reached the transit body; it cannot account for a CPU that has already left the patched prologue but has not yet executed that increment.
+- Successful retirement removes the registry metadata but deliberately retains the payload, relocated code, and transit allocation. This avoids immediately freeing storage that a delayed execution may still reference, but it does not make the LKM-resident `_transitN` code safe to unload.
+
+### Consequences
+
+- The Y73S 4.14 hotpatch backend has stronger patch-time coordination than a plain instruction write: all online CPUs are coordinated by `stop_machine`, and instruction cache maintenance is performed for the modified words.
+- That fact does **not** establish that the parent `kernelpatch.ko` can be unloaded safely after unhook. The unresolved issue is lifetime of already-entered or delayed LKM transit execution and the absence of a proven parent-module shutdown barrier, not simply a missing cache flush in `hook_uninstall()`.
+- The `-EUCLEAN` path remains important: when rollback cannot restore the previous instruction sequence, the caller publishes/retains the hook record rather than freeing its executable storage. This is a deliberate fail-safe response to an uncertain patch state.
+- For kernels below 4.6, `hotpatch()` uses the legacy `aarch64_insn_patch_text()` API instead of this 4.14 stop-machine path; conclusions specific to the Y73S 4.14 backend must not be generalized to that branch.
+
+### Required closure
+
+- Keep parent-LKM unload unsupported/unverified while transit code remains in LKM text, even though the Y73S text patch itself is stop-machine coordinated.
+- A future unload design must provide a resident entry gate or equivalent module-lifetime reference acquisition before any LKM transit instruction can execute, then close the gate and drain accepted entries before freeing LKM text.
+- Preserve the existing quarantine behavior until a complete grace-period protocol is implemented and tested. Do not turn `hook_mem_retire()` into an eager free.
+- Add tests that separately assert the 4.14 stop-machine patch contract, the `-EUCLEAN` retention path, and the post-unhook/module-exit lifetime contract. These are distinct properties.
+
+### Status
+
+The Y73S 4.14 text-patching path is now traced through `hotpatch()`: stop-machine coordination and D-cache/I-cache/TLB maintenance are present. This narrows, but does not close, the unload-safety issue. No production code was changed; no vendor-KDIR build, runtime fault injection, or device validation was performed.
