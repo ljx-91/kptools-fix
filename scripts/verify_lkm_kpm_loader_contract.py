@@ -353,6 +353,10 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     # the backend keeps a retryable allocation record.
     kpm_init = body(module, "int kp_kpm_init(void)")
     kpm_exit = body(module, "void kp_kpm_exit(void)")
+    need(r"kp_callback_tramp\s*=\s*kp_malloc_exec\(PAGE_SIZE\)", kpm_init,
+         "KPM callback trampoline must have an explicit executable-page allocation")
+    need(r"kp_clear_bti_gp\(\(unsigned long\)kp_callback_tramp,\s*PAGE_SIZE\)", kpm_init,
+         "callback trampoline execute-bit setup must be audited separately from W^X")
     need(r"kp_free_exec\(kp_callback_tramp,\s*PAGE_SIZE\)", kpm_init,
          "KPM init failure must route trampoline cleanup through checked executable release")
     need(r"kp_free_exec\(kp_callback_tramp,\s*kp_callback_tramp_size\)", kpm_exit,
@@ -384,6 +388,10 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     need(r"kp_module_put\(owner\)", safe_iter, "kallsyms callback owner release")
     need(r"words\[0\]\s*=", safe_iter, "callback trampoline instruction-slot write")
     need(r"kp_flush_kpm_icache\(words", safe_iter, "callback trampoline I-cache maintenance")
+    need(r"kp_callback_tramp_slot_alloc\(&slot\)", safe_iter,
+         "callback trampoline must allocate a distinct slot for concurrent iterators")
+    need(r"slot\s*\*\s*KP_CALLBACK_TRAMP_SLOT_SIZE", safe_iter,
+         "concurrent trampoline calls must use separate instruction slots")
     if not any(token in safe_iter for token in ("kp_do_set_memory_nx", "kp_restore_nx_gp", "kp_update_bti_gp")):
         print("[KNOWN GAP] KPM callback trampoline writes instructions into its executable page without an RW-NX/RX transition; concurrent slots make an unsynchronized whole-page toggle unsafe.")
 
