@@ -368,7 +368,8 @@ checks = {
     "KPM loader verifies executable permissions before invoking module init":
         "rc = kp_clear_bti_gp((unsigned long)mod->start, mod->size);" in kpm_load and
         "if (rc)" in kpm_load and
-        kpm_load.index("if (rc)") < kpm_load.index("goto free;") <
+        kpm_load.index("if (rc)", kpm_load.index("rc = kp_clear_bti_gp((unsigned long)mod->start, mod->size);")) <
+            kpm_load.index("goto free;", kpm_load.index("rc = kp_clear_bti_gp((unsigned long)mod->start, mod->size);")) <
             kpm_load.index("kp_call_init(mod->init"),
     "KPM executable allocation is retained when NX/BTI restoration fails":
         "if (kp_restore_nx_gp((unsigned long)region, size))" in kpm_exec_free and
