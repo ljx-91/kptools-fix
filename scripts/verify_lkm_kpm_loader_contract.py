@@ -357,10 +357,11 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "KPM init failure must route trampoline cleanup through checked executable release")
     need(r"kp_free_exec\(kp_callback_tramp,\s*kp_callback_tramp_size\)", kpm_exit,
          "KPM exit must route trampoline cleanup through checked executable release")
-    for label, caller in (("init-failure", kpm_init), ("subsystem-exit", kpm_exit)):
-        if re.search(r"kp_free_exec\(kp_callback_tramp,[^;]*\);[\\s\\S]*?kp_callback_tramp\\s*=\\s*NULL", caller):
-            print(f"[KNOWN GAP] KPM callback trampoline {label} path discards its pointer after void kp_free_exec(); NX-restore failure cannot be retried.")
-    if not re.search(r"static\\s+void\\s+kp_free_exec\\(", module):
+    if re.search(r"static\s+void\s+kp_free_exec\(", module):
+        for label, caller in (("init-failure", kpm_init), ("subsystem-exit", kpm_exit)):
+            if re.search(r"kp_free_exec\(kp_callback_tramp,[^;]*\);[\s\S]*?kp_callback_tramp\s*=\s*NULL", caller):
+                print(f"[KNOWN GAP] KPM callback trampoline {label} path discards its pointer after void kp_free_exec(); NX-restore failure cannot be retried.")
+    else:
         print("[REVIEW] kp_free_exec() signature changed; re-audit all KPM and trampoline release call sites.")
     need(r"free_rc\s*=\s*mod->start\s*\?\s*kp_free_exec\(mod->start\)\s*:\s*0",
          kpimg_load, "KPIMG must observe executable-image free errors")
