@@ -1457,3 +1457,45 @@ The permission-transition failure semantics are now confirmed at source level. N
 ### Status
 
 The Y73S 4.14 text-patching path is now traced through `hotpatch()`: stop-machine coordination and D-cache/I-cache/TLB maintenance are present. This narrows, but does not close, the unload-safety issue. No production code was changed; no vendor-KDIR build, runtime fault injection, or device validation was performed.
+
+
+## 18. Separate LKM text-patch backend and uncertain-install retention (2026-11-17)
+
+### Critical backend distinction
+
+- The LKM build includes `kernel/base/hook.c` from `lkm/hook/hook_engine.c`, but supplies its own `hotpatch()` implementation in `lkm/hook/hook_runtime.c`.
+- That LKM wrapper calls `kp_patch_text_batch()` in `lkm/infra/patch_memory.c`. It does **not** call the KPIMG `hotpatch()` implementation in `kernel/base/hotpatch.c`.
+- Consequently, the KPIMG `hotpatch_cb()` implementation and its comments are not evidence for the LKM runtime path. The two backends must be audited and tested independently.
+
+### LKM patch-batch behavior confirmed
+
+- `kp_patch_text_batch()` rejects a missing `stop_machine` resolver and returns `-EWOULDBLOCK` when called in atomic or IRQ-disabled context; otherwise it invokes the resolved `stop_machine` callback with a NULL CPU mask.
+- `kp_patch_text_batch_stop()` validates and snapshots every target word before writing the first word, rejects duplicate/unaligned/invalid targets, and applies one 32-bit patch at a time.
+- On a write error, it rolls back the attempted prefix in reverse order, including the current word, flushes the I-cache for the batch, and returns the original error if rollback succeeds or `-EUCLEAN` if any rollback write fails.
+- On success it flushes the I-cache for each patched word. The lower-level fixmap write also cleans the D-cache for each word.
+- The LKM path therefore has its own stop-machine rendezvous, rollback, and cache-maintenance implementation. This is now source-confirmed separately from the KPIMG backend.
+
+### `-EUCLEAN` propagation and retention
+
+- The shared `hook()` install path treats `-EUCLEAN` specially: it publishes the Hook record and returns `-HOOK_PATCH_UNCERTAIN` rather than freeing its executable storage.
+- The shared `hook_wrap()` path does the same for an inline chain: publish the chain record and return `-HOOK_PATCH_UNCERTAIN`.
+- For ordinary patch errors where rollback is reported successful, those paths remove the constructing chain state and call `hook_mem_free()`.
+- The uncertainty path intentionally does not provide a successful backup/installed result to the caller. Recovery must be performed by a checked origin-based removal path after inspecting the uncertain state; callers must not assume that a failed install means the origin text is untouched.
+- `unhook_checked()` and `hook_unwrap_remove()` both preserve the record if the subsequent restore operation fails: they cancel the retiring state rather than freeing the payload. This is consistent with fail-safe retention.
+
+### Remaining verification gap
+
+- The current `verify_lkm_hook_runtime_contract.py` asserts parts of the LKM batch rollback and stop-machine contract, but does not assert the shared `hook()` and `hook_wrap()` `-EUCLEAN` propagation/retention branches or the checked recovery behavior.
+- There is no runtime fault-injection test proving failures at each patch word, rollback failure, and later checked restoration under the actual LKM backend.
+- `kp_patch_data()` performs prevalidation and a serialized fixmap write, but the runtime error/rollback behavior still needs fault injection; source inspection alone does not prove the vendor mapping and stop-machine environment behave as assumed.
+
+### Required closure
+
+- Keep LKM and KPIMG patch-backend contracts as separate test targets.
+- Extend the source-contract verifier to assert both `-EUCLEAN` retention branches and both checked-unhook failure-retention branches.
+- Add a host-side or instrumented fault-injection harness for first/middle/final write failure and rollback failure. Verify that uncertain installs remain discoverable and are never freed as if rollback had succeeded.
+- Do not change the retention policy or add automatic cleanup on `-HOOK_PATCH_UNCERTAIN` until a recovery protocol can prove the origin instructions and transit lifetime are safe.
+
+### Status
+
+The LKM backend has been independently traced. Its stop-machine batch patching and rollback behavior are present, and uncertain install records are deliberately retained by the shared hook callers. The earlier KPIMG-only analysis is now explicitly scoped to KPIMG. No production code was changed; no fault injection, vendor-KDIR build, or device validation was performed.
