@@ -62,7 +62,56 @@ reader_pin = hook.index("hook_chain_pin_callbacks(hook_chain, 0", reader_enter)
 reader_unpin = hook.index("hook_chain_unpin_callbacks(hook_chain, 0", reader_pin)
 reader_exit = hook.index("hook_chain_reader_exit(hook_chain, 0);", reader_unpin)
 
+hook_install_api = function_body(hook, "hook_err_t hook(")
+hook_wrap_api = function_body(hook, "hook_err_t hook_wrap(")
+checked_unhook_api = function_body(hook, "int unhook_checked(void *func)")
+chain_remove_api = function_body(hook, "int hook_unwrap_remove(")
+
 checks = {
+    "inline hook retains and publishes record when patch rollback is uncertain":
+        "if (patch_rc == -EUCLEAN)" in hook_install_api and
+        "hook_mem_publish(hook);" in hook_install_api and
+        "return -HOOK_PATCH_UNCERTAIN;" in hook_install_api and
+        hook_install_api.index("hook_mem_publish(hook);") <
+            hook_install_api.index("return -HOOK_PATCH_UNCERTAIN;") and
+        "hook_mem_free(hook);" in hook_install_api,
+    "inline hook frees constructing record only on ordinary failure":
+        "err = -HOOK_PATCH_FAILED;" in hook_install_api and
+        hook_install_api.index("err = -HOOK_PATCH_FAILED;") <
+            hook_install_api.index("goto fail;") <
+            hook_install_api.index("hook_mem_free(hook);"),
+    "inline chain retains and publishes record when patch rollback is uncertain":
+        "if (patch_rc == -EUCLEAN)" in hook_wrap_api and
+        "hook_mem_publish(chain);" in hook_wrap_api and
+        "return -HOOK_PATCH_UNCERTAIN;" in hook_wrap_api and
+        hook_wrap_api.index("hook_mem_publish(chain);") <
+            hook_wrap_api.index("return -HOOK_PATCH_UNCERTAIN;") and
+        "hook_mem_free(chain);" in hook_wrap_api,
+    "inline chain ordinary patch failure removes callback slots before freeing":
+        "err = -HOOK_PATCH_FAILED;" in hook_wrap_api and
+        hook_wrap_api.index("hook_chain_remove_locked(chain, before, after);") <
+            hook_wrap_api.index("hook_mem_free(chain);") and
+        hook_wrap_api.index("hook_chain_reap_slots_locked(chain, 0);") <
+            hook_wrap_api.index("hook_mem_free(chain);"),
+    "checked inline unhook cancels retirement and retains record on restore failure":
+        "rc = hook_uninstall(hook);" in checked_unhook_api and
+        "if (!rc)" in checked_unhook_api and
+        "hook_mem_retire(hook);" in checked_unhook_api and
+        "hook_mem_cancel_retire(hook);" in checked_unhook_api and
+        checked_unhook_api.index("hook_mem_cancel_retire(hook);") >
+            checked_unhook_api.index("hook_mem_retire(hook);"),
+    "checked chain removal cancels retirement and retains record on restore failure":
+        "rc = hook_uninstall(&chain->hook);" in chain_remove_api and
+        "if (!rc)" in chain_remove_api and
+        "hook_mem_retire(chain);" in chain_remove_api and
+        "hook_mem_cancel_retire(chain);" in chain_remove_api and
+        chain_remove_api.index("hook_mem_cancel_retire(chain);") >
+            chain_remove_api.index("hook_mem_retire(chain);"),
+    "retire cancellation is distinct from successful metadata retirement":
+        "void hook_mem_cancel_retire(void *payload)" in runtime and
+        "void hook_mem_retire(void *payload)" in runtime and
+        "mem->retiring = false;" in function_body(runtime, "void hook_mem_cancel_retire(void *payload)") and
+        "list_del(&mem->list);" in function_body(runtime, "void hook_mem_retire(void *payload)"),
     "LKM transit object disables CFI, LTO, stack protector and conditional SCS":
         "-fno-sanitize=cfi -fno-stack-protector -fno-jump-tables" in hook_kbuild and
         "-fno-lto" in hook_kbuild and
