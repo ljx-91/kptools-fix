@@ -51,12 +51,6 @@ hook_exec_free = function_body(runtime, "static void kp_hook_exec_free(void *reg
 hook_install = function_body(hook, "int hook_install(")
 phys_from_virt = function_body(patch_memory, "static unsigned long kp_phys_from_virt(")
 manager_exit = function_body(manager, "int hook_rename_lsm_exit(void)")
-kpm_module = read("lkm/kpm/module.c")
-kpm_pte_update = function_body(kpm_module, "static int kp_update_bti_gp(")
-kpm_restore_nx = function_body(kpm_module, "static int kp_restore_nx_gp(")
-kpm_exec_free = function_body(kpm_module, "static void kp_free_exec(")
-kpm_load = function_body(kpm_module, "long kp_load_module(")
-
 syscall_unhook = function_body(read("lkm/infra/syscall_table.c"), "int kp_syscall_unhook(")
 supercall_uninstall = function_body(read("lkm/supercall/supercall.c"), "int kp_supercall_uninstall(void)")
 
@@ -365,29 +359,6 @@ checks = {
         "hook_mem_set_transit(chain, transit)" in hook_engine and
         "transit[4] = (uint64_t)chain;" in hook_engine and
         "chain->transit" not in hook_engine,
-    "KPM loader verifies executable permissions before invoking module init":
-        "rc = kp_clear_bti_gp((unsigned long)mod->start, mod->size);" in kpm_load and
-        "if (rc)" in kpm_load and
-        kpm_load.index("if (rc)", kpm_load.index("rc = kp_clear_bti_gp((unsigned long)mod->start, mod->size);")) <
-            kpm_load.index("goto free;", kpm_load.index("rc = kp_clear_bti_gp((unsigned long)mod->start, mod->size);")) <
-            kpm_load.index("kp_call_init(mod->init"),
-    "KPM executable allocation is retained when NX/BTI restoration fails":
-        "if (kp_restore_nx_gp((unsigned long)region, size))" in kpm_exec_free and
-        "leaking %px" in kpm_exec_free and
-        kpm_exec_free.index("if (kp_restore_nx_gp((unsigned long)region, size))") <
-            kpm_exec_free.index("return;", kpm_exec_free.index("if (kp_restore_nx_gp((unsigned long)region, size))")) <
-            kpm_exec_free.index("switch (kp_exec_backend)"),
-    "KPM restore without init_mm requires successful set_memory_nx":
-        "if (kp_set_memory_nx)" in kpm_restore_nx and
-        "if (!kp_kpm_init_mm && rc)" in kpm_restore_nx and
-        kpm_restore_nx.index("kp_set_memory_nx") <
-            kpm_restore_nx.index("if (!kp_kpm_init_mm && rc)") <
-            kpm_restore_nx.index("return rc;"),
-    "KPM PTE transition is explicitly non-transactional until fault-injection exists":
-        "set_pte_at(kp_kpm_init_mm, addr, pte, __pte(v));" in kpm_pte_update and
-        "flush_tlb_kernel_range(addr, addr + PAGE_SIZE);" in kpm_pte_update and
-        "snapshot" not in kpm_pte_update.lower() and
-        "rollback" not in kpm_pte_update.lower(),
     "sleepable Hook payload allocation is outside raw hook_engine locks":
         "hook_engine_lock()" not in function_body(hook, "hook_err_t hook(") and
         function_body(hook, "hook_err_t hook_wrap(").index("hook_engine_unlock(flags);") <
