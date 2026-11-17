@@ -155,7 +155,7 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "trampoline branch target must be the pinned KPM callback")
     need(r"\(unsigned long\)kp_callback_tramp\s*\+\s*offset\s*\+\s*12", trampoline,
          "AArch64 B immediate must be relative to the branch instruction at slot offset 12")
-    need(r"branch_off\s*&\s*0x03ffffff", trampoline,
+    need(r"\(unsigned long\)branch_off\s*>>\s*2\)\s*&\s*0x03ffffff", trampoline,
          "AArch64 B immediate must encode only imm26 after alignment/range checks")
     need(r"words\[2\]\s*=\s*0xd503245f", trampoline,
          "trampoline must begin with the expected BTI C landing instruction")
