@@ -45,6 +45,7 @@ jobs:
           python3 scripts/test_kpm_setup_load_info.py
           python3 scripts/test_kpm_simplify_symbols.py
           python3 scripts/test_kpm_layout_copy.py
+          python3 scripts/test_kpm_trampoline_slots.py
           python3 scripts/test_kpimg_kpm_loader.py
           python3 scripts/test_y73s_hook_gate_model.py
           python3 scripts/test_y73s_hook_gate_interleavings.py
