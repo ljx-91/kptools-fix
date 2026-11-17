@@ -18,6 +18,12 @@ After relocation, `kp_load_module()` calls `kp_clear_bti_gp(mod->start, mod->siz
 On the Y73S 4.14 compatibility path, the source allows `init_mm` to be absent when the selected backend is `module_alloc()` and `PTE_GP` is unavailable. In that case `kp_update_bti_gp()` returns success without walking PTEs; the code relies on the module allocator's `PAGE_KERNEL_EXEC` contract. The LKM loader therefore does not itself establish per-section W^X on this path. Where `init_mm` is present, it also processes the entire image as executable rather than separating code, data, rodata, and appended symbols.
 
 **Conclusion:** LKM KPM currently verifies/enables privileged execution bits for the whole image, but it does not implement a text RX / writable-data RW-NX / rodata-and-symbol RO-NX policy. This is a W^X release blocker for the LKM KPM path. The source does not establish the exact AP/DBM state supplied by the specific Vivo vendor `module_alloc()` implementation, so this audit deliberately does not claim an exact vendor PTE value or make a device-level RWX observation.
+## Additional W^X gap: mutable callback trampoline page
+
+The LKM KPM allocates a one-page callback trampoline through the executable-memory backend using `kp_malloc_exec(PAGE_SIZE)`. The source comment explicitly describes this as a module-allocated RWX page. `kp_kpm_safe_kallsyms_on_each_symbol()` writes the four instruction words for a selected slot directly into that page and flushes the instruction cache; it does not perform an RW-NX-to-RX permission transition around the write. This is a separate mutable-executable-storage gap from the loaded KPM image's section layout.
+
+This should not be fixed by naively toggling the whole page NX during each slot write. The implementation deliberately gives concurrent iterators distinct slots in the same trampoline page, so a whole-page permission transition can race with another iterator executing a different slot. A safe redesign needs an explicitly reviewed write/execute alias strategy or a synchronization/quiescence protocol that covers all in-flight trampoline calls. The actual AP/DBM permissions still depend on the selected allocator and exact vendor implementation; the source proves the mutable executable design and the lack of a per-write permission transition, not the exact Vivo PTE descriptor.
+
 
 ## KPIMG reference behavior
 
@@ -68,7 +74,7 @@ These checks prove source contracts and selected helper behavior only. They do n
 
 1. Obtain the exact Vivo Y73s 4.14.141 vendor KDIR, generated configuration, and matching symbol/version data. Confirm the backend allocator's real AP/PXN/UXN/GP descriptors and all page-table/cache/TLB APIs.
 2. Carry the section boundaries through the LKM module object, including an explicit page-aligned `symtab_start`.
-3. Add an LKM page-class protection implementation that preflights every target page and applies RX, RW-NX, and RO-NX to the correct ranges without changing unrelated attributes or omitting any mapped alias.
+3. Add LKM image page-class protection (RX / RW-NX / RO-NX) and redesign the mutable callback trampoline so instruction writes cannot occur through an executable writable mapping. Preserve correctness for concurrent iterator slots; do not use an unsynchronized whole-page permission toggle.
 4. Define failure semantics for a partial PTE transition. At minimum, retain a precise changed-page set, attempt restoration with required TLB maintenance, and do not report a clean state if rollback fails. Do not release the image if its permissions cannot be established.
 5. Change LKM executable-free APIs to propagate NX-restoration errors. Retain retryable records for both KPM images and the callback trampoline; preserve the backend/free-function state until all executable allocations are safely reclaimed.
 6. Add host fault-injection tests for first/middle/last page preflight failures and an instrumented vendor-kernel test for permission application/rollback and free quarantine. Then compile with the exact vendor KDIR and validate the loaded KPM lifecycle.
@@ -78,6 +84,7 @@ These checks prove source contracts and selected helper behavior only. They do n
 - LKM KPM section layout and image copy: host-testable coverage already exists.
 - KPIMG page-class W^X reference: source-confirmed; not a substitute for validating the LKM backend.
 - LKM KPM full-image permission handling: **known W^X gap; not fixed**.
+- KPM callback trampoline writable/executable storage: **known W^X gap; not fixed**.
 - LKM KPM quarantine/retry after NX restore failure, including callback-trampoline cleanup: **known lifecycle gap; not fixed**.
 - Multi-page LKM permission rollback: **not transactional; not fixed**.
 - Production kernel code: unchanged in this audit.
