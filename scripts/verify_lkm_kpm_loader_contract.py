@@ -257,7 +257,7 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "kernel executable mappings must remain UXN for EL0")
     need(r"return\s+-EFAULT", permissions, "unmapped or unsupported PTEs must fail closed")
     need(r"kp_clear_bti_gp\(\(unsigned long\)mod->start,\s*mod->size\)", load,
-         "verify KPM image permissions before init")
+         "verify KPM PXN/UXN/GP execute bits before init (not full W^X protection)")
     need(r"if\s*\(rc\).*?goto free;", load,
          "permission verification failure must prevent KPM init")
     need(r"kp_update_bti_gp\(base,\s*size,\s*false\)", restore_perm,
@@ -310,8 +310,8 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     if (re.search(r"kp_clear_bti_gp\(\(unsigned long\)mod->start,\s*mod->size\)", load) and
         "kp_exec_protect_module" not in load and
         "symtab_start" not in module_header and
-        "PTE_RDONLY" not in lkm_permission_update and
-        "PTE_DBM" not in lkm_permission_update):
+        "PTE_RDONLY" not in permissions and
+        "PTE_DBM" not in permissions):
         print("[KNOWN GAP] LKM KPM marks the whole image executable at EL1; it does not split text/data/symbol pages into RX, RW-NX, and RO-NX.")
         print("[KNOWN GAP] LKM KPM stores ro_size but does not apply it; its module metadata has no symtab_start boundary.")
     else:
