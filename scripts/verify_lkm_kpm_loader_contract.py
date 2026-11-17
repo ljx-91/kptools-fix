@@ -36,6 +36,9 @@ def main():
     module = read("lkm/kpm/module.c")
     relo = read("lkm/kpm/relo.c")
     kp_relo = read("kernel/patch/module/relo.c")
+    kpimg_module = read("kernel/patch/module/module.c")
+    exec_alloc_source = read("kernel/base/exec_alloc.c")
+    kpimg_module_header = read("kernel/patch/include/module.h")
     for source_name, source_text in (("LKM", relo), ("KPIMG", kp_relo)):
         need(r"if\s*\(sval\s*>=\s*0\).*?imm\s*=\s*~imm", source_text,
              source_name + " signed MOVW must select MOVZ/MOVN from the full signed value")
@@ -130,6 +133,17 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
 
     load = body(module, "long kp_load_module(")
     need(r"len\s*<=\s*0", load, "non-positive in-memory image length")
+
+    # Keep the LKM port's page-permission behavior distinct from KPIMG's
+    # reference loader; both implementations live in this repository.
+    kpimg_load = body(kpimg_module, "long load_module_ex(")
+    kpimg_sym_layout = body(kpimg_module, "static int layout_symtab(struct module *")
+    kpimg_page_protect = body(exec_alloc_source, "static int exec_set_module_protection(")
+    kpimg_apply_protection = body(exec_alloc_source, "static uint64_t exec_apply_protection(")
+    kpimg_prepare_pages = body(exec_alloc_source, "static int exec_prepare_pages(")
+    lkm_sym_layout = body(module, "static int layout_symtab(")
+    lkm_unload = body(module, "long kp_unload_module(")
+    lkm_can_skip_mm = body(module, "static bool kp_kpm_can_skip_init_mm(")
     path_load = body(module, "long kp_load_module_path(")
     need(r"len\s*<=\s*0\s*\|\|\s*len\s*>\s*INT_MAX", path_load,
          "oversized on-disk image length")
@@ -265,6 +279,61 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "KPM free paths must restore the complete image range")
     if "kp_free_exec(mod->start);" in module:
         raise AssertionError("KPM unload must pass the complete image size to kp_free_exec")
+
+    # KPIMG reference: page-aligned text/rodata/symbol boundaries and explicit
+    # RX, RO-NX, and RW-NX page classes before module init.
+    need(r"mod->symtab_start\s*=\s*mod->size", kpimg_sym_layout,
+         "KPIMG must record the page-aligned start of appended symbol/string tables")
+    need(r"kp_exec_protect_module\(mod->start,\s*mod->size,\s*mod->text_size,\s*mod->ro_size,\s*mod->symtab_start\)",
+         kpimg_load, "KPIMG must apply page-class W^X protections before KPM init")
+    need(r"if\s*\(offset\s*<\s*text_size\)\s*protection\s*=\s*KP_EXEC_RX",
+         kpimg_page_protect, "KPIMG text pages must be RX")
+    need(r"else if\s*\(offset\s*<\s*ro_size\s*\|\|\s*offset\s*>=\s*symtab_start\)\s*protection\s*=\s*KP_EXEC_RO_NX",
+         kpimg_page_protect, "KPIMG rodata and symbol/string pages must be RO-NX")
+    need(r"else\s*protection\s*=\s*KP_EXEC_RW_NX", kpimg_page_protect,
+         "KPIMG writable data pages must be RW-NX")
+    need(r"PTE_RDONLY", kpimg_apply_protection,
+         "KPIMG protection must explicitly set read-only pages")
+    need(r"PTE_DBM", kpimg_apply_protection,
+         "KPIMG protection must explicitly distinguish writable pages")
+    need(r"exec_prepare_pages\(a,\s*base,\s*allocation_bytes,\s*&linear_base\)",
+         kpimg_page_protect, "KPIMG must preflight the full allocation")
+    need(r"exec_prepare_pages\(a,\s*base,\s*allocation_bytes,\s*&linear_base\);[\s\S]*?if\s*\(!rc\)\s*\{[\s\S]*?for\s*\(unsigned int i = 0; i < pages;",
+         kpimg_page_protect, "KPIMG must preflight all PTEs before the first permission write")
+    need(r"page_size[\s\S]*?mod->size\s*&\s*\(page_size\s*-\s*1\)", kpimg_sym_layout,
+         "KPIMG symbol tables must begin after a page-aligned writable segment")
+    need(r"symtab_start", kpimg_module_header,
+         "KPIMG module metadata must retain the symbol-table protection boundary")
+
+    # The LKM version currently has no corresponding protection stage. Keep
+    # this explicit in CI output rather than calling the XN/BTI check W^X.
+    if (re.search(r"kp_clear_bti_gp\(\(unsigned long\)mod->start,\s*mod->size\)", load) and
+        "kp_exec_protect_module" not in load and
+        "symtab_start" not in module_header and
+        "PTE_RDONLY" not in lkm_permission_update and
+        "PTE_DBM" not in lkm_permission_update):
+        print("[KNOWN GAP] LKM KPM marks the whole image executable at EL1; it does not split text/data/symbol pages into RX, RW-NX, and RO-NX.")
+        print("[KNOWN GAP] LKM KPM stores ro_size but does not apply it; its module metadata has no symtab_start boundary.")
+    else:
+        print("[REVIEW] LKM KPM permission code changed; re-audit its W^X ranges before clearing the known-gap status.")
+
+    need(r"return\s+kp_exec_backend\s*==\s*KP_EXEC_BACKEND_MODULE\s*\|\|\s*kp_exec_backend\s*==\s*KP_EXEC_BACKEND_EXECMEM",
+         lkm_can_skip_mm, "no-init_mm legacy allocator exception must be explicit")
+    if re.search(r"if\s*\(!kp_kpm_init_mm\)[\s\S]*?kp_kpm_can_skip_init_mm\(\)[\s\S]*?return\s+0", permissions):
+        print("[KNOWN GAP] On kernels without init_mm and PTE_GP, the legacy allocator path skips the PTE walk and trusts its executable allocation contract.")
+    else:
+        raise AssertionError("no-init_mm permission fallback changed; re-audit the legacy allocator guarantee")
+
+    if re.search(r"static\s+void\s+kp_free_exec\(", module) and re.search(
+        r"kp_free_exec\(mod->start,\s*mod->size\);[\s\S]*?kfree\(mod\);", lkm_unload
+    ):
+        print("[KNOWN GAP] LKM KPM NX-restore failure is a void/leak path; unload then discards the module record rather than keeping a retryable quarantine entry.")
+    need(r"free_rc\s*=\s*mod->start\s*\?\s*kp_free_exec\(mod->start\)\s*:\s*0",
+         kpimg_load, "KPIMG must observe executable-image free errors")
+    need(r"if\s*\(free_rc\)[\s\S]*?KP_MODULE_QUARANTINED", kpimg_load,
+         "KPIMG must quarantine an image when permission reset/free fails")
+    need(r"KP_MODULE_QUARANTINED", kpimg_module_header,
+         "KPIMG module lifecycle must contain a quarantine state")
     if module.count("enum kp_exec_backend {") != 1:
         raise AssertionError("KPM executable backend enum must be defined exactly once")
     need(r"KP_EXEC_BACKEND_MODULE", exec_alloc, "matched module allocator backend")
