@@ -140,7 +140,6 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     kpimg_sym_layout = body(kpimg_module, "static int layout_symtab(struct module *")
     kpimg_page_protect = body(exec_alloc_source, "static int exec_set_module_protection(")
     kpimg_apply_protection = body(exec_alloc_source, "static uint64_t exec_apply_protection(")
-    kpimg_prepare_pages = body(exec_alloc_source, "static int exec_prepare_pages(")
     lkm_sym_layout = body(module, "static int layout_symtab(")
     lkm_unload = body(module, "long kp_unload_module(")
     lkm_can_skip_mm = body(module, "static bool kp_kpm_can_skip_init_mm(")
@@ -298,6 +297,9 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "KPIMG protection must explicitly distinguish writable pages")
     need(r"exec_prepare_pages\(a,\s*base,\s*allocation_bytes,\s*&linear_base\)",
          kpimg_page_protect, "KPIMG must preflight the full allocation")
+    kpimg_prepare_pages = body(exec_alloc_source, "static int exec_prepare_pages(")
+    need(r"for\s*\(unsigned int i = 0; i < pages; \+\+i\)[\s\S]*?exec_walk_leaf\(kimg_va\)[\s\S]*?a->kimg_ptes\[i\] = kimg_pte",
+         kpimg_prepare_pages, "KPIMG must gather and validate every target PTE before changing permissions")
     need(r"exec_prepare_pages\(a,\s*base,\s*allocation_bytes,\s*&linear_base\);[\s\S]*?if\s*\(!rc\)\s*\{[\s\S]*?for\s*\(unsigned int i = 0; i < pages;",
          kpimg_page_protect, "KPIMG must preflight all PTEs before the first permission write")
     need(r"page_size[\s\S]*?mod->size\s*&\s*\(page_size\s*-\s*1\)", kpimg_sym_layout,
@@ -310,12 +312,17 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     if (re.search(r"kp_clear_bti_gp\(\(unsigned long\)mod->start,\s*mod->size\)", load) and
         "kp_exec_protect_module" not in load and
         "symtab_start" not in module_header and
+        "mod->symtab_start" not in lkm_sym_layout and
         "PTE_RDONLY" not in permissions and
         "PTE_DBM" not in permissions):
         print("[KNOWN GAP] LKM KPM marks the whole image executable at EL1; it does not split text/data/symbol pages into RX, RW-NX, and RO-NX.")
-        print("[KNOWN GAP] LKM KPM stores ro_size but does not apply it; its module metadata has no symtab_start boundary.")
+        print("[KNOWN GAP] LKM KPM stores ro_size but does not consume it; its module metadata/layout has no symtab_start boundary.")
     else:
         print("[REVIEW] LKM KPM permission code changed; re-audit its W^X ranges before clearing the known-gap status.")
+    if module.count("mod->ro_size") == 1:
+        print("[KNOWN GAP] mod->ro_size is only populated by layout_sections(); no LKM KPM permission path consumes it.")
+    else:
+        print("[REVIEW] mod->ro_size reference count changed; verify all uses and page-class semantics.")
 
     need(r"return\s+kp_exec_backend\s*==\s*KP_EXEC_BACKEND_MODULE\s*\|\|\s*kp_exec_backend\s*==\s*KP_EXEC_BACKEND_EXECMEM",
          lkm_can_skip_mm, "no-init_mm legacy allocator exception must be explicit")
@@ -328,6 +335,8 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
         r"kp_free_exec\(mod->start,\s*mod->size\);[\s\S]*?kfree\(mod\);", lkm_unload
     ):
         print("[KNOWN GAP] LKM KPM NX-restore failure is a void/leak path; unload then discards the module record rather than keeping a retryable quarantine entry.")
+    if re.search(r"kp_free_exec\(mod->start,\s*mod->size\);[\s\S]*?kfree\(mod\);", load):
+        print("[KNOWN GAP] LKM load-failure cleanup also cannot observe kp_free_exec() failure before freeing the module record.")
     need(r"free_rc\s*=\s*mod->start\s*\?\s*kp_free_exec\(mod->start\)\s*:\s*0",
          kpimg_load, "KPIMG must observe executable-image free errors")
     need(r"if\s*\(free_rc\)[\s\S]*?KP_MODULE_QUARANTINED", kpimg_load,
