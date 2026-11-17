@@ -61,11 +61,12 @@ The no-`init_mm` fallback is another distinct case: it cannot inspect PTEs, so a
 
 ## Test coverage added or wired into CI
 
-- `verify_lkm_kpm_loader_contract.py` now compares the LKM permission path to the KPIMG reference page classes and emits explicit `[KNOWN GAP]` diagnostics while the LKM code still has the full-image executable path.
+- `verify_lkm_kpm_loader_contract.py` compares the LKM permission path to the KPIMG reference page classes and emits explicit `[KNOWN GAP]` diagnostics. It also checks the callback trampoline allocation, distinct slot use, all instruction-word writes, I-cache flush ordering, and the absence of an RW-NX/RX transition.
 - The verifier checks the KPIMG symbol-table boundary, page-class assignments, AP/DBM permission masks, whole-range PTE preflight ordering, and KPIMG quarantine behavior.
 - The verifier independently checks the LKM no-`init_mm` fallback and the void/leak free path, including the loss of retryable module metadata.
 - `test_kpm_layout_copy.py` host-executes the production layout/copy functions for LKM and KPIMG and covers valid layouts, section alignment rejection, destination bounds, and allocation failure. It does not model page permissions.
 - `test_kpm_execmem_restore.py` host-executes the production KPM NX-restoration helper with stubbed results. It tests the no-`init_mm` fail-closed path and the `init_mm` fallback. It does not execute the actual ARM64 page-table walk or inject faults into a real vendor kernel.
+- `test_kpm_trampoline_slots.py` host-executes the production slot allocator/free functions with a pthread-backed lock. It races 32 threads to allocate all 256 slots, checks uniqueness and `-EBUSY` on exhaustion, then verifies release and reuse. It does not execute the generated AArch64 trampoline or test real PTE permissions.
 - Both host tests and the KPM loader verifier are wired into the FolkPatch regression workflow. The layout and NX-restore host tests are also wired into the main Linux build workflow.
 
 These checks prove source contracts and selected helper behavior only. They do not prove the actual vendor PTE layout, kernel ABI, full section W^X at runtime, or real multi-CPU transitions.
