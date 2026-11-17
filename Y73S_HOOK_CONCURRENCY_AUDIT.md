@@ -1402,3 +1402,27 @@ The PTE update issue is a separate partial-state hazard. A failed multi-page tra
 ### Status
 
 This is a source-confirmed lifecycle/resource-management gap, not a reproduced device crash. No production behavior was changed. LKM unload remains unsupported/unverified with live KPMs or outstanding Hook chains; strict W^X and transactional PTE rollback remain unresolved.
+
+
+## 16. Permission-transition audit and verifier coverage gap (2026-11-17)
+
+### Additional confirmed details
+
+- `kp_hook_update_exec()` calls the optional `set_memory_x()` or `set_memory_nx()` for the entire range before walking and verifying individual PTEs.
+- If the later page-table walk fails on page N, the function returns immediately. It does not restore pages 0..N-1, and it does not undo a successful range-level `set_memory_*` call.
+- The page-level loop also writes each PTE before verifying the resulting descriptor. A verification failure returns without restoring the previous PTE value.
+- Consequently, the failure result does not mean the range retained its original permissions. Depending on the backend and failure point, the range may be fully changed, partially changed, or in a state that the caller cannot infer from the return code alone.
+- The current `verify_lkm_hook_runtime_contract.py` checks for selected PTE masks, lock use, and the presence of permission APIs, but it does not assert transactional rollback or inject a failure at each page boundary.
+- The current source-contract verifier checks selected teardown ordering (supercall, sucompat, rename, CFI), but does not establish that all KPM images, external Hook chains, or LKM transit executions are drained before parent-module release. The gate-interleaving Python test remains a protocol model and does not execute the production LKM transit path.
+
+### Required closure
+
+- Snapshot the original permission state for every affected page before the first mutation, or use a target-kernel API with documented all-or-nothing semantics.
+- On any failure, restore every changed page and perform the required TLB maintenance. If restoration fails, preserve the allocation and surface an explicit indeterminate-permissions error; do not continue as though the range were NX or RX.
+- Add fault-injection coverage for failure at the first, middle, and final page, including failure from the optional range-level `set_memory_*` API and failure during post-write verification.
+- Extend lifecycle tests to distinguish (a) source-level teardown ordering, (b) the modeled gate protocol, and (c) actual production transit machine code. A passing model test must never imply production unload safety.
+- Keep normal LKM unload classified as unsupported until KPM images and every external Hook/transit dependency have a proven shutdown barrier.
+
+### Status
+
+The permission-transition failure semantics are now confirmed at source level. No runtime fault injection, vendor-KDIR build, or device validation has been performed. No production code was changed in this audit step.
