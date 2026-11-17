@@ -111,6 +111,7 @@ jobs:
           python3 scripts/test_kpm_simplify_symbols.py
           python3 scripts/test_kpm_layout_copy.py
           python3 scripts/test_kpm_execmem_restore.py
+          python3 scripts/test_kpm_trampoline_slots.py
           python3 scripts/verify_lkm_kpm_loader_contract.py
           python3 scripts/test_kpimg_kpm_loader.py
 
