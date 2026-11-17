@@ -1569,3 +1569,25 @@ The optional `set_memory_x()` result during KPM loading is logged but does not b
 ### Status
 
 The KPM path is now explicitly audited separately from the LKM Hook path. No production permission code was changed. The KPM multi-page partial-state hazard remains open pending exact Y73S 4.14.141 vendor KDIR/API confirmation and instrumented fault injection.
+
+
+## 22. LKM KPM W^X and image-release audit (2026-11-17)
+
+A focused comparison of `lkm/kpm/module.c` against the KPIMG reference in `kernel/patch/module/module.c` and `kernel/base/exec_alloc.c` is recorded in [`Y73S_KPM_WX_AUDIT_20261117.md`](Y73S_KPM_WX_AUDIT_20261117.md).
+
+### Findings
+
+- The LKM loader computes `text_size` and `ro_size`, but does not retain `symtab_start` in its module object. It then calls `kp_clear_bti_gp()` over the entire allocation. That path only handles PXN/UXN/GP; it does not establish the KPIMG-style RX / RW-NX / RO-NX classes or read-only AP/DBM state.
+- On the Y73S 4.14 no-`init_mm`, no-`PTE_GP` module allocator fallback, the LKM permission helper returns success based on the allocator contract without inspecting page descriptors. The exact allocator AP/DBM descriptors still require the vendor KDIR; do not infer them from this source-only audit.
+- The LKM PTE walk changes permissions as it walks. A later page lookup or verification failure can leave an already-modified prefix. The optional whole-range `set_memory_x()` call also precedes the PTE walk and is not rolled back.
+- LKM `kp_free_exec()` returns `void`; on NX restoration failure it logs and leaks the allocation, but callers cannot observe the failure and may discard the module metadata. KPIMG instead propagates free errors and maintains a retryable quarantine state.
+
+### Verification and CI
+
+- `verify_lkm_kpm_loader_contract.py` now audits the LKM/KPIMG differences and reports the LKM W^X and quarantine deficiencies as explicit known gaps.
+- `test_kpm_layout_copy.py` and `test_kpm_execmem_restore.py` are now run in the main Linux build workflow as well as the FolkPatch regression workflow.
+- The FolkPatch workflow now also runs `verify_lkm_kpm_loader_contract.py`.
+
+### Decision
+
+No production permission or allocator code was changed. The LKM KPM page-class W^X gap, no-`init_mm` allocator-contract dependency, multi-page partial-state behavior, and missing retryable quarantine remain open. They require the exact Vivo Y73s 4.14.141 vendor KDIR and configuration, followed by vendor build and instrumented runtime fault injection. The host tests and source contracts do not establish device boot compatibility.
