@@ -1586,6 +1586,7 @@ A focused comparison of `lkm/kpm/module.c` against the KPIMG reference in `kerne
 ### Verification and CI
 
 - `verify_lkm_kpm_loader_contract.py` now audits the LKM/KPIMG differences and reports the LKM W^X and quarantine deficiencies as explicit known gaps.
+- `test_kpm_trampoline_slots.py` host-executes the production trampoline slot allocator with concurrent threads and checks unique ownership, exhaustion, release, and reuse; it does not exercise the ARM64 page permissions or instruction execution.
 - `test_kpm_layout_copy.py` and `test_kpm_execmem_restore.py` are now run in the main Linux build workflow as well as the FolkPatch regression workflow.
 - The FolkPatch workflow now also runs `verify_lkm_kpm_loader_contract.py`.
 
