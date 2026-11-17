@@ -39,7 +39,11 @@ However, callers cannot observe that failure. In the normal KPM unload path, the
 
 The KPIMG reference behaves differently: its free operation returns an error, the loader retains a retryable module/quarantine record on failure, and the unload path can attempt reclamation again. The LKM version currently has no equivalent quarantined module state.
 
-**Conclusion:** LKM's NX failure behavior is conservative about freeing executable pages, but incomplete as a lifecycle protocol because the retained allocation is no longer represented by retryable module metadata.
+The same unobservable failure affects the callback-trampoline allocation, not just loaded KPM images. In `kp_kpm_init()`, if trampoline permission verification fails, the code calls `kp_free_exec(kp_callback_tramp, PAGE_SIZE)` and then clears `kp_callback_tramp` and its size. `kp_kpm_exit()` likewise calls `kp_free_exec()` and clears the pointer/size before resetting the allocator backend function pointers. If NX restoration fails in either path, the page is leaked without a retained retry record; during subsystem exit, the matching free-backend references are also discarded.
+
+The concrete LKM call sites are the load-failure cleanup, normal unload, trampoline-init failure cleanup, and subsystem exit. Each uses the same `void kp_free_exec()` contract, so none can distinguish successful reclamation from deliberate leak-on-failure.
+
+**Conclusion:** LKM's NX failure behavior is conservative about freeing executable pages, but incomplete as a lifecycle protocol because a retained allocation is no longer represented by retryable metadata. The trampoline page shares this defect.
 
 ## Permission-transition partial-state limit
 
@@ -66,7 +70,7 @@ These checks prove source contracts and selected helper behavior only. They do n
 2. Carry the section boundaries through the LKM module object, including an explicit page-aligned `symtab_start`.
 3. Add an LKM page-class protection implementation that preflights every target page and applies RX, RW-NX, and RO-NX to the correct ranges without changing unrelated attributes or omitting any mapped alias.
 4. Define failure semantics for a partial PTE transition. At minimum, retain a precise changed-page set, attempt restoration with required TLB maintenance, and do not report a clean state if rollback fails. Do not release the image if its permissions cannot be established.
-5. Change LKM executable-free APIs to propagate NX-restoration errors. Retain a retryable quarantine record and only discard module metadata after the executable allocation has actually been released.
+5. Change LKM executable-free APIs to propagate NX-restoration errors. Retain retryable records for both KPM images and the callback trampoline; preserve the backend/free-function state until all executable allocations are safely reclaimed.
 6. Add host fault-injection tests for first/middle/last page preflight failures and an instrumented vendor-kernel test for permission application/rollback and free quarantine. Then compile with the exact vendor KDIR and validate the loaded KPM lifecycle.
 
 ## Status
@@ -74,7 +78,7 @@ These checks prove source contracts and selected helper behavior only. They do n
 - LKM KPM section layout and image copy: host-testable coverage already exists.
 - KPIMG page-class W^X reference: source-confirmed; not a substitute for validating the LKM backend.
 - LKM KPM full-image permission handling: **known W^X gap; not fixed**.
-- LKM KPM quarantine/retry after NX restore failure: **known lifecycle gap; not fixed**.
+- LKM KPM quarantine/retry after NX restore failure, including callback-trampoline cleanup: **known lifecycle gap; not fixed**.
 - Multi-page LKM permission rollback: **not transactional; not fixed**.
 - Production kernel code: unchanged in this audit.
 - Vendor-KDIR compilation, real PTE fault injection, and Y73s device validation: not performed.
