@@ -1541,3 +1541,31 @@ No production permission logic was changed. A proper transactional implementatio
 ### Status
 
 The executable-region release path now has explicit source-contract coverage for its conservative leak-on-NX-failure behavior. The multi-page PTE transition remains a known unresolved partial-state hazard and must not be described as transactional.
+
+
+## 21. Separate KPM executable-page permission audit (2026-11-17)
+
+### Backend distinction
+
+The KPM image loader in `lkm/kpm/module.c` has its own executable allocator and PTE permission path. It is not the same implementation as `lkm/hook/hook_runtime.c`; source-contract coverage for the LKM Hook allocator does not establish KPM loader behavior.
+
+### Confirmed KPM behavior
+
+- `kp_load_module()` attempts the optional `set_memory_x()` helper, then calls `kp_clear_bti_gp()` to inspect and normalize the mapped pages. A permission verification error branches to cleanup before `kp_call_init()`; module initialization is not entered when the PTE check fails.
+- `kp_update_bti_gp()` updates one PTE at a time under that page-table lock, verifies the written bits, unlocks, and flushes that page's kernel TLB range.
+- `kp_restore_nx_gp()` attempts `set_memory_nx()`. If `init_mm` is unavailable and that helper fails, it returns the error rather than assuming the pages are safe to free. With `init_mm`, it falls back to the PTE walk.
+- `kp_free_exec()` deliberately leaks the allocation when NX/BTI restoration cannot be verified; it does not return potentially executable memory to module_alloc/execmem/vmalloc free paths.
+
+### Unresolved partial-state hazard
+
+`kp_update_bti_gp()` has no original-PTE snapshot or rollback transaction. If a later page-table lookup or post-write verification fails, earlier pages may already have had PXN/UXN/GP bits changed. The loader then enters cleanup, whose NX restoration attempts to normalize the full range; if that restoration also fails, the allocation is retained. This is conservative against unsafe freeing, but it is not proof that the permission state was restored uniformly.
+
+The optional `set_memory_x()` result during KPM loading is logged but does not by itself abort loading; the subsequent PTE verification is treated as authoritative. This is a deliberate two-stage design in the current source, but exact behavior still requires the target vendor kernel implementation and runtime testing.
+
+### Verifier additions
+
+`scripts/verify_lkm_hook_runtime_contract.py` now independently checks that KPM permission verification precedes module init, that failed NX/BTI restoration retains executable memory, that no-init_mm restoration requires a successful `set_memory_nx()`, and that the per-page KPM transition remains explicitly classified as non-transactional. These are source-contract checks, not runtime fault injection.
+
+### Status
+
+The KPM path is now explicitly audited separately from the LKM Hook path. No production permission code was changed. The KPM multi-page partial-state hazard remains open pending exact Y73S 4.14.141 vendor KDIR/API confirmation and instrumented fault injection.
