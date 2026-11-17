@@ -392,6 +392,19 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "callback trampoline must allocate a distinct slot for concurrent iterators")
     need(r"slot\s*\*\s*KP_CALLBACK_TRAMP_SLOT_SIZE", safe_iter,
          "concurrent trampoline calls must use separate instruction slots")
+    for word_index in range(4):
+        need(rf"words\[{word_index}\]\s*=", safe_iter,
+             f"callback trampoline instruction word {word_index} must be initialized")
+    trampoline_order = [
+        safe_iter.find("kp_callback_tramp_slot_alloc(&slot)"),
+        safe_iter.find("words[0] = 0;"),
+        safe_iter.find("kp_flush_kpm_icache(words"),
+        safe_iter.find("kp_real_kallsyms_on_each_symbol("),
+        safe_iter.find("kp_callback_tramp_slot_free(slot);", safe_iter.find("kp_real_kallsyms_on_each_symbol(")),
+        safe_iter.find("kp_module_put(owner);", safe_iter.find("kp_real_kallsyms_on_each_symbol(")),
+    ]
+    if any(position < 0 for position in trampoline_order) or trampoline_order != sorted(trampoline_order):
+        raise AssertionError("KPM trampoline slot/write/flush/call/release order changed; re-audit concurrency")
     if not any(token in safe_iter for token in ("kp_do_set_memory_nx", "kp_restore_nx_gp", "kp_update_bti_gp")):
         print("[KNOWN GAP] KPM callback trampoline writes instructions into its executable page without an RW-NX/RX transition; concurrent slots make an unsynchronized whole-page toggle unsafe.")
 
