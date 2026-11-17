@@ -257,8 +257,17 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     need(r"return\s+-EFAULT", permissions, "unmapped or unsupported PTEs must fail closed")
     need(r"kp_clear_bti_gp\(\(unsigned long\)mod->start,\s*mod->size\)", load,
          "verify KPM PXN/UXN/GP execute bits before init (not full W^X protection)")
-    need(r"if\s*\(rc\).*?goto free;", load,
-         "permission verification failure must prevent KPM init")
+    permission_call = "rc = kp_clear_bti_gp((unsigned long)mod->start, mod->size);"
+    permission_at = load.find(permission_call)
+    if permission_at < 0:
+        raise AssertionError("KPM loader must call the complete-image permission verifier")
+    permission_if = load.find("if (rc)", permission_at + len(permission_call))
+    permission_fail = load.find("goto free;", permission_if)
+    init_call = load.find("kp_call_init(mod->init", permission_at)
+    if permission_if < 0 or permission_fail < 0 or init_call < 0 or not (
+        permission_at < permission_if < permission_fail < init_call
+    ):
+        raise AssertionError("KPM permission-verification failure must branch to cleanup before module init")
     need(r"kp_update_bti_gp\(base,\s*size,\s*false\)", restore_perm,
          "KPM release must restore NX/BTI PTE bits")
     need(r"!kp_kpm_init_mm\s*&&\s*rc", restore_perm,
