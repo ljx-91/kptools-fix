@@ -78,7 +78,7 @@ checks = {
     "inline hook frees constructing record only on ordinary failure":
         "err = -HOOK_PATCH_FAILED;" in hook_install_api and
         hook_install_api.index("err = -HOOK_PATCH_FAILED;") <
-            hook_install_api.index("goto fail;") <
+            hook_install_api.index("goto fail;", hook_install_api.index("err = -HOOK_PATCH_FAILED;")) <
             hook_install_api.index("hook_mem_free(hook);"),
     "inline chain retains and publishes record when patch rollback is uncertain":
         "if (patch_rc == -EUCLEAN)" in hook_wrap_api and
