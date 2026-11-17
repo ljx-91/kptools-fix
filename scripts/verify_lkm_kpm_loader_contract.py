@@ -382,6 +382,10 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     safe_iter = body(module, "int kp_kpm_safe_kallsyms_on_each_symbol(")
     need(r"kp_module_get_by_addr", safe_iter, "kallsyms callback owner acquisition")
     need(r"kp_module_put\(owner\)", safe_iter, "kallsyms callback owner release")
+    need(r"words\[0\]\s*=", safe_iter, "callback trampoline instruction-slot write")
+    need(r"kp_flush_kpm_icache\(words", safe_iter, "callback trampoline I-cache maintenance")
+    if not any(token in safe_iter for token in ("kp_do_set_memory_nx", "kp_restore_nx_gp", "kp_update_bti_gp")):
+        print("[KNOWN GAP] KPM callback trampoline writes instructions into its executable page without an RW-NX/RX transition; concurrent slots make an unsynchronized whole-page toggle unsafe.")
 
     imm = body(relo, "static int reloc_insn_imm(")
     need(r"if\s*\(lsb\s*&&.*?\(1ULL\s*<<\s*lsb\)", imm,
