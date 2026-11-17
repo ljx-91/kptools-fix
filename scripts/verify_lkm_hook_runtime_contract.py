@@ -138,12 +138,12 @@ checks = {
         "kp_hook_make_exec(p, alloc_size)" in hook_exec_alloc and
         hook_exec_alloc.index("kp_hook_make_exec(p, alloc_size)") <
             hook_exec_alloc.index("kp_hook_exec_free(p, alloc_size);") <
-            hook_exec_alloc.index("p = NULL;"),
+            hook_exec_alloc.index("p = NULL;", hook_exec_alloc.index("kp_hook_exec_free(p, alloc_size);")),
     "executable region is deliberately retained when NX restoration fails":
         "if (kp_hook_make_nx(region, size))" in hook_exec_free and
         "leaking %px" in hook_exec_free and
         hook_exec_free.index("if (kp_hook_make_nx(region, size))") <
-            hook_exec_free.index("return;") <
+            hook_exec_free.index("return;", hook_exec_free.index("if (kp_hook_make_nx(region, size))")) <
             hook_exec_free.index("switch (kp_hook_alloc_backend)"),
     "whole-range permission API runs before manual per-page PTE verification":
         "kp_hook_set_memory_x(base, size >> PAGE_SHIFT)" in hook_update_exec and
