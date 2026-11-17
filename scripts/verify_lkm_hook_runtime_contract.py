@@ -134,6 +134,26 @@ checks = {
         "v &= ~exec_deny_mask" in hook_update_exec and
         "v |= KP_HOOK_PTE_UXN" in hook_update_exec and
         "KP_HOOK_PTE_GP" in hook_update_exec,
+    "failed executable-page setup does not free the region before an NX attempt":
+        "kp_hook_make_exec(p, alloc_size)" in hook_exec_alloc and
+        hook_exec_alloc.index("kp_hook_make_exec(p, alloc_size)") <
+            hook_exec_alloc.index("kp_hook_exec_free(p, alloc_size);") <
+            hook_exec_alloc.index("p = NULL;"),
+    "executable region is deliberately retained when NX restoration fails":
+        "if (kp_hook_make_nx(region, size))" in hook_exec_free and
+        "leaking %px" in hook_exec_free and
+        hook_exec_free.index("if (kp_hook_make_nx(region, size))") <
+            hook_exec_free.index("return;") <
+            hook_exec_free.index("switch (kp_hook_alloc_backend)"),
+    "whole-range permission API runs before manual per-page PTE verification":
+        "kp_hook_set_memory_x(base, size >> PAGE_SHIFT)" in hook_update_exec and
+        "kp_hook_set_memory_nx(base, size >> PAGE_SHIFT)" in hook_update_exec and
+        hook_update_exec.index("kp_hook_set_memory_x(base, size >> PAGE_SHIFT)") <
+            hook_update_exec.index("for (addr = base; addr < end; addr += PAGE_SIZE)") and
+        hook_update_exec.index("kp_hook_set_memory_nx(base, size >> PAGE_SHIFT)") <
+            hook_update_exec.index("for (addr = base; addr < end; addr += PAGE_SIZE)") and
+        hook_update_exec.index("set_pte_at(kp_hook_init_mm, addr, pte, __pte(v));") <
+            hook_update_exec.index("if (executable ?"),
     "LKM hook allocator fails closed when executable page setup fails":
         "kp_hook_make_exec(p, alloc_size)" in hook_exec_alloc and
         "kp_hook_exec_free(p, alloc_size);" in hook_exec_alloc and
