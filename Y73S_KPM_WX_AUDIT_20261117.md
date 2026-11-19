@@ -75,6 +75,14 @@ The KPIMG reference already demonstrates a stronger pattern: checked free return
 
 **Required LKM fix design:** change the executable free helper to return an error; retain the module object and executable pointer in a quarantine registry whenever NX restoration fails; do not unlink normal modules or free metadata until executable release succeeds; and make KPM teardown preserve backend/trampoline ownership if the trampoline cannot be safely reclaimed. The retry path must not rerun module init/exit callbacks. Do not simply copy KPIMG code: LKM uses a different lock, allocator wrapper, and module structure.
 
+## Upstream 4.14.141 allocator baseline: useful, but not a substitute for Vivo source
+
+A public Android common merge commit identifies itself as the merge of Linux 4.14.141 into the Android 4.14 common branch. In that exact baseline, `arch/arm64/kernel/module.c` implements `module_alloc()` using `__vmalloc_node_range(..., PAGE_KERNEL_EXEC, ...)`, so the generic Android-common 4.14.141 allocator requests executable module mappings. See the [4.14.141 merge commit](https://android.googlesource.com/kernel/common/+/633520acdb43d607ce4af54d6bf3111cd5ae3747/) and its [arm64 module allocator implementation](https://android.googlesource.com/kernel/common/+/633520acdb43d607ce4af54d6bf3111cd5ae3747/arch/arm64/kernel/module.c#37).
+
+This narrows the earlier no-`init_mm` concern: if Vivo's 4.14.141 `module_alloc()` is unchanged from that baseline, then the module backend's executable allocation contract may be sufficient even when `set_memory_x()` is unavailable or fails. It does **not** establish the actual Y73s behavior: vendor trees can modify allocator code, and the exact PD2031 source/KDIR has not been inspected. The LKM's status remains a *vendor-contract verification gap*, not proof that its pages are NX.
+
+This baseline does not resolve the separate W^X issue. `PAGE_KERNEL_EXEC` is an executable mapping request; it does not make dynamically written trampoline instructions safe from simultaneous writes and execution, nor does it give the LKM's module image per-section RX / RW-NX / RO-NX permissions. The source still needs a non-executable write path or equivalent design for mutable trampoline code, and a section-aware image-protection scheme.
+
 ## Additional verification gap: failed executable-permission setup on the no-init_mm path
 
 The LKM main-image load path calls `set_memory_x()` when the symbol is available. A non-zero return is logged, but it does not stop loading. The code then calls `kp_clear_bti_gp()` and treats a zero return as permission verification success.
