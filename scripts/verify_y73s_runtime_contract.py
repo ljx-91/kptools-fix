@@ -77,7 +77,7 @@ def main():
             "Y73S executable allocator must continue validating every KIMG leaf PTE")
 
     start_c = source("kernel/base/start.c")
-    restore_map = function_body(start_c, "void restore_map(")
+    restore_map = function_body(start_c, "static void restore_map_internal(bool quiet)")
     require(r"for\s*\(uint64_t page\s*=\s*start\s*&\s*~\(\(uint64_t\)page_size\s*-\s*1\);\s*page\s*<\s*end;",
             restore_map, "map restoration must iterate from aligned page bases")
     require(r"page_end\s*=\s*page\s*\+\s*page_size.*?pgtable_entry_kernel\(page\)",
@@ -86,6 +86,14 @@ def main():
             restore_map, "map restoration must clip each copy to its page boundaries")
     if "for (uint64_t i = start;" in restore_map:
         raise AssertionError("unaligned map restore loop can write into a second page without opening its PTE")
+    restore_wrapper = function_body(start_c, "void restore_map(void)")
+    require(r"restore_map_internal\(false\);", restore_wrapper,
+            "normal map restoration must share the checked byte-exact routine")
+    start_fn = function_body(start_c, "int __attribute__((section(\".start.text\"))) __noinline start(")
+    require(r"start_mapping_context_init\(kimage_voff,\s*linear_voff\).*?start_init\(kimage_voff,\s*linear_voff\)",
+            start_fn, "page-table context must be initialized before fallible startup resolution")
+    require(r"if\s*\(rc\)\s*\{[\s\S]*?restore_map_internal\(true\);[\s\S]*?return rc;",
+            start_fn, "failed startup resolution must restore the map anchor before returning")
     walk_init = function_body(start_c, "static int pgtable_walk_init(")
     require(r"page_shift != 12.*?page_shift != 14.*?page_shift != 16",
             walk_init, "page-table lookup must reject unsupported granule sizes before shifting")
