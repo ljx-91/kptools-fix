@@ -5,9 +5,15 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 src = (ROOT / "kernel/base/start.c").read_text(encoding="utf-8")
-start = src.index("void restore_map()")
-end = src.index("\n#define log_reg", start)
+start = src.index("static void restore_map_internal(bool quiet)")
+end = src.index("\nvoid restore_map(void)", start)
 body = src[start:end]
+wrapper_start = end
+wrapper_end = src.index("\n#define log_reg", wrapper_start)
+wrapper = src[wrapper_start:wrapper_end]
+
+start_fn = src[src.index("int __attribute__((section(\".start.text\"))) __noinline start("):]
+map_init = src[src.index("static int start_mapping_context_init("):src.index("\nvoid symbol_init();")]
 
 checks = {
     "backup length is positive": "start_preset.map_backup_len <= 0",
@@ -26,4 +32,26 @@ if "*(uint64_t *)j" in body:
     raise SystemExit("[FAIL] wide tail store remains in restore_map")
 if "map_restored = 1;" not in body:
     raise SystemExit("[FAIL] restore idempotence guard missing")
+if "if (!quiet && printk && vsnprintf)" not in body:
+    raise SystemExit("[FAIL] quiet restoration still depends on printk/vsnprintf")
+
+if "restore_map_internal(false);" not in wrapper:
+    raise SystemExit("[FAIL] public restore_map wrapper does not use common restoration routine")
+
+if "start_mapping_context_init(kimage_voff, linear_voff)" not in start_fn:
+    raise SystemExit("[FAIL] minimal page-table context is not initialized before startup")
+
+if start_fn.find("start_mapping_context_init(kimage_voff, linear_voff)") > start_fn.find("start_init(kimage_voff, linear_voff)"):
+    raise SystemExit("[FAIL] mapping context must be ready before fallible start_init")
+
+failure = start_fn[start_fn.find("if (rc) {"):start_fn.find("uint64_t id_aa64mmfr1_el1")]
+if "restore_map_internal(true);" not in failure or "return rc;" not in failure:
+    raise SystemExit("[FAIL] start_init failure does not restore the map anchor before returning")
+
+for token in ("page_size = 1ull << page_shift;", "pgd_pa = baddr & page_size_mask;",
+              "pgd_va = phys_to_virt(pgd_pa);", "if (!linear_voffset)"):
+    if token not in map_init:
+        raise SystemExit("[FAIL] early mapping context missing: " + token)
+
+print("[PASS] early KP startup failure restores the original map anchor without printk")
 print("[PASS] map backup restoration is bounded and byte-exact")
