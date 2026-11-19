@@ -95,7 +95,8 @@ These checks prove source contracts and selected helper behavior only. They do n
 - LKM KPM section layout and image copy: host-testable coverage already exists.
 - KPIMG page-class W^X reference: source-confirmed; not a substitute for validating the LKM backend.
 - LKM KPM full-image permission handling: **known W^X gap; not fixed**.
-- No-\`init_mm\` executable-permission establishment after failed \`set_memory_x()\`: **verification gap; target allocator contract not confirmed**.\n- KPM callback trampoline writable/executable storage: **known W^X gap; not fixed**.
+- No-`init_mm` executable-permission establishment after failed `set_memory_x()`: **verification gap; target allocator contract not confirmed**.
+- KPM callback trampoline writable/executable storage: **known W^X gap; not fixed**.
 - LKM KPM quarantine/retry after NX restore failure, including callback-trampoline cleanup: **known lifecycle gap; not fixed**.
 - Multi-page LKM permission rollback: **not transactional; not fixed**.
 - Production kernel code: unchanged in this audit.
