@@ -828,8 +828,18 @@ static int start_init(uint64_t kimage_voff, uint64_t linear_voff)
     kernel_size = start_preset.kernel_size;
     runtime_base_addr = (uint64_t)_link_base;
 
-    if (start_preset.patch_config.printk) {
-        printk = (typeof(printk))(kernel_va + start_preset.patch_config.printk);
+    /*
+     * This preset offset is used before kallsyms has been established. Treat
+     * it as untrusted metadata: a stale/out-of-image offset must not become an
+     * indirect branch target during early error reporting.
+     */
+    uint64_t preset_printk = start_preset.patch_config.printk;
+    if (preset_printk && kernel_size > 0 &&
+        preset_printk < (uint64_t)kernel_size &&
+        preset_printk <= (uint64_t)-1 - kernel_va) {
+        printk = (typeof(printk))(kernel_va + preset_printk);
+    } else {
+        printk = 0;
     }
 
 #if 0
