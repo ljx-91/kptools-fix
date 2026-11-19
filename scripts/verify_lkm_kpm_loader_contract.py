@@ -254,6 +254,23 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "execmem allocator/free pair")
     need(r"kp_kpm_can_skip_init_mm\(\)", kpm_init,
          "4.14 executable module allocator may operate without hidden init_mm")
+    # On the no-init_mm compatibility path the PTE verifier is skipped.
+    # A failed set_memory_x() must therefore not be described as PTE-verified:
+    # the allocator's executable-mapping contract still needs target-kernel proof.
+    if re.search(
+        r"if\\s*\\(kp_set_memory_x\\)\\s*kp_do_set_memory_x\\(\\(unsigned long\\)kp_callback_tramp,\\s*1\\)\\s*;\\s*perm_rc\\s*=\\s*kp_clear_bti_gp",
+        kpm_init,
+    ):
+        print("[KNOWN GAP] KPM trampoline ignores set_memory_x() status; with no init_mm the following permission helper skips its PTE walk and returns success.")
+    else:
+        print("[REVIEW] KPM trampoline set_memory_x() handling changed; verify no-init_mm execution permission proof.")
+    if re.search(r"if\\s*\\(xret\\)\\s*logkw", load) and re.search(
+        r"if\\s*\\(!kp_kpm_init_mm\\)[\\s\\S]*?kp_kpm_can_skip_init_mm\\(\\)[\\s\\S]*?return\\s+0",
+        permissions,
+    ):
+        print("[KNOWN GAP] Main KPM load treats set_memory_x() failure as warning; on the no-init_mm fallback the subsequent helper cannot inspect PTEs and may still return success.")
+    else:
+        print("[REVIEW] Main KPM set_memory_x()/no-init_mm path changed; re-audit executable permission proof.")
     need(r"pte_lockptr", permissions, "PTE permission updates must hold the page-table lock")
     need(r"set_pte_at", permissions, "PTE permission update must use set_pte_at")
     need(r"exec_deny_mask\s*=\s*KP_LKM_PTE_PXN\s*\|\s*KP_LKM_PTE_GP", permissions,
