@@ -312,6 +312,22 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
          "KPM free paths must restore the complete image range")
     if "kp_free_exec(mod->start);" in module:
         raise AssertionError("KPM unload must pass the complete image size to kp_free_exec")
+    # KPIMG has a retryable quarantine state; keep the LKM's ownership gap
+    # visible until it gains an equivalent checked-free lifecycle.
+    if re.search(r"static\\s+void\\s+kp_free_exec\\s*\\(", module):
+        print("[KNOWN GAP] LKM kp_free_exec() is void; callers cannot distinguish a successful free from a retained executable allocation.")
+    else:
+        print("[REVIEW] LKM executable free return contract changed; verify all callers preserve ownership on failure.")
+    if re.search(r"list_del_init\\(&mod->list\\)[\\s\\S]*?kp_free_exec\\(mod->start,\\s*mod->size\\)[\\s\\S]*?kfree\\(mod\\)", lkm_unload):
+        print("[KNOWN GAP] LKM unload unlinks and frees module metadata regardless of executable-page NX restoration result; it has no retryable quarantine state.")
+    else:
+        print("[REVIEW] LKM unload reclamation ordering changed; verify registry/quarantine retry semantics.")
+    kpm_exit = body(module, "void kp_kpm_exit(void)")
+    if re.search(r"kp_free_exec\\(kp_callback_tramp,\\s*kp_callback_tramp_size\\);\\s*kp_callback_tramp\\s*=\\s*NULL", kpm_exit):
+        print("[KNOWN GAP] KPM exit clears the trampoline pointer after void free even when permission restoration may have failed.")
+    else:
+        print("[REVIEW] KPM trampoline teardown changed; verify retained allocation ownership on free failure.")
+
 
     # KPIMG reference: page-aligned text/rodata/symbol boundaries and explicit
     # RX, RO-NX, and RW-NX page classes before module init.
