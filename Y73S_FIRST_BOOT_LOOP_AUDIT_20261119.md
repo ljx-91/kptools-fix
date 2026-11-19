@@ -41,8 +41,9 @@ The current branch now:
 2. If `start_init()` returns an error, restores the exact original map-anchor bytes with a quiet path that does not depend on resolved `printk` or `vsnprintf`.
 3. Returns to the caller, where `map.c` restores the original WXN bit.
 4. If the page-table context itself cannot be established, it still stops rather than attempting an unsafe restore without valid page-table translation state.
+5. The preset `printk` offset is checked against the kernel image extent and pointer-addition overflow before it can become an indirect call target; an invalid preset disables early printk rather than jumping through it.
 
-Implementation: `kernel/base/start.c`, commits `f7b3e350`, `529db41e`.
+Implementation: `kernel/base/start.c`, commits `f7b3e350`, `529db41e`, `50f1135a`.
 
 ## Additional cache-coherency correction
 
@@ -54,12 +55,13 @@ Implementation: `kernel/base/start.c`, commit `a2ed2f68`. Static ordering checks
 
 ## Build and verification status
 
-The following source/build checks have passed on earlier branch commits:
+The following source/build checks have passed:
 
-- Linux offline audit passed on `8fe1c88b`.
-- Linux offline audit passed on `cf74ff39`.
-- The Y73s memblock API / allocator / reservation contracts passed.
-- The stack-handoff checker previously measured the target `_paging_init` frame as `0x140` and verified the saved-register slots and SP restore on a built KPIMG.
+- Linux offline audit passed on `8fe1c88b`, `cf74ff39`, `15b58b20`, and `d55a51ca`.
+- Arm GNU GCC 14.2 KPIMG build passed on `15b58b20` (workflow run `44457915994`) and `d55a51ca` (workflow run `44458027751`).
+- Latest successful KPIMG artifact: [run 44458027751](https://github.com/ljx-91/kptools-fix/actions/runs/44458027751), artifact ID `14498742821`, ZIP SHA-256 `bc2a2822423b055d17b2679a19357db9accb0c49e272fa9165d8530d67f99e15`.
+- Its log confirms `[PASS] exact Y73S stack handoff contract verified`, `[PASS] early KP startup failure restores the original map anchor without printk`, `[PASS] map backup restoration is bounded and byte-exact`, `[PASS] Y73S destination NOMAP is set before paging_init and checked`, and `[PASS] Y73S memblock API, allocation, linear-probe, and preset source contracts`.
+- The stack-handoff checker measures the target `_paging_init` frame as `0x140` and verifies the saved-register slots and SP restore.
 
 The latest combined changes are on commit `15b58b20`. Its Linux audit, Windows build, combined artifact build, and Arm GNU GCC 14.2 KPIMG build were triggered; check the Actions run page for their final results:
 https://github.com/ljx-91/kptools-fix/actions?query=branch%3Ay73s-cred-layout-guards-20261108
