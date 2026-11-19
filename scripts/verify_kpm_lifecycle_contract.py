@@ -32,6 +32,7 @@ kpimg = read("kernel/patch/module/module.c")
 kpimg_h = read("kernel/patch/include/module.h")
 kpm_api = read("kernel/include/kpmodule.h")
 symbols = read("lkm/kpm/symbols.c")
+lkm_entry = read("lkm/core/init.c")
 
 checks = {
     "LKM refuses concurrent exit callback execution":
@@ -159,6 +160,20 @@ checks = {
         "mod->active_calls == UINT_MAX" in body(lkm, "static struct kp_module *kp_module_get(") and
         "mod->active_calls == UINT_MAX" in body(kpimg, "static struct module *module_get_live("),
 }
+
+# Normal LKM module teardown is distinct from the init-error unwind path.
+# kp_kpm_exit() only frees the KPM runtime trampoline; it does not unload live KPM
+# images or prove their callbacks have drained. Keep this gap visible until the
+# LKM either pins its host module while KPMs are live or implements a safe veto /
+# drain protocol before the host module can be removed.
+normal_exit = body(lkm_entry, "static void __exit kernelpatch_exit(void)")
+init_unwind = body(lkm_entry, "int __init kernelpatch_init(void)")
+if "kp_kpm_exit()" not in normal_exit:
+    print("[KNOWN GAP] normal kernelpatch_exit() does not shut down the KPM runtime; kp_kpm_exit() is only called from init-error unwind.")
+if "kp_unload_module(" not in normal_exit and "kp_get_module_nums()" not in normal_exit:
+    print("[KNOWN GAP] normal LKM exit does not drain or reject live KPM images before host LKM text/data can be unloaded.")
+if "kp_kpm_exit()" in init_unwind and "kp_kpm_exit()" not in normal_exit:
+    print("[KNOWN GAP] KPM trampoline/backend state is cleaned on init failure but not on normal host-module removal.")
 
 for label, ok in checks.items():
     print(("PASS" if ok else "FAIL") + ": " + label)
