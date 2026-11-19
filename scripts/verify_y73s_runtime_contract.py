@@ -285,9 +285,11 @@ def main():
     pte = function_body(map_c, "static uint64_t __noinline get_or_create_pte(")
     require(r"ttbr1_el1\s*&\s*0x0000FFFFFFFFFFFEull", pte,
             "TTBR1 page-table root extraction must mask ASID[63:48] and retain only BADDR[47:1]")
-    start_init_fn = function_body(start_c, "static int start_init(")
-    require(r"ttbr1_el1\s*&\s*0x0000FFFFFFFFFFFEull", start_init_fn,
-            "start_init must mask TTBR1 ASID bits before converting the root PA")
+    mapping_context_fn = function_body(start_c, "static int start_mapping_context_init(")
+    require(r"ttbr1_el1\s*&\s*0x0000FFFFFFFFFFFEull", mapping_context_fn,
+            "early mapping context must mask TTBR1 ASID bits before converting the root PA")
+    require(r"pgd_pa\s*>\s*\(uint64_t\)-1\s*-\s*linear_voffset.*?pgd_va\s*=\s*phys_to_virt\(pgd_pa\)",
+            mapping_context_fn, "early mapping context must validate PA-to-linear-VA conversion")
     require(r"uint64_t attr_prot = 0x703ull \| attr_indx;", pte,
             "new Y73S leaf mappings must leave PBHA[3:0] clear")
     if "0x40000000000703" in pte:
