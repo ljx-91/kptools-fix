@@ -13,6 +13,7 @@ wrapper_end = src.index("\n#define log_reg", wrapper_start)
 wrapper = src[wrapper_start:wrapper_end]
 
 start_fn = src[src.index("int __attribute__((section(\".start.text\"))) __noinline start("):]
+start_init = src[src.index("static int start_init("):src.index("\n/*\n * Establish the page-table context", src.index("static int start_init("))]
 map_init = src[src.index("static int start_mapping_context_init("):src.index("\nvoid symbol_init();")]
 
 checks = {
@@ -57,6 +58,12 @@ for token in ("page_size = 1ull << page_shift;", "pgd_pa = baddr & page_size_mas
               "pgd_va = phys_to_virt(pgd_pa);", "|| !linear_voffset"):
     if token not in map_init:
         raise SystemExit("[FAIL] early mapping context missing: " + token)
+
+for token in ("preset_printk < (uint64_t)kernel_size",
+              "preset_printk <= (uint64_t)-1 - kernel_va",
+              "printk = 0;"):
+    if token not in start_init:
+        raise SystemExit("[FAIL] early printk preset must be bounded: " + token)
 
 print("[PASS] early KP startup failure restores the original map anchor without printk")
 print("[PASS] map backup restoration is bounded and byte-exact")
