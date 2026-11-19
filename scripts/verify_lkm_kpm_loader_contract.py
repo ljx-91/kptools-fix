@@ -258,14 +258,14 @@ endif"""), kbuild, "BTI branch protection must be conditional on kernel BTI conf
     # A failed set_memory_x() must therefore not be described as PTE-verified:
     # the allocator's executable-mapping contract still needs target-kernel proof.
     if re.search(
-        r"if\\s*\\(kp_set_memory_x\\)\\s*kp_do_set_memory_x\\(\\(unsigned long\\)kp_callback_tramp,\\s*1\\)\\s*;\\s*perm_rc\\s*=\\s*kp_clear_bti_gp",
+        r"if\s*\(kp_set_memory_x\)\s*kp_do_set_memory_x\(\(unsigned long\)kp_callback_tramp,\s*1\)\s*;\s*perm_rc\s*=\s*kp_clear_bti_gp",
         kpm_init,
     ):
         print("[KNOWN GAP] KPM trampoline ignores set_memory_x() status; with no init_mm the following permission helper skips its PTE walk and returns success.")
     else:
         print("[REVIEW] KPM trampoline set_memory_x() handling changed; verify no-init_mm execution permission proof.")
-    if re.search(r"if\\s*\\(xret\\)\\s*logkw", load) and re.search(
-        r"if\\s*\\(!kp_kpm_init_mm\\)[\\s\\S]*?kp_kpm_can_skip_init_mm\\(\\)[\\s\\S]*?return\\s+0",
+    if re.search(r"if\s*\(xret\)\s*logkw", load) and re.search(
+        r"if\s*\(!kp_kpm_init_mm\)[\s\S]*?kp_kpm_can_skip_init_mm\(\)[\s\S]*?return\s+0",
         permissions,
     ):
         print("[KNOWN GAP] Main KPM load treats set_memory_x() failure as warning; on the no-init_mm fallback the subsequent helper cannot inspect PTEs and may still return success.")
