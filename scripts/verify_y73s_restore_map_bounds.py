@@ -32,6 +32,11 @@ if "*(uint64_t *)j" in body:
     raise SystemExit("[FAIL] wide tail store remains in restore_map")
 if "map_restored = 1;" not in body:
     raise SystemExit("[FAIL] restore idempotence guard missing")
+clean_pos = body.find("flush_icache_range(start, end);")
+invalidate_pos = body.find("flush_icache_all();")
+if clean_pos < 0 or invalidate_pos <= clean_pos:
+    raise SystemExit("[FAIL] restored kernel code must be D-cache-cleaned to PoU before global I-cache invalidation")
+
 if "if (!quiet && printk && vsnprintf)" not in body:
     raise SystemExit("[FAIL] quiet restoration still depends on printk/vsnprintf")
 
