@@ -51,6 +51,16 @@ The concrete LKM call sites are the load-failure cleanup, normal unload, trampol
 
 **Conclusion:** LKM's NX failure behavior is conservative about freeing executable pages, but incomplete as a lifecycle protocol because a retained allocation is no longer represented by retryable metadata. The trampoline page shares this defect.
 
+## Additional verification gap: failed executable-permission setup on the no-init_mm path
+
+The LKM main-image load path calls `set_memory_x()` when the symbol is available. A non-zero return is logged, but it does not stop loading. The code then calls `kp_clear_bti_gp()` and treats a zero return as permission verification success.
+
+That final step is not an independent PTE verification when `init_mm` is unavailable and the selected backend is `module_alloc()` or `execmem_alloc()`: `kp_update_bti_gp()` takes the `kp_kpm_can_skip_init_mm()` branch and returns success without reading or changing any PTE. Consequently, a failed `set_memory_x()` can be followed by a successful loader-side status even though this LKM code has not established the executable descriptor state. The source comment relies on the executable-mapping contract of the allocator, but the exact Vivo Y73s 4.14.141 implementation has not yet been obtained and verified.
+
+The callback-trampoline setup has the same boundary more directly: `kp_kpm_init()` calls `kp_do_set_memory_x()` but discards its return value, then invokes the same helper. If the no-`init_mm` fallback is active, a failed transition is not detected by a PTE walk before the trampoline page is initialized and the KPM subsystem is marked ready.
+
+**Interpretation:** this is an unresolved proof gap, not evidence by itself that the Y73s allocator returns NX memory or that this caused the reported reboot. To close it, verify the exact target allocator implementation and its page protections. If its executable guarantee is not explicit and reliable, make a failed/missing `set_memory_x()` fatal on the no-`init_mm` path; do not count the skipped PTE walk as verification. Extend host fault-injection coverage for both the main image and trampoline setup.
+
 ## Permission-transition partial-state limit
 
 The LKM PTE helper walks and changes pages in the same loop. A later page-table lookup or post-write permission-verification failure can occur after earlier PTEs have been modified. The function returns an error without restoring those earlier PTEs. The optional whole-range `set_memory_x()` / `set_memory_nx()` call is also performed before this loop and is not undone if a later per-page check fails.
@@ -85,7 +95,7 @@ These checks prove source contracts and selected helper behavior only. They do n
 - LKM KPM section layout and image copy: host-testable coverage already exists.
 - KPIMG page-class W^X reference: source-confirmed; not a substitute for validating the LKM backend.
 - LKM KPM full-image permission handling: **known W^X gap; not fixed**.
-- KPM callback trampoline writable/executable storage: **known W^X gap; not fixed**.
+- No-\`init_mm\` executable-permission establishment after failed \`set_memory_x()\`: **verification gap; target allocator contract not confirmed**.\n- KPM callback trampoline writable/executable storage: **known W^X gap; not fixed**.
 - LKM KPM quarantine/retry after NX restore failure, including callback-trampoline cleanup: **known lifecycle gap; not fixed**.
 - Multi-page LKM permission rollback: **not transactional; not fixed**.
 - Production kernel code: unchanged in this audit.
