@@ -691,7 +691,7 @@ static void prot_myself()
 // restored before any of them can be called again, and the tail return
 // below in start() never executes the anchor bytes after this.
 static int map_restored = 0;
-void restore_map()
+static void restore_map_internal(bool quiet)
 {
     if (map_restored) return;
 
@@ -741,6 +741,11 @@ void restore_map()
         page = page_end;
     }
     flush_icache_all();
+}
+
+void restore_map(void)
+{
+    restore_map_internal(false);
 }
 
 #define log_reg(regname)                                                   \
@@ -890,9 +895,32 @@ static int start_init(uint64_t kimage_voff, uint64_t linear_voff)
     kernel_kallsyms_on_each_match_symbol =
         (typeof(kernel_kallsyms_on_each_match_symbol))kallsyms_lookup_name("kallsyms_on_each_match_symbol");
 
-    uint64_t tcr_el1;
+    return 0;
+}
+
+/*
+ * Establish the page-table context before start_init() performs any
+ * kallsyms/printk lookups that can fail. The map hook has already replaced a
+ * kernel text window with the temporary .setup.map body; every recoverable
+ * startup error must therefore be able to restore that window before
+ * returning to the original paging_init caller.
+ */
+static int start_mapping_context_init(uint64_t kimage_voff, uint64_t linear_voff)
+{
+    kimage_voffset = kimage_voff;
+    linear_voffset = linear_voff;
+    kernel_pa = start_preset.kernel_pa;
+    kernel_size = start_preset.kernel_size;
+    if (!kernel_pa || kernel_size <= 0 ||
+        kimage_voff > (uint64_t)-1 - kernel_pa)
+        return -1;
+    kernel_va = kimage_voff + kernel_pa;
+
+    uint64_t tcr_el1 = 0;
     asm volatile("mrs %0, tcr_el1" : "=r"(tcr_el1));
     uint64_t t1sz = bits(tcr_el1, 21, 16);
+    if (t1sz <= 4 || t1sz >= 60)
+        return -1;
     va_bits = 64 - t1sz;
     uint64_t tg1 = bits(tcr_el1, 31, 30);
 
@@ -902,17 +930,32 @@ static int start_init(uint64_t kimage_voff, uint64_t linear_voff)
     } else if (tg1 == 3) {
         page_shift = 16;
     }
-    page_size = 1 << page_shift;
-
+    page_size = 1ull << page_shift;
     page_level = (va_bits - 4) / (page_shift - 3);
+    if (page_level < 1 || page_level > 4 || !linear_voffset)
+        return -1;
 
-    uint64_t ttbr1_el1;
+#ifdef KP_TARGET_Y73S
+    if (page_shift != 12 || page_size != 4096 || va_bits != 39 || page_level != 3)
+        return -1;
+#endif
+
+    uint64_t ttbr1_el1 = 0;
     asm volatile("mrs %0, ttbr1_el1" : "=r"(ttbr1_el1));
     /* TTBR1_EL1[63:48] is ASID; only BADDR[47:1] is the table PA. */
     uint64_t baddr = ttbr1_el1 & 0x0000FFFFFFFFFFFEull;
     uint64_t page_size_mask = ~(page_size - 1);
     pgd_pa = baddr & page_size_mask;
+    if (!pgd_pa || (pgd_pa & (page_size - 1)) ||
+        pgd_pa > (uint64_t)-1 - linear_voffset)
+        return -1;
     pgd_va = phys_to_virt(pgd_pa);
+    if (!pgd_va || pgd_va > (uint64_t)-1 - page_size)
+        return -1;
+#ifdef KP_TARGET_Y73S
+    if ((pgd_va >> 39) != 0x1FFFFFFull)
+        return -1;
+#endif
     return 0;
 }
 
@@ -927,8 +970,19 @@ int __attribute__((section(".start.text"))) __noinline start(uint64_t kimage_vof
     ((uint64_t *)boot_log)[0] = 0x4b50565354415254ull; // "KPVSTART" marker
     ((uint64_t *)boot_log)[1] = kimage_voff;
     ((uint64_t *)boot_log)[2] = linear_voff;
+    rc = start_mapping_context_init(kimage_voff, linear_voff);
+    if (rc) __builtin_trap();
     rc = start_init(kimage_voff, linear_voff);
-    if (rc) return rc;
+    if (rc) {
+        /*
+         * Do not return to the kernel with the temporary map-anchor code
+         * still installed. The minimal page-table context above is ready,
+         * so restore the original bytes without depending on kallsyms or
+         * printk having initialized successfully.
+         */
+        restore_map_internal(true);
+        return rc;
+    }
     uint64_t id_aa64mmfr1_el1 = 0;
     asm volatile("mrs %0, id_aa64mmfr1_el1" : "=r"(id_aa64mmfr1_el1));
     log_boot("Y73S TCR_EL1=%016llx HPDS=%u HPD1=%u HWU159_162=%x\n",
