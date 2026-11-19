@@ -49,7 +49,7 @@ if "restore_map_internal(true);" not in failure or "return rc;" not in failure:
     raise SystemExit("[FAIL] start_init failure does not restore the map anchor before returning")
 
 for token in ("page_size = 1ull << page_shift;", "pgd_pa = baddr & page_size_mask;",
-              "pgd_va = phys_to_virt(pgd_pa);", "if (!linear_voffset)"):
+              "pgd_va = phys_to_virt(pgd_pa);", "|| !linear_voffset"):
     if token not in map_init:
         raise SystemExit("[FAIL] early mapping context missing: " + token)
 
