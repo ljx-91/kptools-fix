@@ -84,6 +84,8 @@ def main():
             restore_map, "each restored byte range must be covered by the PTE for its actual page")
     require(r"copy_start\s*=\s*page\s*>\s*start\s*\?\s*page\s*:\s*start.*?copy_end\s*=\s*page_end\s*<\s*end\s*\?\s*page_end\s*:\s*end",
             restore_map, "map restoration must clip each copy to its page boundaries")
+    before(restore_map, "flush_icache_range(start, end);", "flush_icache_all();",
+           "restored kernel text must be D-cache-cleaned to PoU before global I-cache invalidation")
     if "for (uint64_t i = start;" in restore_map:
         raise AssertionError("unaligned map restore loop can write into a second page without opening its PTE")
     restore_wrapper = function_body(start_c, "void restore_map(void)")
