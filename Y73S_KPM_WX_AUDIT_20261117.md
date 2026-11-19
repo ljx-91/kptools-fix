@@ -51,6 +51,17 @@ The concrete LKM call sites are the load-failure cleanup, normal unload, trampol
 
 **Conclusion:** LKM's NX failure behavior is conservative about freeing executable pages, but incomplete as a lifecycle protocol because a retained allocation is no longer represented by retryable metadata. The trampoline page shares this defect.
 
+## Additional lifecycle gap: normal host-LKM exit does not shut down KPM
+
+The host LKM entrypoint in `lkm/core/init.c` has two distinct cleanup paths:
+
+- The `err_unwind` path after a failed `kernelpatch_init()` calls `kp_kpm_exit()` when KPM initialization completed.
+- The normal `kernelpatch_exit()` path uninstalls the supercall, sucompat, rename, and CFI hooks, but does not call `kp_kpm_exit()`. It also does not enumerate, unload, or reject still-live KPM images before the host LKM is removed.
+
+The supercall uninstall only removes the syscall entry hook; it does not drain KPM callbacks or free KPM images. Consequently, the normal host-module removal path has no visible protocol proving that KPM-owned callbacks, hooks, and module state no longer refer to LKM code/data. Conversely, calling `kp_kpm_exit()` unconditionally would not solve this: that function only clears the trampoline/runtime globals and does not unload active KPMs or wait for their references.
+
+**Required fix design:** the host LKM must not be unloadable while KPM images or KPM-owned callbacks can still reach it. The implementation needs a host-module lifetime pin or an equivalent unload-veto/drain protocol, acquired before a KPM becomes externally reachable and released only after its executable image and callbacks have been safely retired. Normal teardown must then verify that the KPM registry is empty before freeing the trampoline/backend state. The module-exit callback is void, so the design must prevent entry into an unsafe removal path rather than trying to return an error after unload has begun. This is not safe to implement by adding a bare `kp_kpm_exit()` call to `kernelpatch_exit()`.
+
 ## Additional lifecycle gap: LKM does not retain ownership after failed NX restoration
 
 The LKM implementation differs materially from the KPIMG reference loader:
@@ -111,6 +122,7 @@ These checks prove source contracts and selected helper behavior only. They do n
 - No-`init_mm` executable-permission establishment after failed `set_memory_x()`: **verification gap; target allocator contract not confirmed**.
 - KPM callback trampoline writable/executable storage: **known W^X gap; not fixed**.
 - LKM KPM quarantine/retry after NX restore failure, including callback-trampoline cleanup: **known lifecycle gap; not fixed**.
+- Normal host-LKM exit does not drain or pin live KPM users before removing LKM state: **known lifecycle gap; not fixed**.
 - Multi-page LKM permission rollback: **not transactional; not fixed**.
 - Production kernel code: unchanged in this audit.
 - Vendor-KDIR compilation, real PTE fault injection, and Y73s device validation: not performed.
