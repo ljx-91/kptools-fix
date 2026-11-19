@@ -741,6 +741,13 @@ static void restore_map_internal(bool quiet)
         flush_tlb_kernel_page(page);
         page = page_end;
     }
+    /*
+     * The byte stores above modified kernel instructions through the data
+     * cache. Clean this exact virtual range to PoU before invalidating I-cache;
+     * an I-cache-only invalidate can otherwise refetch stale temporary code.
+     * Keep the final inner-shareable invalidate for other early CPUs.
+     */
+    flush_icache_range(start, end);
     flush_icache_all();
 }
 
