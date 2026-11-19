@@ -51,6 +51,19 @@ The concrete LKM call sites are the load-failure cleanup, normal unload, trampol
 
 **Conclusion:** LKM's NX failure behavior is conservative about freeing executable pages, but incomplete as a lifecycle protocol because a retained allocation is no longer represented by retryable metadata. The trampoline page shares this defect.
 
+## Additional lifecycle gap: LKM does not retain ownership after failed NX restoration
+
+The LKM implementation differs materially from the KPIMG reference loader:
+
+- `kp_free_exec()` returns `void`. If `kp_restore_nx_gp()` fails, it logs and returns without freeing the allocation, but its caller cannot distinguish that retained allocation from a completed free.
+- The LKM load-failure cleanup path calls `kp_free_exec(mod->start, mod->size)` and then frees `mod` unconditionally. If NX restoration failed, the executable allocation remains but its owning metadata is discarded.
+- Normal LKM unload removes `mod` from the registry, marks it DEAD, unlocks, calls the void free helper, and then frees `mod`. A failed permission restore therefore leaves no registry entry or retry handle.
+- `kp_kpm_exit()` similarly clears `kp_callback_tramp`, its size, backend selection, and allocator function pointers after calling the void free helper. If the transition failed, teardown loses the information needed to retry safely.
+
+The KPIMG reference already demonstrates a stronger pattern: checked free return value, stable module name, a dedicated quarantine list/state for images that never completed load, and retryable unload for retained executable images. The LKM port does not yet implement that protocol.
+
+**Required LKM fix design:** change the executable free helper to return an error; retain the module object and executable pointer in a quarantine registry whenever NX restoration fails; do not unlink normal modules or free metadata until executable release succeeds; and make KPM teardown preserve backend/trampoline ownership if the trampoline cannot be safely reclaimed. The retry path must not rerun module init/exit callbacks. Do not simply copy KPIMG code: LKM uses a different lock, allocator wrapper, and module structure.
+
 ## Additional verification gap: failed executable-permission setup on the no-init_mm path
 
 The LKM main-image load path calls `set_memory_x()` when the symbol is available. A non-zero return is logged, but it does not stop loading. The code then calls `kp_clear_bti_gp()` and treats a zero return as permission verification success.
