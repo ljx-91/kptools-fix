@@ -710,7 +710,8 @@ static void restore_map_internal(bool quiet)
     uint64_t start = kernel_va + (uint64_t)start_preset.map_offset;
     uint64_t end = start + (uint64_t)start_preset.map_backup_len;
     if (end < start || page_size <= 0 || (page_size & (page_size - 1))) __builtin_trap();
-    log_boot("Restore: %llx, %llx\n", start, end);
+    if (!quiet && printk && vsnprintf)
+        log_boot("Restore: %llx, %llx\n", start, end);
 
     map_restored = 1;
     /*
